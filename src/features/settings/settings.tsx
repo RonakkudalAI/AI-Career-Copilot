@@ -26,30 +26,7 @@ const PROFILE_EDITABLE_FIELDS = [
   "career_goal",
 ] as const;
 
-const COMPLETION_LABELS: Record<string, string> = {
-  basic: "Name & location",
-  career: "Current role & target roles",
-  experience: "Work experience",
-  skills: "Skills",
-  education: "Education",
-  preferences: "Work preferences",
-  resume: "Confirmed resume",
-  links: "Professional links",
-};
-
-const COMPLETION_MAX: Record<string, number> = {
-  basic: 15,
-  career: 15,
-  experience: 20,
-  skills: 15,
-  education: 10,
-  preferences: 10,
-  resume: 10,
-  links: 5,
-};
-
 const CAREER_LEVEL_OPTIONS = [
-  { value: "", label: "Select career level" },
   { value: "fresher", label: "Fresher / Entry" },
   { value: "junior", label: "Junior" },
   { value: "mid", label: "Mid-level" },
@@ -76,7 +53,6 @@ const EMPLOYMENT_TYPE_OPTIONS = [
 ] as const;
 
 const WORK_AUTHORIZATION_OPTIONS = [
-  { value: "", label: "Select work authorization" },
   { value: "citizen", label: "Citizen / unrestricted" },
   { value: "permanent_resident", label: "Permanent resident" },
   { value: "work_permit", label: "Work permit / visa" },
@@ -95,7 +71,6 @@ const NOTICE_PERIOD_OPTIONS = [
 ] as const;
 
 const CURRENCY_OPTIONS = [
-  { value: "", label: "Select currency" },
   { value: "INR", label: "INR" },
   { value: "USD", label: "USD" },
   { value: "EUR", label: "EUR" },
@@ -176,7 +151,6 @@ const SKILL_OPTIONS = [
 ] as const;
 
 const DEGREE_OPTIONS = [
-  { value: "", label: "Select degree" },
   { value: "B.Tech", label: "B.Tech" },
   { value: "B.E.", label: "B.E." },
   { value: "B.Sc", label: "B.Sc" },
@@ -188,7 +162,25 @@ const DEGREE_OPTIONS = [
   { value: "PG-DAC", label: "PG-DAC" },
   { value: "Diploma", label: "Diploma" },
   { value: "PhD", label: "PhD" },
-  { value: "Other", label: "Other" },
+] as const;
+
+const FIELD_OF_STUDY_OPTIONS = [
+  "Computer Science",
+  "Information Technology",
+  "Electronics",
+  "Data Science",
+  "Artificial Intelligence",
+  "Mechanical",
+  "Business",
+] as const;
+
+const CAREER_GOAL_OPTIONS = [
+  { value: "switch_role", label: "Switch role" },
+  { value: "get_first_job", label: "Get first job" },
+  { value: "promotion", label: "Get promoted" },
+  { value: "upskill", label: "Upskill in current role" },
+  { value: "relocate", label: "Relocate for work" },
+  { value: "freelance", label: "Move to freelance / contract" },
 ] as const;
 
 const LINK_TYPE_OPTIONS = [
@@ -303,13 +295,21 @@ function prefsToDraft(prefs: Record<string, any>): PrefDraft {
   };
 }
 
+const OTHER_VALUE = "__other__";
+
+function normalizeOptions(
+  options: readonly { value: string; label: string }[] | readonly string[],
+): Array<{ value: string; label: string }> {
+  return options.map((option) =>
+    typeof option === "string" ? { value: option, label: option } : { value: option.value, label: option.label },
+  );
+}
+
 function withExtraOptions(
   options: readonly { value: string; label: string }[] | readonly string[],
   extras: Array<string | null | undefined>,
 ) {
-  const normalized = options.map((option) =>
-    typeof option === "string" ? { value: option, label: option } : { ...option },
-  );
+  const normalized = normalizeOptions(options);
   const known = new Set(normalized.map((option) => option.value));
   for (const extra of extras) {
     const value = (extra || "").trim();
@@ -321,25 +321,129 @@ function withExtraOptions(
   return normalized;
 }
 
+/** Dropdown that supports an Other choice and persists the custom typed value. */
+function RequiredMark() {
+  return (
+    <span className="required-star" aria-hidden="true">
+      *
+    </span>
+  );
+}
+
+function SelectWithOther({
+  label,
+  options,
+  value,
+  onChange,
+  emptyLabel = "Select…",
+  otherPlaceholder = "Enter custom value",
+  inputType = "text",
+  required = false,
+}: {
+  label: string;
+  options: readonly { value: string; label: string }[] | readonly string[];
+  value: string;
+  onChange: (value: string) => void;
+  emptyLabel?: string;
+  otherPlaceholder?: string;
+  inputType?: "text" | "number";
+  required?: boolean;
+}) {
+  const optionList = normalizeOptions(options).filter((option) => option.value !== "" && option.value !== OTHER_VALUE);
+  const known = new Set(optionList.map((option) => option.value));
+  const [forceOther, setForceOther] = useState(false);
+  const trimmed = (value || "").trim();
+  const isCustomSaved = Boolean(trimmed) && !known.has(trimmed);
+  // If a known value is loaded/selected, hide Other even if forceOther was previously true.
+  const showOther = isCustomSaved || (forceOther && !known.has(trimmed));
+  const selectValue = showOther ? OTHER_VALUE : trimmed;
+  const otherInputValue = showOther ? value : "";
+
+  return (
+    <div className="stack" style={{ gap: 8 }}>
+      <label className="field-label">
+        <span>
+          {label}
+          {required ? <RequiredMark /> : null}
+        </span>
+        <Select
+          value={selectValue}
+          onChange={(e) => {
+            const next = e.target.value;
+            if (next === OTHER_VALUE) {
+              setForceOther(true);
+              if (known.has(trimmed)) onChange("");
+            } else {
+              setForceOther(false);
+              onChange(next);
+            }
+          }}
+        >
+          <option value="">{emptyLabel}</option>
+          {optionList.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+          <option value={OTHER_VALUE}>Other</option>
+        </Select>
+      </label>
+      {showOther && (
+        <label className="field-label">
+          Specify other
+          <Input
+            type={inputType}
+            value={otherInputValue}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder={otherPlaceholder}
+          />
+        </label>
+      )}
+    </div>
+  );
+}
+
 function MultiOptionGroup({
   legend,
   options,
   selected,
   onChange,
+  allowOther = false,
+  otherPlaceholder = "Enter custom value",
+  required = false,
 }: {
   legend: string;
   options: readonly { value: string; label: string }[] | readonly string[];
   selected: string[];
   onChange: (next: string[]) => void;
+  allowOther?: boolean;
+  otherPlaceholder?: string;
+  required?: boolean;
 }) {
-  const normalized = withExtraOptions(options, selected);
+  const baseOptions = normalizeOptions(options).filter((option) => option.value !== OTHER_VALUE);
+  const normalized = withExtraOptions(baseOptions, selected);
+  const [otherText, setOtherText] = useState("");
+  const [showOtherInput, setShowOtherInput] = useState(false);
+
   function toggle(value: string) {
     if (selected.includes(value)) onChange(selected.filter((item) => item !== value));
     else onChange([...selected, value]);
   }
+
+  function addOtherValue() {
+    const text = otherText.trim();
+    if (!text) return;
+    if (!selected.includes(text)) onChange([...selected, text]);
+    setOtherText("");
+    setShowOtherInput(false);
+  }
+
   return (
     <fieldset className="stack" style={{ border: "1px solid var(--border)", borderRadius: 14, padding: 14, margin: 0 }}>
-      <legend style={{ padding: "0 6px", fontWeight: 700 }}>{legend}</legend>
+      <legend style={{ padding: "0 6px", fontWeight: 700 }}>
+        {legend}
+        {required ? <RequiredMark /> : null}
+      </legend>
       <div className="cluster">
         {normalized.map((option) => (
           <label key={option.value} className="row" style={{ gap: 8, justifyContent: "flex-start" }}>
@@ -351,7 +455,41 @@ function MultiOptionGroup({
             <span>{option.label}</span>
           </label>
         ))}
+        {allowOther && (
+          <label className="row" style={{ gap: 8, justifyContent: "flex-start" }}>
+            <input
+              type="checkbox"
+              checked={showOtherInput}
+              onChange={(e) => {
+                setShowOtherInput(e.target.checked);
+                if (!e.target.checked) setOtherText("");
+              }}
+            />
+            <span>Other</span>
+          </label>
+        )}
       </div>
+      {allowOther && showOtherInput && (
+        <div className="cluster">
+          <label className="field-label" style={{ flex: 1 }}>
+            Specify other
+            <Input
+              value={otherText}
+              onChange={(e) => setOtherText(e.target.value)}
+              placeholder={otherPlaceholder}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  addOtherValue();
+                }
+              }}
+            />
+          </label>
+          <Button type="button" onClick={addOtherValue} disabled={!otherText.trim()}>
+            Add
+          </Button>
+        </div>
+      )}
     </fieldset>
   );
 }
@@ -502,6 +640,9 @@ export function ProfileSettings() {
       if (payload.salary_max !== null && Number.isNaN(payload.salary_max)) {
         throw new Error("Maximum salary must be a number.");
       }
+      if (payload.salary_currency && !/^[A-Z]{3}$/.test(payload.salary_currency)) {
+        throw new Error("Currency must be a 3-letter code such as INR or USD.");
+      }
       await apiRequest("/profile/preferences", { method: "PUT", body: JSON.stringify(payload) });
       await loadAll();
       setMessage("Career preferences saved to your account.");
@@ -524,6 +665,26 @@ export function ProfileSettings() {
       setSkillName("");
       await loadAll();
       setMessage("Skill saved to your account.");
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  async function importSkillsFromResume() {
+    setError("");
+    setMessage("");
+    try {
+      const result = await apiRequest<{ created_count: number; suggested: string[] }>("/profile/skills/from-resume", {
+        method: "POST",
+      });
+      await loadAll();
+      setMessage(
+        result.created_count
+          ? `Imported ${result.created_count} skill(s) from your confirmed resume.`
+          : result.suggested?.length
+            ? "No new skills to import — matching skills already exist on your profile."
+            : "No known skills were detected in your confirmed resume.",
+      );
     } catch (e) {
       setError((e as Error).message);
     }
@@ -607,7 +768,7 @@ export function ProfileSettings() {
   }
 
   const completion = Number(form.profile_completion || 0);
-  const details = (form.profile_completion_details || {}) as Record<string, number>;
+  const profileComplete = completion >= 100;
   const yearsValue =
     form.years_experience === null || form.years_experience === undefined || form.years_experience === ""
       ? ""
@@ -624,39 +785,18 @@ export function ProfileSettings() {
         </Card>
       ) : (
         <div className="stack">
-          <Card className="stack">
-            <div className="row">
-              <h2 style={{ margin: 0 }}>Profile completion</h2>
-              <span className="badge badge-info" aria-live="polite">
-                {completion}% complete
-              </span>
-            </div>
-            <Progress value={completion} label="Confirmed profile completion" />
-            <div className="grid-2">
-              {Object.keys(COMPLETION_MAX).map((key) => {
-                const earned = Number(details[key] || 0);
-                const max = COMPLETION_MAX[key];
-                return (
-                  <div key={key} className="row" style={{ justifyContent: "space-between" }}>
-                    <span>{COMPLETION_LABELS[key] || key}</span>
-                    <strong className="mono">
-                      {earned}/{max}
-                    </strong>
-                  </div>
-                );
-              })}
-            </div>
-            <p>
-              Upload and confirm a resume under{" "}
-              <Link href="/resume-analysis/new">Resume Analysis</Link> to earn the resume portion.
-            </p>
+          <Card className={`stack completion-panel ${profileComplete ? "is-complete" : ""}`} aria-hidden={profileComplete}>
+            <Progress value={completion} label="Profile completion" />
           </Card>
 
           <Card className="stack">
             <h2 style={{ margin: 0 }}>Basic details</h2>
             <div className="grid-2">
               <label className="field-label">
-                Full name
+                <span>
+                  Full name
+                  <RequiredMark />
+                </span>
                 <Input value={form.full_name || ""} onChange={(e) => updateField("full_name", e.target.value)} />
               </label>
               <label className="field-label">
@@ -667,76 +807,53 @@ export function ProfileSettings() {
                 Phone
                 <Input value={form.phone || ""} onChange={(e) => updateField("phone", e.target.value)} />
               </label>
-              <label className="field-label">
-                Location
-                <Select value={form.location || ""} onChange={(e) => updateField("location", e.target.value)}>
-                  <option value="">Select location</option>
-                  {withExtraOptions(LOCATION_OPTIONS, [form.location]).map((location) => (
-                    <option key={location.value} value={location.value}>
-                      {location.label}
-                    </option>
-                  ))}
-                </Select>
-              </label>
-              <label className="field-label">
-                Current role
-                <Select value={form.current_role || ""} onChange={(e) => updateField("current_role", e.target.value)}>
-                  <option value="">Select current role</option>
-                  {withExtraOptions(TARGET_ROLE_OPTIONS, [form.current_role]).map((role) => (
-                    <option key={role.value} value={role.value}>
-                      {role.label}
-                    </option>
-                  ))}
-                </Select>
-              </label>
-              <label className="field-label">
-                Years of experience
-                <Select value={yearsValue} onChange={(e) => updateField("years_experience", e.target.value)}>
-                  <option value="">Select years</option>
-                  {withExtraOptions(
-                    YEARS_OPTIONS.map((years) => ({
-                      value: String(years),
-                      label: years === 0 ? "0 (Fresher)" : String(years),
-                    })),
-                    [yearsValue],
-                  ).map((years) => (
-                    <option key={years.value} value={years.value}>
-                      {years.label}
-                    </option>
-                  ))}
-                </Select>
-              </label>
-              <label className="field-label">
-                Career level
-                <Select value={form.career_level || ""} onChange={(e) => updateField("career_level", e.target.value)}>
-                  {withExtraOptions(CAREER_LEVEL_OPTIONS, [form.career_level]).map((option) => (
-                    <option key={option.value || "empty"} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </Select>
-              </label>
-              <label className="field-label">
-                Career goal
-                <Select value={form.career_goal || ""} onChange={(e) => updateField("career_goal", e.target.value)}>
-                  {withExtraOptions(
-                    [
-                      { value: "", label: "Select career goal" },
-                      { value: "switch_role", label: "Switch role" },
-                      { value: "get_first_job", label: "Get first job" },
-                      { value: "promotion", label: "Get promoted" },
-                      { value: "upskill", label: "Upskill in current role" },
-                      { value: "relocate", label: "Relocate for work" },
-                      { value: "freelance", label: "Move to freelance / contract" },
-                    ],
-                    [form.career_goal],
-                  ).map((option) => (
-                    <option key={option.value || "empty"} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </Select>
-              </label>
+              <SelectWithOther
+                label="Location"
+                options={LOCATION_OPTIONS}
+                value={form.location || ""}
+                onChange={(value) => updateField("location", value)}
+                emptyLabel="Select location"
+                otherPlaceholder="Enter your location"
+                required
+              />
+              <SelectWithOther
+                label="Current role"
+                options={TARGET_ROLE_OPTIONS}
+                value={form.current_role || ""}
+                onChange={(value) => updateField("current_role", value)}
+                emptyLabel="Select current role"
+                otherPlaceholder="Enter your current role"
+                required
+              />
+              <SelectWithOther
+                label="Years of experience"
+                options={YEARS_OPTIONS.map((years) => ({
+                  value: String(years),
+                  label: years === 0 ? "0 (Fresher)" : String(years),
+                }))}
+                value={yearsValue}
+                onChange={(value) => updateField("years_experience", value)}
+                emptyLabel="Select years"
+                otherPlaceholder="Enter years of experience"
+                inputType="number"
+                required
+              />
+              <SelectWithOther
+                label="Career level"
+                options={CAREER_LEVEL_OPTIONS}
+                value={form.career_level || ""}
+                onChange={(value) => updateField("career_level", value)}
+                emptyLabel="Select career level"
+                otherPlaceholder="Enter career level"
+              />
+              <SelectWithOther
+                label="Career goal"
+                options={CAREER_GOAL_OPTIONS}
+                value={form.career_goal || ""}
+                onChange={(value) => updateField("career_goal", value)}
+                emptyLabel="Select career goal"
+                otherPlaceholder="Describe your career goal"
+              />
             </div>
             <label className="field-label">
               Bio
@@ -752,77 +869,74 @@ export function ProfileSettings() {
 
           <Card className="stack">
             <h2 style={{ margin: 0 }}>Career preferences</h2>
-            <p>These preferences are stored in Supabase and count toward profile completion.</p>
+            <p>These preferences are saved to your account.</p>
             <MultiOptionGroup
               legend="Target roles"
               options={TARGET_ROLE_OPTIONS}
               selected={prefDraft.target_roles}
               onChange={(target_roles) => setPrefDraft({ ...prefDraft, target_roles })}
+              allowOther
+              otherPlaceholder="Enter another target role"
+              required
             />
             <MultiOptionGroup
               legend="Preferred industries"
               options={INDUSTRY_OPTIONS}
               selected={prefDraft.preferred_industries}
               onChange={(preferred_industries) => setPrefDraft({ ...prefDraft, preferred_industries })}
+              allowOther
+              otherPlaceholder="Enter another industry"
             />
             <MultiOptionGroup
               legend="Preferred locations"
               options={LOCATION_OPTIONS}
               selected={prefDraft.preferred_locations}
               onChange={(preferred_locations) => setPrefDraft({ ...prefDraft, preferred_locations })}
+              allowOther
+              otherPlaceholder="Enter another location"
+              required
             />
             <MultiOptionGroup
               legend="Work modes"
               options={WORK_MODE_OPTIONS}
               selected={prefDraft.work_modes}
               onChange={(work_modes) => setPrefDraft({ ...prefDraft, work_modes })}
+              required
             />
             <MultiOptionGroup
               legend="Employment types"
               options={EMPLOYMENT_TYPE_OPTIONS}
               selected={prefDraft.employment_types}
               onChange={(employment_types) => setPrefDraft({ ...prefDraft, employment_types })}
+              allowOther
+              otherPlaceholder="Enter another employment type"
             />
             <div className="grid-2">
-              <label className="field-label">
-                Work authorization
-                <Select
-                  value={prefDraft.work_authorization}
-                  onChange={(e) => setPrefDraft({ ...prefDraft, work_authorization: e.target.value })}
-                >
-                  {WORK_AUTHORIZATION_OPTIONS.map((option) => (
-                    <option key={option.value || "empty"} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </Select>
-              </label>
-              <label className="field-label">
-                Notice period
-                <Select
-                  value={prefDraft.notice_period_days}
-                  onChange={(e) => setPrefDraft({ ...prefDraft, notice_period_days: e.target.value })}
-                >
-                  {NOTICE_PERIOD_OPTIONS.map((option) => (
-                    <option key={option.value || "empty"} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </Select>
-              </label>
-              <label className="field-label">
-                Salary currency
-                <Select
-                  value={prefDraft.salary_currency}
-                  onChange={(e) => setPrefDraft({ ...prefDraft, salary_currency: e.target.value })}
-                >
-                  {CURRENCY_OPTIONS.map((option) => (
-                    <option key={option.value || "empty"} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </Select>
-              </label>
+              <SelectWithOther
+                label="Work authorization"
+                options={WORK_AUTHORIZATION_OPTIONS}
+                value={prefDraft.work_authorization}
+                onChange={(work_authorization) => setPrefDraft({ ...prefDraft, work_authorization })}
+                emptyLabel="Select work authorization"
+                otherPlaceholder="Describe work authorization"
+              />
+              <SelectWithOther
+                label="Notice period"
+                options={NOTICE_PERIOD_OPTIONS.filter((option) => option.value !== "")}
+                value={prefDraft.notice_period_days}
+                onChange={(notice_period_days) => setPrefDraft({ ...prefDraft, notice_period_days })}
+                emptyLabel="Select notice period"
+                otherPlaceholder="Enter notice period in days"
+                inputType="number"
+              />
+              <SelectWithOther
+                label="Salary currency"
+                options={CURRENCY_OPTIONS}
+                value={prefDraft.salary_currency}
+                onChange={(salary_currency) => setPrefDraft({ ...prefDraft, salary_currency: salary_currency.toUpperCase() })}
+                emptyLabel="Select currency"
+                otherPlaceholder="Enter 3-letter currency code"
+              />
               <label className="field-label">
                 Minimum salary
                 <Input
@@ -856,21 +970,26 @@ export function ProfileSettings() {
           </Card>
 
           <Card className="stack">
-            <h2 style={{ margin: 0 }}>Skills</h2>
-            <div className="cluster">
-              <label className="field-label" style={{ flex: 1 }}>
-                Skill
-                <Select value={skillName} onChange={(e) => setSkillName(e.target.value)}>
-                  <option value="">Select a skill</option>
-                  {SKILL_OPTIONS.map((skill) => (
-                    <option key={skill} value={skill}>
-                      {skill}
-                    </option>
-                  ))}
-                </Select>
-              </label>
+            <h2 style={{ margin: 0 }}>
+              Skills
+              <RequiredMark />
+            </h2>
+            <div className="cluster" style={{ alignItems: "end" }}>
+              <div style={{ flex: 1, minWidth: 220 }}>
+                <SelectWithOther
+                  label="Skill"
+                  options={SKILL_OPTIONS}
+                  value={skillName}
+                  onChange={setSkillName}
+                  emptyLabel="Select a skill"
+                  otherPlaceholder="Enter skill name"
+                />
+              </div>
               <Button onClick={addSkill} disabled={!skillName.trim()}>
                 Add skill
+              </Button>
+              <Button variant="secondary" onClick={importSkillsFromResume}>
+                Import from resume
               </Button>
             </div>
             <div className="cluster">
@@ -893,7 +1012,13 @@ export function ProfileSettings() {
           </Card>
 
           <Card className="stack">
-            <h2 style={{ margin: 0 }}>Work experience</h2>
+            <h2 style={{ margin: 0 }}>
+              Work experience
+              <RequiredMark />
+            </h2>
+            <p className="mono" style={{ margin: 0 }}>
+              Add at least one experience, or set years of experience to 0 for fresher credit.
+            </p>
             <div className="grid-2">
               <label className="field-label">
                 Company
@@ -902,48 +1027,30 @@ export function ProfileSettings() {
                   onChange={(e) => setExperienceDraft({ ...experienceDraft, company_name: e.target.value })}
                 />
               </label>
-              <label className="field-label">
-                Role title
-                <Select
-                  value={experienceDraft.role_title}
-                  onChange={(e) => setExperienceDraft({ ...experienceDraft, role_title: e.target.value })}
-                >
-                  <option value="">Select role title</option>
-                  {TARGET_ROLE_OPTIONS.map((role) => (
-                    <option key={role} value={role}>
-                      {role}
-                    </option>
-                  ))}
-                </Select>
-              </label>
-              <label className="field-label">
-                Location
-                <Select
-                  value={experienceDraft.location}
-                  onChange={(e) => setExperienceDraft({ ...experienceDraft, location: e.target.value })}
-                >
-                  <option value="">Select location</option>
-                  {LOCATION_OPTIONS.map((location) => (
-                    <option key={location} value={location}>
-                      {location}
-                    </option>
-                  ))}
-                </Select>
-              </label>
-              <label className="field-label">
-                Employment type
-                <Select
-                  value={experienceDraft.employment_type}
-                  onChange={(e) => setExperienceDraft({ ...experienceDraft, employment_type: e.target.value })}
-                >
-                  <option value="">Select employment type</option>
-                  {EMPLOYMENT_TYPE_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </Select>
-              </label>
+              <SelectWithOther
+                label="Role title"
+                options={TARGET_ROLE_OPTIONS}
+                value={experienceDraft.role_title}
+                onChange={(role_title) => setExperienceDraft({ ...experienceDraft, role_title })}
+                emptyLabel="Select role title"
+                otherPlaceholder="Enter role title"
+              />
+              <SelectWithOther
+                label="Location"
+                options={LOCATION_OPTIONS}
+                value={experienceDraft.location}
+                onChange={(location) => setExperienceDraft({ ...experienceDraft, location })}
+                emptyLabel="Select location"
+                otherPlaceholder="Enter location"
+              />
+              <SelectWithOther
+                label="Employment type"
+                options={EMPLOYMENT_TYPE_OPTIONS}
+                value={experienceDraft.employment_type}
+                onChange={(employment_type) => setExperienceDraft({ ...experienceDraft, employment_type })}
+                emptyLabel="Select employment type"
+                otherPlaceholder="Enter employment type"
+              />
               <label className="field-label">
                 Summary
                 <Input
@@ -983,7 +1090,10 @@ export function ProfileSettings() {
           </Card>
 
           <Card className="stack">
-            <h2 style={{ margin: 0 }}>Education</h2>
+            <h2 style={{ margin: 0 }}>
+              Education
+              <RequiredMark />
+            </h2>
             <div className="grid-2">
               <label className="field-label">
                 Institution
@@ -992,36 +1102,22 @@ export function ProfileSettings() {
                   onChange={(e) => setEducationDraft({ ...educationDraft, institution: e.target.value })}
                 />
               </label>
-              <label className="field-label">
-                Degree
-                <Select
-                  value={educationDraft.degree}
-                  onChange={(e) => setEducationDraft({ ...educationDraft, degree: e.target.value })}
-                >
-                  {DEGREE_OPTIONS.map((option) => (
-                    <option key={option.value || "empty"} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </Select>
-              </label>
-              <label className="field-label">
-                Field of study
-                <Select
-                  value={educationDraft.field_of_study}
-                  onChange={(e) => setEducationDraft({ ...educationDraft, field_of_study: e.target.value })}
-                >
-                  <option value="">Select field of study</option>
-                  <option value="Computer Science">Computer Science</option>
-                  <option value="Information Technology">Information Technology</option>
-                  <option value="Electronics">Electronics</option>
-                  <option value="Data Science">Data Science</option>
-                  <option value="Artificial Intelligence">Artificial Intelligence</option>
-                  <option value="Mechanical">Mechanical</option>
-                  <option value="Business">Business</option>
-                  <option value="Other">Other</option>
-                </Select>
-              </label>
+              <SelectWithOther
+                label="Degree"
+                options={DEGREE_OPTIONS}
+                value={educationDraft.degree}
+                onChange={(degree) => setEducationDraft({ ...educationDraft, degree })}
+                emptyLabel="Select degree"
+                otherPlaceholder="Enter degree"
+              />
+              <SelectWithOther
+                label="Field of study"
+                options={FIELD_OF_STUDY_OPTIONS}
+                value={educationDraft.field_of_study}
+                onChange={(field_of_study) => setEducationDraft({ ...educationDraft, field_of_study })}
+                emptyLabel="Select field of study"
+                otherPlaceholder="Enter field of study"
+              />
             </div>
             <Button onClick={addEducation} disabled={!educationDraft.institution.trim()}>
               Add education
@@ -1046,7 +1142,10 @@ export function ProfileSettings() {
           </Card>
 
           <Card className="stack">
-            <h2 style={{ margin: 0 }}>Professional links</h2>
+            <h2 style={{ margin: 0 }}>
+              Professional links
+              <RequiredMark />
+            </h2>
             <div className="grid-2">
               <label className="field-label">
                 Link type

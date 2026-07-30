@@ -1,1 +1,6 @@
-import { ResumeBuilder } from "@/features/resume/resume-flow"; export default function Page() { return <ResumeBuilder />; }
+import { redirect } from "next/navigation";
+
+/** Resume builder was removed from the product flow. */
+export default function Page() {
+  redirect("/resume-analysis");
+}

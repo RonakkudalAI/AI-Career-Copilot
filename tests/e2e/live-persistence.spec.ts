@@ -91,7 +91,7 @@ test.describe("live Supabase persistence", () => {
       "Evidence Engineer role requiring Python, SQL, accessibility, and secure data persistence.",
     );
     await page.getByRole("button", { name: "Store job description" }).click();
-    await expect(page.getByRole("status")).toContainText("Job description stored");
+    await expect(page.getByRole("status")).toContainText(/Job description stored|Detected role/i);
 
     const resumeId = randomUUID();
     const versionId = randomUUID();
@@ -123,7 +123,9 @@ test.describe("live Supabase persistence", () => {
     expect(insertedVersion.error).toBeNull();
 
     await page.reload();
-    await expect(page.getByRole("heading", { name: "Confirm the evidence used for scoring" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Proceed" })).toBeEnabled({ timeout: 15000 });
+    await page.getByRole("button", { name: "Proceed" }).click();
+    await expect(page.getByRole("heading", { name: "Confirm extracted resume and JD" })).toBeVisible();
     await page.getByLabel(/I reviewed the extracted resume and job description/i).check();
     await page.getByRole("button", { name: "Confirm inputs and calculate ATS score" }).click();
     await expect(page).toHaveURL(/\/resume-analysis\/report\/[0-9a-f-]+$/);
@@ -132,13 +134,10 @@ test.describe("live Supabase persistence", () => {
     await expect(page.getByRole("heading", { name: "Matched evidence" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Missing terms" })).toBeVisible();
 
-    await page.goto(`/resume-builder/${resumeId}`);
-    await expect(page.getByRole("heading", { name: "Browser audit resume" })).toBeVisible();
-    await expect(page.getByText("NVIDIA ready")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Generate grounded suggestions" })).toBeEnabled();
-    await expect(page.getByRole("button", { name: "Create Manual Version" })).toBeEnabled();
-    await expect(page.getByRole("button", { name: "Export PDF" })).toBeEnabled();
-    await expect(page.getByRole("button", { name: "Export DOCX" })).toBeEnabled();
+    await page.goto("/resume-analysis");
+    await expect(page.getByRole("button", { name: "ATS analyses" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "New upload" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /\/100$/ })).toBeVisible();
 
     for (const [width, height] of [
       [320, 568],

@@ -63,6 +63,9 @@ p { color: var(--muted); line-height: 1.65; }
 .field:focus { outline: none; border-color: var(--primary-strong); box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 45%, transparent); }
 .field[aria-invalid="true"] { border-color: #b42318; background: #fff6f5; }
 .field-label { display: grid; gap: 7px; font-weight: 700; font-size: .9rem; }
+.required-star { color: #c62828; margin-left: 2px; font-weight: 800; }
+.completion-panel { overflow: hidden; transition: opacity .45s ease, transform .45s ease, max-height .45s ease, margin .45s ease, padding .45s ease, border-width .45s ease, box-shadow .45s ease; opacity: 1; max-height: 160px; }
+.completion-panel.is-complete { opacity: 0; transform: translateY(-6px); max-height: 0; margin: 0; padding-top: 0; padding-bottom: 0; border-width: 0; box-shadow: none; pointer-events: none; }
 .field-error { color: #a2170b; font-size: .8rem; margin: 0; }
 .badge { display: inline-flex; align-items: center; width: fit-content; padding: 5px 9px; border: 1px solid color-mix(in srgb, var(--border) 80%, var(--ink)); border-radius: 999px; color: var(--ink); font-family: var(--font-mono); font-size: .7rem; font-weight: 600; }
 .badge-info { background: var(--info); }.badge-success { background: var(--success); }.badge-warning { background: var(--warning); }.badge-danger { background: var(--danger); }.badge-ai { background: var(--ai); }

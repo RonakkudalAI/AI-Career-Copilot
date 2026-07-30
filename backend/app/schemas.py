@@ -41,10 +41,18 @@ class PreferencesUpdate(BaseModel):
 
 
 class JobDescriptionTextCreate(BaseModel):
-    title: str = Field(min_length=1, max_length=200)
+    # Optional: when omitted, the API infers title/role/company from the JD text.
+    title: str | None = Field(default=None, max_length=200)
     company: str | None = Field(default=None, max_length=200)
     role_title: str | None = Field(default=None, max_length=200)
     raw_text: str = Field(min_length=20, max_length=200_000)
+
+
+class JobDescriptionMetadataPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    title: str | None = Field(default=None, max_length=200)
+    company: str | None = Field(default=None, max_length=200)
+    role_title: str | None = Field(default=None, max_length=200)
 
 
 class ExtractionPatch(BaseModel):
