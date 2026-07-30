@@ -1,0 +1,3 @@
+Return only valid JSON matching the supplied schema. Remove unknown fields. Preserve only suggestions
+whose source block, source text, proposed text, reason, suggestion type, and evidence references are
+complete. Do not add or infer new resume facts while repairing structure.

@@ -1,0 +1,1 @@
+import { TopicPage } from "@/features/learning/learning"; export default async function Page({ params }: { params: Promise<{ topicId: string }> }) { return <TopicPage topicId={(await params).topicId} />; }
