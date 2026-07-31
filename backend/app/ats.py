@@ -61,6 +61,7 @@ class AtsEvidenceItem:
     resume_evidence: str | None
     resume_section: str | None
     score_contribution: float
+    explanation: str
 
 
 @dataclass(frozen=True)
@@ -99,7 +100,40 @@ def _requirements(job_description: str, limit: int = 50) -> list[str]:
 
 
 def _resume_lines(resume_text: str) -> list[str]:
-    return [line.strip() for line in resume_text.splitlines() if line.strip()]
+    lines: list[str] = []
+    for raw in resume_text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        lines.append(line)
+        # Also index multi-line entry fragments so keyword hits still surface.
+        if "\n" in raw:
+            lines.extend(part.strip() for part in raw.splitlines() if part.strip())
+    return lines
+
+
+def _matched_inference(requirement: str, evidence_line: str | None) -> str:
+    """
+    Deterministic AI-style inference for matched keywords.
+    When the evidence line does not clearly surface the keyword, still explain the match.
+    """
+    display = requirement
+    if evidence_line:
+        line_tokens = set(_tokens(evidence_line))
+        if requirement in line_tokens:
+            return (
+                f"AI inference: The resume explicitly references “{display}” in the matched "
+                f"evidence line, which aligns with this job requirement."
+            )
+        snippet = evidence_line if len(evidence_line) <= 160 else evidence_line[:157] + "…"
+        return (
+            f"AI inference: “{display}” is covered by keyword matching even though the nearest "
+            f"resume line does not highlight the term alone. Related context: “{snippet}”."
+        )
+    return (
+        f"AI inference: “{display}” appears in the confirmed resume text and is treated as covered "
+        f"for keyword-coverage scoring (exact normalized token match)."
+    )
 
 
 def score_resume(resume_text: str, job_description: str) -> AtsScore:
@@ -120,8 +154,11 @@ def score_resume(resume_text: str, job_description: str) -> AtsScore:
         evidence_line = next((line for line in lines if requirement in set(_tokens(line))), None)
         if is_match:
             matched.append(requirement)
+            explanation = _matched_inference(requirement, evidence_line)
         else:
             missing.append(requirement)
+            # Missing list in the UI shows keywords only; keep explanation empty.
+            explanation = ""
         evidence.append(
             AtsEvidenceItem(
                 requirement=requirement,
@@ -129,6 +166,7 @@ def score_resume(resume_text: str, job_description: str) -> AtsScore:
                 resume_evidence=evidence_line,
                 resume_section=None,
                 score_contribution=contribution if is_match else 0,
+                explanation=explanation,
             )
         )
 

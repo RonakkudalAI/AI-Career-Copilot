@@ -13,6 +13,7 @@ class CurrentUser:
     id: UUID
     email: str | None
     access_token: str
+    full_name: str | None = None
 
 
 def parse_bearer_header(value: str | None) -> str:
@@ -22,6 +23,16 @@ def parse_bearer_header(value: str | None) -> str:
     if scheme.lower() != "bearer" or not token.strip():
         raise ApiError(401, "invalid_authorization", "A valid Bearer token is required.")
     return token.strip()
+
+
+def _metadata_full_name(payload: dict) -> str | None:
+    """Extract display name from Supabase Auth user payload (sign-up metadata)."""
+    meta = payload.get("user_metadata") if isinstance(payload.get("user_metadata"), dict) else {}
+    for key in ("full_name", "name", "fullName"):
+        value = meta.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()[:120]
+    return None
 
 
 async def get_current_user(
@@ -47,4 +58,9 @@ async def get_current_user(
         user_id = UUID(payload["id"])
     except (KeyError, TypeError, ValueError) as exc:
         raise ApiError(401, "invalid_user_identity", "The authentication identity is invalid.") from exc
-    return CurrentUser(id=user_id, email=payload.get("email"), access_token=token)
+    return CurrentUser(
+        id=user_id,
+        email=payload.get("email"),
+        access_token=token,
+        full_name=_metadata_full_name(payload),
+    )

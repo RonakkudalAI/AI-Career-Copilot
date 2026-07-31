@@ -1,18 +1,52 @@
+# Dependencies
 node_modules/
-.next/
-coverage/
-playwright-report/
-test-results/
-.env
-.env.*
-!.gitignore
-.venv/
 backend/.venv/
-supabase/.temp/
-*.log
+.venv/
+
+# Build / framework caches
+.next/
+out/
+dist/
+build/
+coverage/
 *.tsbuildinfo
-__pycache__/
-*.py[cod]
+
+# Test / tooling artifacts (if reintroduced)
+test-results/
+playwright-report/
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
+.turbo/
+.cache/
+htmlcov/
+.hypothesis/
+scratch/
+tmp/
+temp/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
 *.egg-info/
+.eggs/
+*.egg
+
+# Env / secrets (never commit)
+.env
+.env.*
+!.env.example
+
+# Logs / OS
+*.log
+.DS_Store
+Thumbs.db
+
+# Supabase CLI local temp
+supabase/.temp/
+
+# Editor
+.idea/
+.vscode/
+*.swp

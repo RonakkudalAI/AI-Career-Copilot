@@ -12,12 +12,43 @@ type Activity = {
   created_at: string;
 };
 
+type LatestResumeUpload = {
+  resume_id?: string | null;
+  title?: string | null;
+  filename?: string | null;
+  created_at?: string | null;
+};
+
+type LatestInterview = {
+  id?: string | null;
+  label?: string | null;
+  status?: string | null;
+  at?: string | null;
+};
+
+type LatestJobAction = {
+  job_id?: string | null;
+  label?: string | null;
+  title?: string | null;
+  company?: string | null;
+  status?: string | null;
+  is_application?: boolean;
+  at?: string | null;
+};
+
+type LatestActions = {
+  last_resume_upload?: LatestResumeUpload | null;
+  last_interview?: LatestInterview | null;
+  last_job_applied?: LatestJobAction | null;
+};
+
 type Bootstrap = {
   profile: { full_name?: string; profile_completion?: number } | null;
   counts: Record<string, number>;
   active_resume: { title: string } | null;
   active_job_description: { title: string; role_title?: string | null } | null;
   latest_ats_analysis: { id: string; overall_score: number | null; status: string } | null;
+  latest_actions?: LatestActions | null;
   capabilities: Record<string, boolean>;
   recent_activity?: Activity[];
   workspace?: {
@@ -29,10 +60,49 @@ type Bootstrap = {
   };
 };
 
-function formatWhen(value: string) {
+function formatWhen(value?: string | null) {
+  if (!value) return "—";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString();
+}
+
+function ActionRow({
+  label,
+  value,
+  when,
+  href,
+  empty,
+}: {
+  label: string;
+  value?: string | null;
+  when?: string | null;
+  href?: string;
+  empty: string;
+}) {
+  return (
+    <div className="latest-action-row">
+      <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+        <div style={{ minWidth: 0 }}>
+          <p className="mono" style={{ margin: "0 0 4px", opacity: 0.8 }}>
+            {label}
+          </p>
+          {value ? (
+            href ? (
+              <Link href={href} style={{ fontWeight: 650 }}>
+                {value}
+              </Link>
+            ) : (
+              <p style={{ margin: 0, color: "var(--ink)", fontWeight: 650 }}>{value}</p>
+            )
+          ) : (
+            <p style={{ margin: 0 }}>{empty}</p>
+          )}
+        </div>
+        {value ? <span className="mono muted" style={{ whiteSpace: "nowrap", fontSize: "var(--text-xs)" }}>{formatWhen(when)}</span> : null}
+      </div>
+    </div>
+  );
 }
 
 export function Dashboard() {
@@ -53,7 +123,12 @@ export function Dashboard() {
 
   const first = data?.profile?.full_name?.split(" ")[0] || "there";
   const completion = data?.workspace?.profile_completion ?? data?.profile?.profile_completion ?? 0;
-  const activities = data?.recent_activity || [];
+  // Backend retains at most 5; clamp on the client as a hard display guard.
+  const activities = (data?.recent_activity || []).slice(0, 5);
+  const actions = data?.latest_actions;
+  const lastResume = actions?.last_resume_upload;
+  const lastInterview = actions?.last_interview;
+  const lastJob = actions?.last_job_applied;
 
   return (
     <>
@@ -107,41 +182,72 @@ export function Dashboard() {
           <Link href="/settings/profile">Review profile</Link>
         </Card>
         <Card className="panel-blue stack">
-          <h2 style={{ margin: 0 }}>Workflow readiness</h2>
-          <p>
-            <strong>Resume:</strong>{" "}
-            {data?.workspace?.has_confirmed_resume
-              ? data?.active_resume?.title || "Confirmed resume available"
-              : "Upload and confirm one"}
+          <h2 style={{ margin: 0 }}>Latest progress</h2>
+          <p className="muted" style={{ margin: 0, fontSize: "var(--text-sm)" }}>
+            Your most recent resume, interview, and job action from saved records.
           </p>
-          <p>
-            <strong>Job description:</strong>{" "}
-            {data?.active_job_description?.role_title ||
-              data?.active_job_description?.title ||
-              "Add one before analysis"}
-          </p>
-          {data?.latest_ats_analysis ? (
-            <p>
+          <ActionRow
+            label="Last resume uploaded"
+            value={lastResume?.title || lastResume?.filename}
+            when={lastResume?.created_at}
+            href="/resume-analysis?tab=resumes"
+            empty="No resume uploaded yet"
+          />
+          <ActionRow
+            label="Last mock interview"
+            value={
+              lastInterview
+                ? `${lastInterview.label || "Mock interview"}${
+                    lastInterview.status ? ` · ${lastInterview.status.replaceAll("_", " ")}` : ""
+                  }`
+                : null
+            }
+            when={lastInterview?.at}
+            href={lastInterview?.id ? `/mock-interview/session/${lastInterview.id}` : "/mock-interview"}
+            empty="No mock interview yet"
+          />
+          <ActionRow
+            label={lastJob?.is_application ? "Last job applied" : "Last job saved"}
+            value={lastJob?.label || lastJob?.title}
+            when={lastJob?.at}
+            href={lastJob?.job_id ? `/jobs/${lastJob.job_id}` : "/jobs/saved"}
+            empty="No job applications or saved jobs yet"
+          />
+          {data?.latest_ats_analysis?.id ? (
+            <p style={{ margin: 0 }}>
               <Link href={`/resume-analysis/report/${data.latest_ats_analysis.id}`}>
-                Open the latest ATS evidence report
+                Open latest ATS report
+                {data.latest_ats_analysis.overall_score != null
+                  ? ` (${data.latest_ats_analysis.overall_score}/100)`
+                  : ""}
               </Link>
             </p>
-          ) : (
-            <p>Confirm a resume and job description to calculate keyword coverage.</p>
-          )}
+          ) : null}
         </Card>
       </div>
-      <Card className="stack" style={{ marginTop: 28 }}>
-        <h2 style={{ margin: 0 }}>Recent activity</h2>
+      <Card className="stack activity-feed" style={{ marginTop: 28 }}>
+        <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline" }}>
+          <h2 style={{ margin: 0 }}>Recent activity</h2>
+          <span className="muted mono" style={{ fontSize: "var(--text-xs)" }}>
+            Latest {activities.length}/5
+          </span>
+        </div>
         {activities.length === 0 ? (
           <p style={{ margin: 0 }}>No saved activity yet. Profile and resume actions will appear here.</p>
         ) : (
-          activities.map((item) => (
-            <div className="row" key={item.id} style={{ justifyContent: "space-between" }}>
-              <span>{item.summary}</span>
-              <span className="mono">{formatWhen(item.created_at)}</span>
-            </div>
-          ))
+          <div className="activity-list">
+            {activities.map((item, index) => (
+              <div
+                className="activity-item row"
+                key={item.id}
+                data-age={index}
+                style={{ justifyContent: "space-between" }}
+              >
+                <span>{item.summary}</span>
+                <span className="mono">{formatWhen(item.created_at)}</span>
+              </div>
+            ))}
+          </div>
         )}
       </Card>
     </>

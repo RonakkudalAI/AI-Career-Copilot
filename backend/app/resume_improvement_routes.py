@@ -17,6 +17,7 @@ from app.resume_improvements import (
     generate_improvements,
 )
 from app.schemas import (
+    ApplyImprovementBody,
     ManualResumeVersionCreate,
     ResumeExportCreate,
     ResumeImprovementCreate,
@@ -72,10 +73,18 @@ def update_suggestion_decision(
 @router.post("/resume-improvements/{run_id}/apply", status_code=201)
 def apply_improvement(
     run_id: UUID,
+    payload: ApplyImprovementBody | None = None,
     user: CurrentUser = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
-    return apply_suggestions(client_for(settings, user), settings, user, str(run_id))
+    body = payload or ApplyImprovementBody()
+    return apply_suggestions(
+        client_for(settings, user),
+        settings,
+        user,
+        str(run_id),
+        apply_mode=body.apply_mode,
+    )
 
 
 @router.get("/resume-comparisons")
@@ -96,7 +105,12 @@ def create_candidate_edited_version(
     settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
     return create_manual_version(
-        client_for(settings, user), settings, user, str(version_id), payload.structured_content
+        client_for(settings, user),
+        settings,
+        user,
+        str(version_id),
+        payload.structured_content,
+        apply_mode=payload.apply_mode,
     )
 
 

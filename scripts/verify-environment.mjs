@@ -23,6 +23,9 @@ const checks = [
   ["NVIDIA_API_KEY", "SERVER-ONLY"],
   ["NVIDIA_BASE_URL", "SERVER-ONLY"],
   ["NVIDIA_MODEL", "SERVER-ONLY"],
+  ["GROQ_API_KEY", "SERVER-ONLY-OPTIONAL"],
+  ["GROQ_BASE_URL", "SERVER-ONLY-OPTIONAL"],
+  ["GROQ_MODEL", "SERVER-ONLY-OPTIONAL"],
 ];
 
 const failures = [];
@@ -38,7 +41,7 @@ function requireAbsoluteHttpUrl(name) {
 for (const [name, scope] of checks) {
   const state = environment[name]?.length ? "PRESENT" : "MISSING";
   console.log(`${name}: ${state} - ${scope}`);
-  if (state === "MISSING") failures.push(`${name}: MISSING`);
+  if (state === "MISSING" && !scope.includes("OPTIONAL")) failures.push(`${name}: MISSING`);
 }
 
 for (const name of Object.keys(environment)) {
@@ -50,6 +53,7 @@ for (const name of Object.keys(environment)) {
 for (const name of ["NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_API_BASE_URL", "SUPABASE_URL", "NVIDIA_BASE_URL"]) {
   requireAbsoluteHttpUrl(name);
 }
+if (environment.GROQ_BASE_URL) requireAbsoluteHttpUrl("GROQ_BASE_URL");
 
 if (environment.NEXT_PUBLIC_SUPABASE_URL !== environment.SUPABASE_URL) {
   failures.push("Frontend and backend Supabase projects are CONFLICTING");
@@ -59,6 +63,9 @@ if (environment.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY !== environment.SUPABASE_PU
 }
 if (environment.NVIDIA_API_KEY && !environment.NVIDIA_MODEL) {
   failures.push("NVIDIA_MODEL: MISSING while live generation is enabled");
+}
+if (environment.GROQ_API_KEY && !environment.GROQ_MODEL) {
+  failures.push("GROQ_MODEL: MISSING while Groq interview generation is enabled");
 }
 
 if (failures.length) {

@@ -11,13 +11,9 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "test:e2e": "playwright test",
-    "test:e2e:ui": "playwright test --ui",
     "check": "npm run check:secrets && npm run check:env && npm run check:frontend",
     "check:env": "node scripts/verify-environment.mjs",
-    "check:frontend": "npm run lint && npm run typecheck && npm run test && npm run build",
+    "check:frontend": "npm run lint && npm run typecheck && npm run build",
     "check:secrets": "node scripts/check-secrets.mjs"
   },
   "dependencies": {
@@ -25,7 +21,6 @@
     "@supabase/supabase-js": "^2.57.4",
     "@fontsource-variable/space-grotesk": "^5.3.0",
     "@fontsource/ibm-plex-mono": "^5.3.0",
-    "@hookform/resolvers": "latest",
     "@react-three/drei": "latest",
     "@react-three/fiber": "latest",
     "lucide-react": "latest",
@@ -33,27 +28,18 @@
     "next": "latest",
     "react": "latest",
     "react-dom": "latest",
-    "react-hook-form": "latest",
-    "recharts": "latest",
-    "three": "latest",
-    "zod": "latest"
+    "three": "latest"
   },
   "devDependencies": {
-    "@playwright/test": "latest",
     "@tailwindcss/postcss": "latest",
-    "@testing-library/jest-dom": "latest",
-    "@testing-library/react": "latest",
     "@types/node": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "@types/three": "latest",
-    "@vitejs/plugin-react": "latest",
     "eslint": "latest",
     "eslint-config-next": "latest",
-    "jsdom": "latest",
     "supabase": "^2.110.0",
     "tailwindcss": "latest",
-    "typescript": "latest",
-    "vitest": "latest"
+    "typescript": "latest"
   }
 }

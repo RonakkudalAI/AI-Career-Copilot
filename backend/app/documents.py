@@ -1,3 +1,12 @@
+"""
+Document validation helpers + re-exports of source-true parsers.
+
+Parsing lives in app.parsing (text extraction + section boundaries).
+This module keeps the public import path stable for routes and tests.
+"""
+
+from __future__ import annotations
+
 import hashlib
 import io
 import re
@@ -5,28 +14,32 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
-from docx import Document
-from pypdf import PdfReader
-
 from app.errors import ApiError
+from app.parsing.sections import (
+    HEADING_ALIASES,
+    extract_sections,
+    match_section_heading,
+)
+from app.parsing.text_extract import DOCX_MIME, PDF_MIME, extract_text
 
-PDF_MIME = "application/pdf"
-DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 ALLOWED_SUFFIXES = {".pdf": PDF_MIME, ".docx": DOCX_MIME}
-HEADINGS = {
-    "contact": {"contact", "contact details"},
-    "summary": {"summary", "profile", "objective"},
-    "skills": {"skills", "technical skills", "core skills"},
-    "experience": {"experience", "work experience", "employment"},
-    "projects": {"projects", "project experience"},
-    "education": {"education", "academic background"},
-    "certifications": {"certifications", "certificates"},
-    "languages": {"languages"},
-    "links": {"links"},
-    "responsibilities": {"responsibilities"},
-    "requirements": {"requirements", "required qualifications"},
-    "preferred_qualifications": {"preferred qualifications", "preferred skills"},
-}
+
+# Re-export for callers that import from app.documents
+__all__ = [
+    "PDF_MIME",
+    "DOCX_MIME",
+    "ALLOWED_SUFFIXES",
+    "HEADING_ALIASES",
+    "safe_filename",
+    "sha256_bytes",
+    "validate_document",
+    "extract_text",
+    "extract_sections",
+    "match_section_heading",
+    "infer_resume_title",
+    "infer_job_metadata",
+    "extract_skill_candidates",
+]
 
 
 def safe_filename(filename: str) -> str:
@@ -63,56 +76,6 @@ def validate_document(filename: str, declared_mime: str | None, content: bytes, 
     return expected
 
 
-def extract_text(content: bytes, mime_type: str) -> str:
-    try:
-        if mime_type == PDF_MIME:
-            reader = PdfReader(io.BytesIO(content))
-            if reader.is_encrypted:
-                raise ApiError(400, "encrypted_pdf", "Password-protected PDFs are not supported.")
-            text = "\n".join(page.extract_text() or "" for page in reader.pages)
-        else:
-            document = Document(io.BytesIO(content))
-            text = "\n".join(paragraph.text for paragraph in document.paragraphs)
-    except ApiError:
-        raise
-    except Exception as exc:
-        raise ApiError(400, "document_parse_failed", "The document could not be read.") from exc
-    if not text.strip():
-        raise ApiError(
-            422,
-            "document_has_no_text",
-            "No usable text was found. Scanned documents require OCR, which is not enabled.",
-        )
-    return text.strip()
-
-
-def extract_sections(text: str, schema_version: str = "resume-extraction-v1") -> dict[str, Any]:
-    sections: dict[str, list[str]] = {}
-    unclassified: list[str] = []
-    current: str | None = None
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        normalized = re.sub(r"[^a-z ]", "", line.lower()).strip()
-        matched = next((key for key, names in HEADINGS.items() if normalized in names), None)
-        if matched:
-            current = matched
-            sections.setdefault(current, [])
-        elif current:
-            sections[current].append(line)
-        else:
-            unclassified.append(line)
-    warnings = [] if sections else ["No recognised section headings were found; review all extracted text."]
-    return {
-        "schema_version": schema_version,
-        "sections": sections,
-        "unclassified_blocks": unclassified,
-        "warnings": warnings,
-        "corrections": {},
-    }
-
-
 def infer_resume_title(filename: str | None) -> str:
     """Derive a resume library title from the uploaded filename."""
     stem = Path(filename or "Resume").stem
@@ -131,7 +94,7 @@ _ROLE_HINT = re.compile(
 def infer_job_metadata(text: str) -> dict[str, str | None]:
     """
     Infer title, role, and company from job-description text so candidates
-    do not need to type those fields manually.
+    do not need to type those fields manually. Uses only text present in the JD.
     """
     lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
     role: str | None = None

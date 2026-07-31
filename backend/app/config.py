@@ -24,7 +24,8 @@ class Settings(BaseSettings):
     supabase_publishable_key: str = ""
     supabase_secret_key: str = ""
     document_max_bytes: int = 10 * 1024 * 1024
-    avatar_max_bytes: int = 5 * 1024 * 1024
+    # Profile pictures must stay under 3 MB (enforced in API + storage bucket policy).
+    avatar_max_bytes: int = 3 * 1024 * 1024
     interview_media_max_bytes: int = 250 * 1024 * 1024
     document_bucket: str = "candidate-documents"
     avatar_bucket: str = "candidate-avatars"
@@ -37,6 +38,14 @@ class Settings(BaseSettings):
     nvidia_max_output_tokens: int = Field(default=4096, ge=256, le=8192)
     nvidia_temperature: float = Field(default=0.2, ge=0, le=1)
     nvidia_prompt_version: str = "resume-improvement-v1"
+    # Groq — separate provider for interview questions (not an NVIDIA fallback).
+    groq_api_key: str = ""
+    groq_base_url: str = "https://api.groq.com/openai/v1"
+    groq_model: str = "llama-3.1-8b-instant"
+    groq_timeout_seconds: float = Field(default=45, gt=0, le=180)
+    groq_max_retries: int = Field(default=2, ge=0, le=2)
+    groq_max_output_tokens: int = Field(default=2048, ge=256, le=8192)
+    groq_temperature: float = Field(default=0.4, ge=0, le=1)
     improvement_max_sections: int = Field(default=4, ge=1, le=8)
     improvement_max_source_chars: int = Field(default=30_000, ge=1_000, le=100_000)
     improvement_max_jd_chars: int = Field(default=12_000, ge=1_000, le=50_000)
@@ -49,7 +58,7 @@ class Settings(BaseSettings):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
 
-    @field_validator("supabase_url", "nvidia_base_url")
+    @field_validator("supabase_url", "nvidia_base_url", "groq_base_url")
     @classmethod
     def validate_server_url(cls, value: str) -> str:
         if not value:
@@ -74,6 +83,8 @@ class Settings(BaseSettings):
     def validate_provider_pair(self) -> "Settings":
         if self.nvidia_api_key and not self.nvidia_model:
             raise ValueError("NVIDIA_MODEL is required when NVIDIA_API_KEY is configured")
+        if self.groq_api_key and not self.groq_model:
+            raise ValueError("GROQ_MODEL is required when GROQ_API_KEY is configured")
         return self
 
     @property
@@ -83,6 +94,10 @@ class Settings(BaseSettings):
     @property
     def nvidia_configured(self) -> bool:
         return bool(self.nvidia_api_key and self.nvidia_model and self.nvidia_base_url)
+
+    @property
+    def groq_configured(self) -> bool:
+        return bool(self.groq_api_key and self.groq_model and self.groq_base_url)
 
 
 @lru_cache

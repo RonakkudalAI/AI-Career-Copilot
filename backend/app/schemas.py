@@ -19,6 +19,98 @@ class ProfilePatch(BaseModel):
     onboarding_completed: bool | None = None
 
 
+class ProfileFromResumePreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    resume_version_id: UUID | None = None
+
+
+class ProfileFromResumeApplyRequest(BaseModel):
+    """Apply a reviewed resume-derived draft to the candidate profile tables."""
+
+    model_config = ConfigDict(extra="forbid")
+    fill_empty_only: bool = True
+    profile: dict[str, Any] = Field(default_factory=dict)
+    skills: list[dict[str, Any]] = Field(default_factory=list, max_length=80)
+    experiences: list[dict[str, Any]] = Field(default_factory=list, max_length=40)
+    education: list[dict[str, Any]] = Field(default_factory=list, max_length=20)
+    projects: list[dict[str, Any]] = Field(default_factory=list, max_length=30)
+    certifications: list[dict[str, Any]] = Field(default_factory=list, max_length=30)
+    languages: list[dict[str, Any]] = Field(default_factory=list, max_length=20)
+    links: list[dict[str, Any]] = Field(default_factory=list, max_length=20)
+
+
+class LlmProfileCore(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    full_name: str | None = Field(default=None, max_length=120)
+    headline: str | None = Field(default=None, max_length=240)
+    bio: str | None = Field(default=None, max_length=4000)
+    phone: str | None = Field(default=None, max_length=40)
+    location: str | None = Field(default=None, max_length=160)
+    current_role: str | None = Field(default=None, max_length=160)
+    years_experience: float | None = Field(default=None, ge=0, le=80)
+    career_level: str | None = Field(default=None, max_length=80)
+
+
+class LlmExperienceItem(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    company_name: str = Field(min_length=1, max_length=200)
+    role_title: str = Field(min_length=1, max_length=200)
+    location: str | None = Field(default=None, max_length=160)
+    employment_type: str | None = Field(default=None, max_length=80)
+    summary: str | None = Field(default=None, max_length=4000)
+    is_current: bool = False
+
+
+class LlmEducationItem(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    institution: str = Field(min_length=1, max_length=200)
+    degree: str | None = Field(default=None, max_length=160)
+    field_of_study: str | None = Field(default=None, max_length=160)
+    grade: str | None = Field(default=None, max_length=80)
+    description: str | None = Field(default=None, max_length=2000)
+
+
+class LlmProjectItem(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    title: str = Field(min_length=1, max_length=200)
+    role: str | None = Field(default=None, max_length=160)
+    description: str | None = Field(default=None, max_length=4000)
+
+
+class LlmCertificationItem(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    name: str = Field(min_length=1, max_length=200)
+    issuer: str | None = Field(default=None, max_length=160)
+
+
+class LlmLanguageItem(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    language: str = Field(min_length=1, max_length=80)
+    proficiency: str | None = Field(default=None, max_length=80)
+
+
+class LlmLinkItem(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    link_type: Literal["linkedin", "github", "portfolio", "website", "other"] = "other"
+    url: str = Field(min_length=3, max_length=500)
+    label: str | None = Field(default=None, max_length=120)
+
+
+class ProfileResumeExtractResult(BaseModel):
+    """Structured LLM output for profile fill-from-resume (evidence-bound)."""
+
+    model_config = ConfigDict(extra="ignore")
+    profile: LlmProfileCore = Field(default_factory=LlmProfileCore)
+    skills: list[str] = Field(default_factory=list, max_length=60)
+    experiences: list[LlmExperienceItem] = Field(default_factory=list, max_length=25)
+    education: list[LlmEducationItem] = Field(default_factory=list, max_length=15)
+    projects: list[LlmProjectItem] = Field(default_factory=list, max_length=20)
+    certifications: list[LlmCertificationItem] = Field(default_factory=list, max_length=20)
+    languages: list[LlmLanguageItem] = Field(default_factory=list, max_length=15)
+    links: list[LlmLinkItem] = Field(default_factory=list, max_length=15)
+    warnings: list[str] = Field(default_factory=list, max_length=20)
+
+
 class PreferencesUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     target_roles: list[str] = []
@@ -117,6 +209,14 @@ class PrivacySettings(BaseModel):
     profile_visibility: Literal["private", "limited"] = "private"
 
 
+class AccountDeleteRequest(BaseModel):
+    """Explicit confirmation required before irreversible account deletion."""
+
+    model_config = ConfigDict(extra="forbid")
+    confirmation: str = Field(min_length=1, max_length=80)
+    email: str | None = Field(default=None, max_length=320)
+
+
 class LinkInput(BaseModel):
     link_type: Literal["linkedin", "github", "portfolio", "website", "other"]
     label: str | None = None
@@ -187,3 +287,11 @@ class ManualResumeVersionCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     structured_content: dict[str, Any]
     candidate_confirmed: Literal[True]
+    # Default: patch the existing resume version (same resume + same version id).
+    # "new_version" keeps the prior content as history and is opt-in only.
+    apply_mode: Literal["in_place", "new_version"] = "in_place"
+
+
+class ApplyImprovementBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    apply_mode: Literal["in_place", "new_version"] = "in_place"
