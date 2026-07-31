@@ -6,7 +6,7 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
   const supabase = createSupabaseClient();
   if (!supabase) {
     throw new Error(
-      "Supabase is not configured. Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY to the root .env file.",
+      "Sign-in is not available right now. Please try again later or contact support if this continues.",
     );
   }
   const {
@@ -34,7 +34,7 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
     if (response.status === 503) {
       throw new Error(
         body.error?.message ||
-          "Backend dependencies are unavailable. Check Supabase configuration and applied migrations.",
+          "The service is temporarily unavailable. Please try again in a moment.",
       );
     }
     throw new Error(body.error?.message || `Request failed (${response.status}).`);

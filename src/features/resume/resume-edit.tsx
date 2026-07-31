@@ -842,23 +842,12 @@ export function AtsResumeEdit() {
       <Card className="stack">
         <h2 style={{ margin: 0 }}>AI suggestions for this resume (evidence-checked)</h2>
         <p className="muted" style={{ margin: 0, fontSize: "var(--text-sm)" }}>
-          The improvement agent only rewrites blocks that already exist on this resume. Applied changes update this
-          same resume in place.
+          Suggestions only rewrite text that already exists on this resume. Applied changes update this same resume.
           {!capabilities?.improvement_available
-            ? " NVIDIA is not configured — manual edit, export, and re-score still work."
-            : " NVIDIA resume-improvement agent is ready."}
+            ? " AI suggestions are unavailable right now — you can still edit manually, export, and re-score."
+            : " AI suggestions are available for this resume."}
         </p>
-        {capabilities?.agents?.length ? (
-          <p className="muted mono" style={{ margin: 0, fontSize: "var(--text-xs)" }}>
-            Agents:{" "}
-            {capabilities.agents
-              .map(
-                (a) =>
-                  `${a.id}${a.configured ? "(ai)" : "(fallback)"}`,
-              )
-              .join(" · ")}
-          </p>
-        ) : null}
+
         <fieldset className="section-picker">
           <legend>Sections (max 4)</legend>
           {sectionKeys.map((key) => (

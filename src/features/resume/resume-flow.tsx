@@ -168,7 +168,7 @@ export function AnalysisHistory() {
     <>
       <PageHeader
         eyebrow="Resume analysis"
-        title="ATS analysis workspace"
+        title="Resume analysis"
         description="Manage resumes, review past ATS scores, or start a new analysis."
       />
       <nav className="settings-nav" aria-label="Resume analysis sections">
@@ -929,7 +929,7 @@ export function AtsReport() {
   if (error) {
     return (
       <>
-        <PageHeader eyebrow="ATS analysis" title="Report unavailable" description="The persisted report could not be loaded." />
+        <PageHeader eyebrow="ATS analysis" title="Report unavailable" description="This analysis report could not be loaded." />
         <Card>
           <p role="alert" className="field-error">
             {error}
@@ -943,7 +943,7 @@ export function AtsReport() {
       <PageHeader
         eyebrow="ATS analysis"
         title="Loading evidence report"
-        description="Reading the persisted analysis from your workspace…"
+        description="Loading your analysis report…"
       />
     );
   }
@@ -1047,11 +1047,7 @@ export function AtsReport() {
             </ul>
           </div>
         ) : null}
-        {analysis.summary?.inference_provider ? (
-          <p className="muted mono" style={{ margin: 0, fontSize: "var(--text-xs)" }}>
-            Brief source: {analysis.summary.inference_provider}
-          </p>
-        ) : null}
+
       </Card>
       <Card>
         <p className="muted">

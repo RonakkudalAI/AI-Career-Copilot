@@ -48,8 +48,11 @@ experiences (array of objects)
   - company_name: employer as written
   - role_title: job title as written
   - location: office/remote city if present
+  - start_date: start month/year as YYYY-MM-01 when a month/year is stated; otherwise null
+  - end_date: end month/year as YYYY-MM-01 when a month/year is stated; otherwise null
   - summary: combine bullet points into clear text (preserve facts/metrics)
   - is_current: true if Present/Current/Ongoing
+  - For current roles, end_date must be null. Never infer missing dates.
 
 education (array of objects)
   - institution: university/college name

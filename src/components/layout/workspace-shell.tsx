@@ -3,18 +3,61 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
-import { Bell, BookOpenCheck, BriefcaseBusiness, FileSearch, Gauge, Menu, Mic2, Settings, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { BookOpenCheck, BriefcaseBusiness, FileSearch, Gauge, Menu, Mic2, Settings, X } from "lucide-react";
 import { routes } from "@/lib/routes";
 import { createClient } from "@/lib/supabase/client";
 import { apiRequest } from "@/lib/api/client";
+import { ThemeToggle } from "@/components/theme-toggle";
+import { ProfileCompletionToast } from "@/components/profile-completion-toast";
+import {
+  PROFILE_UPDATED_EVENT,
+  extractMissing,
+  resolveCompletion,
+  type ProfileMissingItem,
+  type ProfileUpdatedDetail,
+} from "@/lib/profile-completion";
 
-const navigation = [{ href: routes.dashboard, label: "Dashboard", icon: Gauge },{ href: routes.resume, label: "Resume Analysis", icon: FileSearch },{ href: routes.interview, label: "Mock Interview", icon: Mic2 },{ href: routes.learning, label: "Learning Path", icon: BookOpenCheck },{ href: routes.jobs, label: "Recommended Jobs", icon: BriefcaseBusiness },{ href: routes.settings, label: "Settings", icon: Settings }];
+const navigation = [
+  { href: routes.dashboard, label: "Dashboard", icon: Gauge },
+  { href: routes.resume, label: "Resume Analysis", icon: FileSearch },
+  { href: routes.interview, label: "Mock Interview", icon: Mic2 },
+  { href: routes.learning, label: "Learning Path", icon: BookOpenCheck },
+  { href: routes.jobs, label: "Recommended Jobs", icon: BriefcaseBusiness },
+  { href: routes.settings, label: "Settings", icon: Settings },
+];
+
 type Bootstrap = {
-  profile: { full_name?: string; avatar_url?: string | null; avatar_path?: string | null } | null;
-  active_resume: { title: string } | null;
-  unread_notification_count: number;
+  profile: {
+    full_name?: string;
+    avatar_url?: string | null;
+    avatar_path?: string | null;
+    profile_completion?: number;
+    profile_completion_details?: { missing?: ProfileMissingItem[]; total?: number };
+  } | null;
+  active_resume: { id: string } | null;
+  workspace?: {
+    profile_completion?: number;
+    profile_missing?: ProfileMissingItem[];
+    profile_completion_details?: { missing?: ProfileMissingItem[]; total?: number };
+  };
 };
+
+function completionFromBootstrap(data: Bootstrap | null): {
+  completion: number;
+  missing: ProfileMissingItem[];
+} {
+  if (!data) return { completion: 0, missing: [] };
+  const details =
+    data.workspace?.profile_completion_details || data.profile?.profile_completion_details || null;
+  const missing = extractMissing(details, data.workspace?.profile_missing);
+  const completion = resolveCompletion(
+    data.workspace?.profile_completion ?? data.profile?.profile_completion,
+    details,
+    missing,
+  );
+  return { completion, missing };
+}
 
 export function WorkspaceShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -22,20 +65,77 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const [profileMenu, setProfileMenu] = useState(false);
   const [bootstrap, setBootstrap] = useState<Bootstrap | null>(null);
+  // Live score from last profile mutation (server payload) until bootstrap catches up.
+  const [liveCompletion, setLiveCompletion] = useState<{
+    completion: number;
+    missing: ProfileMissingItem[];
+  } | null>(null);
+  const fetchGen = useRef(0);
+
+  const loadBootstrap = useCallback(() => {
+    const gen = ++fetchGen.current;
+    apiRequest<Bootstrap>("/me/bootstrap")
+      .then((data) => {
+        if (gen !== fetchGen.current) return; // ignore stale responses
+        setBootstrap(data);
+        setLiveCompletion(null);
+      })
+      .catch(() => {
+        if (gen !== fetchGen.current) return;
+        setBootstrap(null);
+      });
+  }, []);
+
+  // Initial load once per shell mount.
   useEffect(() => {
-    apiRequest<Bootstrap>("/me/bootstrap").then(setBootstrap).catch(() => setBootstrap(null));
-  }, [pathname]);
+    loadBootstrap();
+  }, [loadBootstrap]);
+
+  // Keep toast/completion in sync after profile mutations.
+  useEffect(() => {
+    function onProfileUpdated(event: Event) {
+      const detail = (event as CustomEvent<ProfileUpdatedDetail>).detail;
+      if (
+        detail &&
+        (detail.profile_completion != null ||
+          detail.profile_missing ||
+          detail.profile_completion_details)
+      ) {
+        const details = detail.profile_completion_details;
+        const missing = extractMissing(details, detail.profile_missing);
+        const completion = resolveCompletion(detail.profile_completion, details, missing);
+        setLiveCompletion({ completion, missing });
+      }
+      // Re-fetch bootstrap so percentage matches authoritative server recalculation.
+      loadBootstrap();
+    }
+    window.addEventListener(PROFILE_UPDATED_EVENT, onProfileUpdated);
+    return () => window.removeEventListener(PROFILE_UPDATED_EVENT, onProfileUpdated);
+  }, [loadBootstrap]);
+
+  // When leaving Settings, refresh once so UI matches latest server score.
+  const prevPathRef = useRef(pathname);
+  useEffect(() => {
+    const prev = prevPathRef.current;
+    prevPathRef.current = pathname;
+    if (prev?.startsWith("/settings") && !pathname?.startsWith("/settings")) {
+      loadBootstrap();
+    }
+  }, [pathname, loadBootstrap]);
+
   useEffect(() => {
     document.body.style.overflow = open ? "hidden" : "";
     return () => {
       document.body.style.overflow = "";
     };
   }, [open]);
+
   async function logout() {
     await createClient()?.auth.signOut();
     router.replace("/");
     router.refresh();
   }
+
   const initials = (bootstrap?.profile?.full_name || "User")
     .split(" ")
     .map((part) => part[0])
@@ -43,6 +143,10 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
     .slice(0, 2)
     .toUpperCase();
   const avatarUrl = bootstrap?.profile?.avatar_url || null;
+  const fromBootstrap = completionFromBootstrap(bootstrap);
+  const completion = liveCompletion?.completion ?? fromBootstrap.completion;
+  const missing: ProfileMissingItem[] = liveCompletion?.missing ?? fromBootstrap.missing;
+
   return (
     <div className="workspace">
       <aside className={`sidebar ${open ? "open" : ""}`} aria-label="Workspace navigation">
@@ -75,13 +179,6 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
             );
           })}
         </nav>
-        <div className="sidebar-bottom">
-          <div className="resume-context">
-            <span className="mono">Active resume</span>
-            <strong>{bootstrap?.active_resume?.title || "No active resume"}</strong>
-            <p>{bootstrap?.active_resume ? "Used for confirmed workflows" : "Upload and confirm a resume"}</p>
-          </div>
-        </div>
       </aside>
       <div className="workspace-main">
         <header className="app-header">
@@ -90,12 +187,15 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
           </button>
           <strong className="app-header-title">Career Copilot</strong>
           <div className="app-header-actions">
-            <span className="badge badge-success">Connected workspace</span>
-            <button className="icon-button" aria-label={`${bootstrap?.unread_notification_count || 0} unread notifications`}>
-              <Bell />
-            </button>
-            <div style={{ position: "relative" }}>
-              <button className="avatar" onClick={() => setProfileMenu(!profileMenu)} aria-expanded={profileMenu}>
+            <ThemeToggle />
+            <div className="profile-menu-wrap">
+              <button
+                className="avatar"
+                onClick={() => setProfileMenu(!profileMenu)}
+                aria-label="Open profile menu"
+                aria-expanded={profileMenu}
+                aria-haspopup="menu"
+              >
                 {avatarUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={avatarUrl} alt="" className="avatar-image" />
@@ -104,7 +204,7 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
                 )}
               </button>
               {profileMenu && (
-                <div className="panel stack" style={{ position: "absolute", right: 0, top: 52, width: 220, zIndex: 80 }}>
+                <div className="panel stack profile-menu" role="menu">
                   <Link href="/settings/profile">View profile</Link>
                   <Link href="/settings/account">Account settings</Link>
                   <button className="button button-secondary" onClick={logout}>
@@ -118,6 +218,7 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
         <main id="main-content" className="workspace-content">
           {children}
         </main>
+        <ProfileCompletionToast completion={completion} missing={missing} />
       </div>
     </div>
   );

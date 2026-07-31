@@ -67,9 +67,9 @@ export function InterviewHome() {
   return (
     <>
       <PageHeader
-        eyebrow="Persisted practice"
+        eyebrow="Practice"
         title="Interview sessions"
-        description="Sessions and questions are stored in your account. Practice questions are generated with Groq when configured."
+        description="Sessions and questions are stored in your account. Practice questions are generated when AI is available."
         action={
           <a className="button button-primary" href="/mock-interview/setup">
             Create session
@@ -155,7 +155,7 @@ export function InterviewSetup() {
       <PageHeader
         eyebrow="Interview setup"
         title="Create a practice session"
-        description="Questions are generated with Groq when GROQ_API_KEY is set. NVIDIA is used only for resume AI tasks, not as a fallback here."
+        description="Choose a mode and role. We will generate practice questions for this session and save them to your account."
       />
       <Card className="stack">
         <label className="field-label">
@@ -226,10 +226,10 @@ export function InterviewSession() {
         if (ctx?.provider) {
           setQuestionSource(
             ctx.provider === "groq"
-              ? `Questions from Groq agent${ctx.model ? ` (${ctx.model})` : ""}`
+              ? "Questions generated for this session"
               : ctx.provider === "template"
-                ? "Questions from local templates (Groq unavailable or not configured)"
-                : `Questions from ${ctx.provider}`,
+                ? "Standard practice questions"
+                : "Questions for this session",
           );
         }
       })
@@ -326,7 +326,7 @@ export function InterviewSession() {
         <Card className="stack">
           <p>No questions are available for this session yet.</p>
           <p className="muted" style={{ margin: 0 }}>
-            Start the session again after configuring GROQ_API_KEY, or create a new session.
+            Start the session again, or create a new session.
           </p>
         </Card>
       ) : (

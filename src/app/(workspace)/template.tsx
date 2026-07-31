@@ -1,3 +1,4 @@
-"use client";
-import { motion } from "motion/react";
-export default function Template({ children }: { children: React.ReactNode }) { return <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: .24 }}>{children}</motion.div>; }
+/** Lightweight page shell — avoid motion on every navigation (was a major source of sticky lag). */
+export default function Template({ children }: { children: React.ReactNode }) {
+  return <div className="page-enter">{children}</div>;
+}

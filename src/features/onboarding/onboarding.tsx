@@ -134,8 +134,8 @@ export function Onboarding() {
       <div className="container">
         <PageHeader
           eyebrow="Candidate onboarding"
-          title="Build your persisted profile"
-          description="These details are saved to your private Supabase profile. Your sign-up name is filled in automatically when available."
+          title="Build your profile"
+          description="These details are saved to your private profile. Your sign-up name is filled in automatically when available."
         />
         <Card className="stack">
           {loading ? (

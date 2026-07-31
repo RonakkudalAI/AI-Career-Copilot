@@ -37,6 +37,7 @@ from app.documents import (
 )
 from app.errors import ApiError
 from app.profile_import import insert_validated_batch
+from app.agents.profile_fill.normalize import normalize_date_value
 from app.repository import (
     CANDIDATE_TABLES,
     client_for,
@@ -72,6 +73,25 @@ router.include_router(resume_improvement_router)
 
 def utc_now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def ensure_preference_row(client, table: str, user_id: str) -> dict[str, Any]:
+    """Return a candidate preference row, repairing legacy users missing defaults."""
+    rows = (
+        client.table(table)
+        .select("*")
+        .eq("user_id", user_id)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if rows:
+        return rows[0]
+    created = client.table(table).upsert({"user_id": user_id}).execute().data or []
+    if not created:
+        raise ApiError(500, "preferences_unavailable", "Candidate preferences could not be loaded.")
+    return created[0]
 
 
 @router.get("/health")
@@ -172,13 +192,6 @@ def bootstrap(
     )
     recent_activity = list_recent_activity(client, user)
     latest_actions = _latest_actions(client, user)
-    unread = (
-        client.table("user_notifications")
-        .select("id", count="exact")
-        .eq("user_id", str(user.id))
-        .is_("read_at", "null")
-        .execute()
-    )
     counts = {}
     for key, table in {
         "resumes": "resumes",
@@ -206,11 +219,24 @@ def bootstrap(
         "active_job_description": latest_jd[0] if latest_jd else None,
         "latest_ats_analysis": latest_analysis[0] if latest_analysis else None,
         "latest_actions": latest_actions,
-        "unread_notification_count": unread.count or 0,
         "counts": counts,
         "recent_activity": recent_activity,
         "workspace": {
-            "profile_completion": profile.get("profile_completion") or 0,
+            "profile_completion": max(
+                0, min(100, int(profile.get("profile_completion") or 0))
+            ),
+            "profile_completion_details": profile.get("profile_completion_details") or {},
+            # Server checklist only — never include retired criteria (e.g. old "resume" weight).
+            "profile_missing": [
+                item
+                for item in (
+                    (profile.get("profile_completion_details") or {}).get("missing") or []
+                )
+                if isinstance(item, dict)
+                and item.get("key")
+                and item.get("label")
+                and str(item.get("key")) != "resume"
+            ],
             "has_active_resume": bool(active_resume),
             "has_confirmed_resume": bool(confirmed_resume.count),
             "failed_ats_count": failed_ats,
@@ -411,6 +437,17 @@ def _prepare_candidate_payload(
     elif resource == "experiences" and require_core:
         if not str(data.get("company_name") or "").strip() or not str(data.get("role_title") or "").strip():
             raise ApiError(400, "invalid_experience", "Company name and role title are required.")
+    if resource == "experiences":
+        for key in ("start_date", "end_date"):
+            if key in data and data[key] not in (None, ""):
+                normalized = normalize_date_value(data[key])
+                if normalized is None:
+                    raise ApiError(400, "invalid_experience_date", "Experience dates must use YYYY-MM-DD format.")
+                data[key] = normalized
+        if data.get("is_current"):
+            data["end_date"] = None
+        if data.get("start_date") and data.get("end_date") and data["end_date"] < data["start_date"]:
+            raise ApiError(400, "invalid_experience_date", "Experience end date cannot be before start date.")
     elif resource == "education" and require_core:
         if not str(data.get("institution") or "").strip():
             raise ApiError(400, "invalid_education", "Institution is required.")
@@ -437,12 +474,7 @@ def get_profile(user: CurrentUser = Depends(get_current_user), settings: Setting
     profile = recalculate_completion(client, user)
     return {
         "profile": attach_avatar_url(profile, client, settings),
-        "preferences": client.table("candidate_preferences")
-        .select("*")
-        .eq("user_id", str(user.id))
-        .single()
-        .execute()
-        .data,
+        "preferences": ensure_preference_row(client, "candidate_preferences", str(user.id)),
     }
 
 
@@ -583,13 +615,11 @@ def update_preferences(
     settings: Settings = Depends(get_settings),
 ):
     client = client_for(settings, user)
-    result = (
-        client.table("candidate_preferences")
-        .update(payload.model_dump())
-        .eq("user_id", str(user.id))
-        .execute()
-        .data
-    )
+    result = client.table("candidate_preferences").upsert(
+        {"user_id": str(user.id), **payload.model_dump()}
+    ).execute().data or []
+    if not result:
+        raise ApiError(500, "preferences_save_failed", "Candidate preferences could not be saved.")
     recalculate_completion(client, user)
     write_activity(
         client, user, "profile_updated", "Candidate preferences updated", "preferences", str(user.id)
@@ -919,6 +949,8 @@ def apply_profile_from_resume(
                 "employment_type": (
                     str(row["employment_type"]).strip()[:80] if row.get("employment_type") else None
                 ),
+                "start_date": normalize_date_value(row.get("start_date")),
+                "end_date": None if row.get("is_current") else normalize_date_value(row.get("end_date")),
                 "summary": (str(row["summary"]).strip()[:4000] if row.get("summary") else None),
                 "is_current": bool(row.get("is_current")),
                 "display_order": int(row.get("display_order") or index),
@@ -2160,6 +2192,19 @@ def add_response(
 ):
     client = client_for(settings, user)
     owned_row(client, "interview_sessions", session_id, user)
+    question = (
+        client.table("interview_questions")
+        .select("id")
+        .eq("id", str(payload.question_id))
+        .eq("session_id", str(session_id))
+        .eq("user_id", str(user.id))
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if not question:
+        raise ApiError(404, "question_not_found", "The question does not belong to this interview session.")
     return (
         client.table("interview_responses")
         .insert({**payload.model_dump(mode="json"), "session_id": str(session_id), "user_id": str(user.id)})
@@ -2323,15 +2368,19 @@ def patch_saved_job(
     user: CurrentUser = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ):
-    return (
+    result = (
         client_for(settings, user)
         .table("saved_jobs")
         .update(payload.model_dump())
         .eq("job_id", str(job_id))
         .eq("user_id", str(user.id))
         .execute()
-        .data[0]
+        .data
+        or []
     )
+    if not result:
+        raise ApiError(404, "saved_job_not_found", "The job is not saved to your account.")
+    return result[0]
 
 
 @router.delete("/saved-jobs/{job_id}", status_code=204)
@@ -2349,18 +2398,8 @@ def get_settings_records(
 ):
     client = client_for(settings, user)
     return {
-        "notifications": client.table("notification_preferences")
-        .select("*")
-        .eq("user_id", str(user.id))
-        .single()
-        .execute()
-        .data,
-        "privacy": client.table("privacy_preferences")
-        .select("*")
-        .eq("user_id", str(user.id))
-        .single()
-        .execute()
-        .data,
+        "notifications": ensure_preference_row(client, "notification_preferences", str(user.id)),
+        "privacy": ensure_preference_row(client, "privacy_preferences", str(user.id)),
     }
 
 
@@ -2370,14 +2409,13 @@ def update_notifications(
     user: CurrentUser = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ):
-    return (
-        client_for(settings, user)
-        .table("notification_preferences")
-        .update(payload.model_dump())
-        .eq("user_id", str(user.id))
-        .execute()
-        .data[0]
-    )
+    client = client_for(settings, user)
+    result = client.table("notification_preferences").upsert(
+        {"user_id": str(user.id), **payload.model_dump()}
+    ).execute().data or []
+    if not result:
+        raise ApiError(500, "notifications_save_failed", "Notification settings could not be saved.")
+    return result[0]
 
 
 @router.put("/settings/privacy")
@@ -2386,14 +2424,13 @@ def update_privacy(
     user: CurrentUser = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ):
-    return (
-        client_for(settings, user)
-        .table("privacy_preferences")
-        .update(payload.model_dump())
-        .eq("user_id", str(user.id))
-        .execute()
-        .data[0]
-    )
+    client = client_for(settings, user)
+    result = client.table("privacy_preferences").upsert(
+        {"user_id": str(user.id), **payload.model_dump()}
+    ).execute().data or []
+    if not result:
+        raise ApiError(500, "privacy_save_failed", "Privacy settings could not be saved.")
+    return result[0]
 
 
 @router.delete("/account", status_code=204)

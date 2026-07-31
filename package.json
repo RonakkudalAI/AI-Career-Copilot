@@ -6,7 +6,7 @@
     "postinstall": "node scripts/setup-backend.mjs",
     "dev": "node scripts/dev.mjs",
     "dev:frontend": "next dev",
-    "dev:backend": "python -m uvicorn app.main:app --reload --port 8000 --app-dir backend",
+    "dev:backend": "node scripts/dev-backend.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",

@@ -18,11 +18,23 @@ _MONTH = (
     r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
     r"jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)"
 )
+_MONTH_NUMBERS = {
+    "jan": 1, "january": 1, "feb": 2, "february": 2, "mar": 3, "march": 3,
+    "apr": 4, "april": 4, "may": 5, "jun": 6, "june": 6, "jul": 7, "july": 7,
+    "aug": 8, "august": 8, "sep": 9, "sept": 9, "september": 9, "oct": 10,
+    "october": 10, "nov": 11, "november": 11, "dec": 12, "december": 12,
+}
+_DATE_TOKEN = rf"(?:{_MONTH}\.?(?:\s*'?)\d{{2,4}}|(?:19|20)\d{{2}}|\d{{1,2}}[/-]\d{{2,4}})"
 _DATE_RANGE_RE = re.compile(
-    rf"(?P<start>(?:{_MONTH}\.?\s*'?\d{{2,4}}|(?:19|20)\d{{2}}|\d{{1,2}}[/\-.]\d{{2,4}}))"
+    rf"(?P<start>{_DATE_TOKEN})"
     rf"\s*[-–—to]+\s*"
     rf"(?P<end>(?:{_MONTH}\.?\s*'?\d{{2,4}}|(?:19|20)\d{{2}}|\d{{1,2}}[/\-.]\d{{2,4}}"
     rf"|present|current|now|ongoing|till\s+date|to\s+date))",
+    re.I,
+)
+_CLEAN_DATE_RANGE_RE = re.compile(
+    rf"(?P<start>{_DATE_TOKEN})\s*(?:-|–|—|\bto\b)\s*"
+    rf"(?P<end>{_DATE_TOKEN}|present|current|now|ongoing|till\s+date|to\s+date)",
     re.I,
 )
 _YEAR_RE = re.compile(r"(?:19|20)\d{2}")
@@ -94,6 +106,32 @@ def _extract_phone(text: str) -> str | None:
     return _clean(candidate, 40)
 
 
+def _date_to_storage(value: str | None) -> str | None:
+    """Normalize a resume month/year into a date without claiming day precision."""
+    token = _clean(value, 40).lower().replace(".", "")
+    if not token or re.fullmatch(r"present|current|now|ongoing|till date|to date", token):
+        return None
+    year_match = re.search(r"(?:19|20)\d{2}|\d{2}$", token)
+    if not year_match:
+        return None
+    year = int(year_match.group(0))
+    if year < 100:
+        year += 2000
+    if not 1900 <= year <= 2100:
+        return None
+    month = 1
+    month_name = re.match(r"([a-z]+)", token)
+    if month_name:
+        month = _MONTH_NUMBERS.get(month_name.group(1), 0)
+    else:
+        numeric = re.match(r"(\d{1,2})[/-]\d{2,4}", token)
+        if numeric:
+            month = int(numeric.group(1))
+    if not 1 <= month <= 12:
+        return None
+    return f"{year:04d}-{month:02d}-01"
+
+
 def _parse_experience_entry(entry: str, order: int) -> dict[str, Any] | None:
     lines = _split_entry_lines(entry)
     if not lines:
@@ -108,7 +146,8 @@ def _parse_experience_entry(entry: str, order: int) -> dict[str, Any] | None:
     role_title = None
     company_name = None
     location = None
-    is_current = bool(re.search(r"\b(present|current|now|ongoing)\b", header, re.I))
+    date_source = " ".join(lines[:2])
+    is_current = bool(re.search(r"\b(present|current|now|ongoing|till\s+date|to\s+date)\b", date_source, re.I))
 
     # Patterns: Role | Company | Location | Dates
     if "|" in header:
@@ -140,11 +179,9 @@ def _parse_experience_entry(entry: str, order: int) -> dict[str, Any] | None:
     if company_name.lower() in {"present", "current"}:
         company_name = "Not specified"
 
-    start_date = None
-    end_date = None
-    # Keep dates as null when only free-text ranges exist (DB expects date type).
-    # Store range text in summary prefix when useful.
-    range_match = _DATE_RANGE_RE.search(header)
+    range_match = _DATE_RANGE_RE.search(date_source) or _CLEAN_DATE_RANGE_RE.search(date_source)
+    start_date = _date_to_storage(range_match.group("start")) if range_match else None
+    end_date = _date_to_storage(range_match.group("end")) if range_match else None
     date_note = range_match.group(0) if range_match else None
     if date_note and summary:
         summary = _clean(f"{date_note}. {summary}", 2000)
@@ -158,7 +195,7 @@ def _parse_experience_entry(entry: str, order: int) -> dict[str, Any] | None:
         "employment_type": None,
         "start_date": start_date,
         "end_date": end_date,
-        "is_current": is_current,
+        "is_current": is_current or bool(range_match and not end_date),
         "summary": summary,
         "display_order": order,
         "selected": True,
@@ -471,11 +508,7 @@ def build_profile_draft(
             }
         )
 
-    for match in _LINKEDIN_RE.findall(full_blob):
-        add_link("linkedin", match, "LinkedIn")
-    for match in _GITHUB_RE.findall(full_blob):
-        add_link("github", match, "GitHub")
-    for line in link_lines:
+    for line in [full_blob, *link_lines]:
         for match in _URL_RE.findall(line):
             lower = match.lower()
             if "linkedin.com" in lower:

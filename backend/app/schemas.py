@@ -57,6 +57,8 @@ class LlmExperienceItem(BaseModel):
     role_title: str = Field(min_length=1, max_length=200)
     location: str | None = Field(default=None, max_length=160)
     employment_type: str | None = Field(default=None, max_length=80)
+    start_date: str | None = Field(default=None, max_length=40)
+    end_date: str | None = Field(default=None, max_length=40)
     summary: str | None = Field(default=None, max_length=4000)
     is_current: bool = False
 

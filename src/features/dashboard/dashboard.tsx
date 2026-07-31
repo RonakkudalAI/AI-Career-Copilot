@@ -4,6 +4,12 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Card, PageHeader, Progress } from "@/components/ui/primitives";
 import { apiRequest } from "@/lib/api/client";
+import {
+  PROFILE_UPDATED_EVENT,
+  extractMissing,
+  resolveCompletion,
+  type ProfileMissingItem,
+} from "@/lib/profile-completion";
 
 type Activity = {
   id: string;
@@ -43,9 +49,12 @@ type LatestActions = {
 };
 
 type Bootstrap = {
-  profile: { full_name?: string; profile_completion?: number } | null;
+  profile: {
+    full_name?: string;
+    profile_completion?: number;
+    profile_completion_details?: { missing?: ProfileMissingItem[] };
+  } | null;
   counts: Record<string, number>;
-  active_resume: { title: string } | null;
   active_job_description: { title: string; role_title?: string | null } | null;
   latest_ats_analysis: { id: string; overall_score: number | null; status: string } | null;
   latest_actions?: LatestActions | null;
@@ -53,6 +62,8 @@ type Bootstrap = {
   recent_activity?: Activity[];
   workspace?: {
     profile_completion: number;
+    profile_missing?: ProfileMissingItem[];
+    profile_completion_details?: { missing?: ProfileMissingItem[] };
     has_active_resume: boolean;
     has_confirmed_resume: boolean;
     failed_ats_count: number;
@@ -111,18 +122,40 @@ export function Dashboard() {
   const [configHint, setConfigHint] = useState("");
 
   useEffect(() => {
-    apiRequest<Bootstrap>("/me/bootstrap")
-      .then(setData)
-      .catch((e: Error) => {
-        setError(e.message);
-        if (/supabase|configured|session/i.test(e.message)) {
-          setConfigHint("Check root .env Supabase values and that migrations are applied.");
-        }
-      });
+    let active = true;
+    function load() {
+      apiRequest<Bootstrap>("/me/bootstrap")
+        .then((payload) => {
+          if (active) setData(payload);
+        })
+        .catch((e: Error) => {
+          if (!active) return;
+          setError(e.message);
+          if (/configured|session|unavailable|sign-in/i.test(e.message)) {
+            setConfigHint("If this keeps happening, sign out and sign back in, or try again later.");
+          }
+        });
+    }
+    load();
+    function onProfileUpdated() {
+      load();
+    }
+    window.addEventListener(PROFILE_UPDATED_EVENT, onProfileUpdated);
+    return () => {
+      active = false;
+      window.removeEventListener(PROFILE_UPDATED_EVENT, onProfileUpdated);
+    };
   }, []);
 
   const first = data?.profile?.full_name?.split(" ")[0] || "there";
-  const completion = data?.workspace?.profile_completion ?? data?.profile?.profile_completion ?? 0;
+  const details =
+    data?.workspace?.profile_completion_details || data?.profile?.profile_completion_details || null;
+  const missing = extractMissing(details, data?.workspace?.profile_missing);
+  const completion = resolveCompletion(
+    data?.workspace?.profile_completion ?? data?.profile?.profile_completion,
+    details,
+    missing,
+  );
   // Backend retains at most 5; clamp on the client as a hard display guard.
   const activities = (data?.recent_activity || []).slice(0, 5);
   const actions = data?.latest_actions;
@@ -135,7 +168,7 @@ export function Dashboard() {
       <PageHeader
         eyebrow="Career workspace"
         title={`Welcome, ${first}.`}
-        description="Counts and status below come from your persisted Supabase records."
+        description="A live snapshot of your profile, analyses, interviews, and recent activity."
         action={
           <Link className="button button-primary" href="/resume-analysis?tab=upload">
             New ATS analysis
@@ -154,7 +187,6 @@ export function Dashboard() {
         <Card>
           <span className="mono">Resumes</span>
           <div className="metric-value">{data?.counts.resumes ?? "—"}</div>
-          <p>{data?.active_resume?.title || "No active resume"}</p>
         </Card>
         <Card>
           <span className="mono">ATS analyses</span>
@@ -168,7 +200,7 @@ export function Dashboard() {
         <Card>
           <span className="mono">Interviews</span>
           <div className="metric-value">{data?.counts.interviews ?? "—"}</div>
-          <p>{data?.capabilities.interview_evaluation === false ? "Evaluation unavailable" : "Persisted sessions"}</p>
+          <p>{data?.capabilities.interview_evaluation === false ? "Practice mode" : "Your sessions"}</p>
         </Card>
         <Card>
           <span className="mono">Saved jobs</span>
@@ -179,7 +211,24 @@ export function Dashboard() {
       <div className={completion >= 100 ? "stack" : "grid-2"} style={{ marginTop: 28 }}>
         <Card className={`stack completion-panel ${completion >= 100 ? "is-complete" : ""}`} aria-hidden={completion >= 100}>
           <Progress value={completion} label="Profile completion" />
-          <Link href="/settings/profile">Review profile</Link>
+          {missing.length > 0 ? (
+            <div className="stack" style={{ gap: 6 }}>
+              <p className="muted" style={{ margin: 0, fontSize: "var(--text-sm)" }}>
+                Still needed ({missing.length}):
+              </p>
+              <ul style={{ margin: 0, paddingLeft: 18, fontSize: "var(--text-sm)" }}>
+                {missing.slice(0, 5).map((item) => (
+                  <li key={item.key}>{item.label}</li>
+                ))}
+              </ul>
+              {missing.length > 5 ? (
+                <p className="muted" style={{ margin: 0, fontSize: "var(--text-xs)" }}>
+                  +{missing.length - 5} more
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+          <Link href="/settings/profile">Complete profile</Link>
         </Card>
         <Card className="panel-blue stack">
           <h2 style={{ margin: 0 }}>Latest progress</h2>

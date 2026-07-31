@@ -8,6 +8,7 @@ clean, field-aware values (no 'Location:' prefixes, no 'Languages: Python' skill
 from __future__ import annotations
 
 import re
+from datetime import date
 from typing import Any
 
 _LABEL_PREFIX = re.compile(
@@ -99,6 +100,19 @@ def clean_name(value: str | None) -> str | None:
     if text.isupper() and len(text) > 3:
         text = text.title()
     return text[:120]
+
+
+def normalize_date_value(value: Any) -> str | None:
+    """Accept only ISO dates or ISO month values from extraction/manual drafts."""
+    text = str(value or "").strip()
+    if re.fullmatch(r"\d{4}-\d{2}", text):
+        text = f"{text}-01"
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+        return None
+    try:
+        return date.fromisoformat(text).isoformat()
+    except ValueError:
+        return None
 
 
 def extract_explicit_years(text: str) -> float | None:
@@ -225,6 +239,8 @@ def normalize_experiences(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "company_name": company[:200],
                 "role_title": role[:200],
                 "location": clean_location(row.get("location")),
+                "start_date": normalize_date_value(row.get("start_date")),
+                "end_date": None if row.get("is_current") else normalize_date_value(row.get("end_date")),
                 "summary": summary[:4000] if summary else None,
                 "display_order": row.get("display_order", index),
                 "selected": row.get("selected", True) is not False,

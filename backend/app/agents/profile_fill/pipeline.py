@@ -62,6 +62,11 @@ def _supported_in_resume(value: str | None, haystack: str, *, min_len: int = 3) 
     return hits >= max(1, int(len(tokens) * 0.6))
 
 
+def _date_year_supported(value: str | None, haystack: str) -> bool:
+    match = re.search(r"(?:19|20)\d{2}", str(value or ""))
+    return bool(match and match.group(0) in haystack)
+
+
 def _llm_to_draft(result: ProfileResumeExtractResult) -> dict[str, Any]:
     profile = result.profile.model_dump()
     profile["career_goal"] = None
@@ -162,7 +167,14 @@ def _filter_draft_by_evidence(draft: dict[str, Any], plain_text: str) -> dict[st
         )
         role_ok = _supported_in_resume(role, hay, min_len=3)
         if company_ok or role_ok:
-            out["experiences"].append({**exp, "company_name": company, "role_title": role, "selected": True})
+            row = {**exp, "company_name": company, "role_title": role, "selected": True}
+            if row.get("start_date") and not _date_year_supported(row["start_date"], hay):
+                row["start_date"] = None
+            if row.get("end_date") and not _date_year_supported(row["end_date"], hay):
+                row["end_date"] = None
+            if row.get("is_current"):
+                row["end_date"] = None
+            out["experiences"].append(row)
 
     for edu in draft.get("education") or []:
         inst = str(edu.get("institution") or "").strip()
@@ -271,11 +283,28 @@ def merge_profile_drafts(
         base.get("skills") or [],
         lambda r: _norm(str(r.get("name") or "")),
     )
-    experiences = _merge_list(
-        filtered_ai.get("experiences") or [],
-        base.get("experiences") or [],
-        lambda r: (_norm(str(r.get("company_name") or "")), _norm(str(r.get("role_title") or ""))),
-    )
+    ai_experiences = filtered_ai.get("experiences") or []
+    base_experiences = base.get("experiences") or []
+    base_by_key = {
+        (_norm(str(row.get("company_name") or "")), _norm(str(row.get("role_title") or ""))): row
+        for row in base_experiences
+    }
+    experiences = []
+    seen_experiences: set[tuple[str, str]] = set()
+    for row in ai_experiences:
+        key = (_norm(str(row.get("company_name") or "")), _norm(str(row.get("role_title") or "")))
+        base_row = base_by_key.get(key) or {}
+        experiences.append({
+            **base_row,
+            **row,
+            "start_date": row.get("start_date") or base_row.get("start_date"),
+            "end_date": None if row.get("is_current") else (row.get("end_date") or base_row.get("end_date")),
+        })
+        seen_experiences.add(key)
+    for row in base_experiences:
+        key = (_norm(str(row.get("company_name") or "")), _norm(str(row.get("role_title") or "")))
+        if key not in seen_experiences:
+            experiences.append(row)
     education = _merge_list(
         filtered_ai.get("education") or [],
         base.get("education") or [],
