@@ -15,16 +15,16 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from app.agents.crew.compat import crew_runtime_mode, try_import_crewai
+from app.agents.crew.compat import crew_runtime_mode, official_crewai_installed, try_import_crewai
 from app.agents.crew.models import CrewAgent, CrewRunResult, CrewTask, CrewTaskResult
 from app.agents.crew.tools import (
     tool_analyze_ats_gaps,
     tool_generate_resume_suggestions,
     tool_validate_suggestions,
 )
-from app.config import Settings
-from app.errors import ApiError
-from app.schemas import ProviderSuggestion, ProviderSuggestionResult
+from app.core.config import Settings
+from app.core.errors import ApiError
+from app.api.schemas import ProviderSuggestion, ProviderSuggestionResult
 
 logger = logging.getLogger(__name__)
 
@@ -235,7 +235,12 @@ async def run_resume_improvement_crew(
 
 
 def crew_capability(settings: Settings) -> dict[str, Any]:
-    package_ok, reason, _ = try_import_crewai()
+    package_ok = official_crewai_installed()
+    reason = (
+        "Official CrewAI is installed and will load when a crew operation runs."
+        if package_ok
+        else "Using Career Copilot's compatible sequential orchestrator."
+    )
     return {
         "id": "resume_improvement_crew",
         "name": "Resume improvement crew (CrewAI-compatible)",

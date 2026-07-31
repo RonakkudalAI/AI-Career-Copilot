@@ -1,1 +1,1 @@
-import { AccountSettings } from "@/features/settings/settings"; export default function Page(){return <AccountSettings/>}
+import { AccountSettings } from "@/features/settings/components/settings"; export default function Page(){return <AccountSettings/>}

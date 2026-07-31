@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import { AnalysisHistory } from "@/features/resume/resume-flow";
+import { AnalysisHistory } from "@/features/resume/components/resume-flow";
 
 export default function Page() {
   return (

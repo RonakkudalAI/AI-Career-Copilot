@@ -1,1 +1,1 @@
-import { PreferenceSettings } from "@/features/settings/settings"; export default function Page(){return <PreferenceSettings/>}
+import { PreferenceSettings } from "@/features/settings/components/settings"; export default function Page(){return <PreferenceSettings/>}

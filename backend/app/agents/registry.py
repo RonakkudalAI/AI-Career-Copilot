@@ -13,7 +13,7 @@ from typing import Any
 
 from app.agents.crew import crew_capability, crew_runtime_mode
 from app.agents.llm import GroqClient, NvidiaClient
-from app.config import Settings
+from app.core.config import Settings
 
 
 # Product agent ids — keep stable for API/UI consumers.

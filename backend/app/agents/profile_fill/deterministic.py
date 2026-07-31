@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from app.documents import extract_sections, extract_skill_candidates
+from app.documents.service import extract_sections, extract_skill_candidates
 
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}")
 _PHONE_RE = re.compile(

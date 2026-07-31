@@ -18,8 +18,8 @@ from typing import Any
 from app.agents.llm import NvidiaClient
 from app.agents.profile_fill.deterministic import build_profile_draft, draft_counts
 from app.agents.profile_fill.normalize import normalize_draft
-from app.config import Settings
-from app.schemas import ProfileResumeExtractResult
+from app.core.config import Settings
+from app.api.schemas import ProfileResumeExtractResult
 
 logger = logging.getLogger(__name__)
 

@@ -1,1 +1,1 @@
-import { AtsReport } from "@/features/resume/resume-flow"; export default function Page() { return <AtsReport />; }
+import { AtsReport } from "@/features/resume/components/resume-flow"; export default function Page() { return <AtsReport />; }

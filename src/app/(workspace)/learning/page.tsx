@@ -1,1 +1,1 @@
-import { LearningHome } from "@/features/learning/learning"; export default function Page() { return <LearningHome />; }
+import { LearningHome } from "@/features/learning/components/learning"; export default function Page() { return <LearningHome />; }

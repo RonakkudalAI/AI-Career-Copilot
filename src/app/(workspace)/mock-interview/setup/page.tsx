@@ -1,1 +1,1 @@
-import { InterviewSetup } from "@/features/interview/interview-flow"; export default function Page() { return <InterviewSetup />; }
+import { InterviewSetup } from "@/features/interview/components/interview-flow"; export default function Page() { return <InterviewSetup />; }

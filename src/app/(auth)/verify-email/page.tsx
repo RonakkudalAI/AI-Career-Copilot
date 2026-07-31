@@ -1,1 +1,1 @@
-import { VerifyEmailScreen } from "@/features/auth/auth-screen"; export default function Page() { return <VerifyEmailScreen />; }
+import { VerifyEmailScreen } from "@/features/auth/components/auth-screen"; export default function Page() { return <VerifyEmailScreen />; }

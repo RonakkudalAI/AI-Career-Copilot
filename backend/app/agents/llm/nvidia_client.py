@@ -16,9 +16,9 @@ from app.agents.llm.common import (
     provider_error_detail,
     strip_json_fence,
 )
-from app.config import Settings
-from app.errors import ApiError
-from app.schemas import ProviderSuggestionResult
+from app.core.config import Settings
+from app.core.errors import ApiError
+from app.api.schemas import ProviderSuggestionResult
 
 TRANSIENT_STATUS = {408, 429, 500, 502, 503, 504}
 

@@ -16,8 +16,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.agents.llm.groq_client import GroqClient
 from app.agents.llm.nvidia_client import NvidiaClient, PROMPTS_DIR
-from app.config import Settings
-from app.errors import ApiError
+from app.core.config import Settings
+from app.core.errors import ApiError
 
 logger = logging.getLogger(__name__)
 _PROMPT_PATH = PROMPTS_DIR / "ats_improvement_v1.txt"

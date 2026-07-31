@@ -5,9 +5,10 @@ import uuid
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.config import get_settings
-from app.errors import ApiError, api_error_handler, unexpected_error_handler
-from app.routes import router
+from app.core.config import get_settings
+from app.core.errors import ApiError, api_error_handler, unexpected_error_handler
+from app.api.routes.ats_scoring import router as ats_scoring_router
+from app.api.router import router
 
 settings = get_settings()
 logging.basicConfig(
@@ -54,3 +55,4 @@ async def request_context(request: Request, call_next):
 
 
 app.include_router(router, prefix=settings.api_v1_prefix)
+app.include_router(ats_scoring_router, prefix=settings.api_v1_prefix)

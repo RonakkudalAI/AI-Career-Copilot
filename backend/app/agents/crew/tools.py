@@ -14,11 +14,11 @@ from __future__ import annotations
 from typing import Any
 
 from app.agents.llm import NvidiaClient
-from app.config import Settings
-from app.errors import ApiError
-from app.resume_evidence import build_blocks
-from app.resume_validation import validate_suggestion
-from app.schemas import ProviderSuggestion, ProviderSuggestionResult
+from app.core.config import Settings
+from app.core.errors import ApiError
+from app.resumes.evidence import build_blocks
+from app.resumes.validation import validate_suggestion
+from app.api.schemas import ProviderSuggestion, ProviderSuggestionResult
 
 
 def tool_analyze_ats_gaps(context: dict[str, Any]) -> dict[str, Any]:
@@ -73,7 +73,7 @@ def _block_map_from_context(context: dict[str, Any]) -> dict[str, Any]:
     Prefer full evidence blocks attached by the pipeline (`context['_blocks']`).
     Fall back to reconstructing from selected_blocks (same ids when order preserved).
     """
-    from app.resume_evidence import ResumeBlock, normalize_text, source_hash
+    from app.resumes.evidence import ResumeBlock, normalize_text, source_hash
 
     raw_blocks = context.get("_blocks")
     if isinstance(raw_blocks, list) and raw_blocks:

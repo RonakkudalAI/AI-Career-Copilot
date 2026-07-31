@@ -1,4 +1,4 @@
-import { NewAnalysis } from "@/features/resume/resume-flow";
+import { NewAnalysis } from "@/features/resume/components/resume-flow";
 
 export default function Page() {
   return <NewAnalysis />;

@@ -9,12 +9,18 @@ real package is importable, optional adapters can use it.
 from __future__ import annotations
 
 import sys
+from importlib.util import find_spec
 from typing import Any
 
 
 def python_supports_official_crewai() -> bool:
     """Official crewai wheels currently require Python < 3.14."""
     return sys.version_info < (3, 14)
+
+
+def official_crewai_installed() -> bool:
+    """Check installation metadata without importing CrewAI or its settings."""
+    return python_supports_official_crewai() and find_spec("crewai") is not None
 
 
 def try_import_crewai() -> tuple[bool, str | None, Any | None]:
@@ -38,5 +44,4 @@ def try_import_crewai() -> tuple[bool, str | None, Any | None]:
 
 
 def crew_runtime_mode() -> str:
-    ok, _, _ = try_import_crewai()
-    return "official_crewai" if ok else "compatible_orchestrator"
+    return "official_crewai" if official_crewai_installed() else "compatible_orchestrator"

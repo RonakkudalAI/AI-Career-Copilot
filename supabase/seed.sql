@@ -1,1 +1,0 @@
--- Production-safe seed file. Candidate identities, scores, reports, and progress are never seeded.

@@ -1,1 +1,1 @@
-import { InterviewHome } from "@/features/interview/interview-flow"; export default function Page() { return <InterviewHome />; }
+import { InterviewHome } from "@/features/interview/components/interview-flow"; export default function Page() { return <InterviewHome />; }

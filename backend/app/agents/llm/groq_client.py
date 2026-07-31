@@ -22,8 +22,8 @@ from app.agents.llm.common import (
     provider_error_detail,
     strip_json_fence,
 )
-from app.config import Settings
-from app.errors import ApiError
+from app.core.config import Settings
+from app.core.errors import ApiError
 
 TRANSIENT_STATUS = {408, 429, 500, 502, 503, 504}
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
