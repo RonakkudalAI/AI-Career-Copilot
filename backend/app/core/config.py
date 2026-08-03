@@ -13,41 +13,40 @@ ROOT_ENV_FILE = ROOT_DIR / ".env"
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=ROOT_ENV_FILE, env_file_encoding="utf-8", extra="ignore")
 
-    app_name: str = "Career Copilot API"
-    app_env: str = "development"
-    api_v1_prefix: str = "/api/v1"
-    public_api_base_url: str = "http://127.0.0.1:8000"
-    log_level: str = "INFO"
-    frontend_origins: Annotated[list[str], NoDecode] = Field(
-        default_factory=lambda: ["http://localhost:3000"]
-    )
-    database_path: str = str(ROOT_DIR / ".data" / "career-copilot.sqlite")
-    auth_secret: str = "career-copilot-local-development-secret"
-    local_storage_dir: str = str(ROOT_DIR / ".data" / "storage")
+    app_name: str
+    app_env: str
+    api_v1_prefix: str
+    public_api_base_url: str
+    log_level: str
+    frontend_origins: Annotated[list[str], NoDecode]
+    database_path: str
+    auth_secret: str
+    local_storage_dir: str
+    crewai_storage_dir: str = Field(default_factory=lambda: str(ROOT_DIR / ".data" / "crewai"))
     document_max_bytes: int = 10 * 1024 * 1024
     # Profile pictures must stay under 3 MB (enforced in API + storage bucket policy).
     avatar_max_bytes: int = 3 * 1024 * 1024
     interview_media_max_bytes: int = 250 * 1024 * 1024
-    document_bucket: str = "candidate-documents"
-    avatar_bucket: str = "candidate-avatars"
-    interview_bucket: str = "interview-media"
+    document_bucket: str
+    avatar_bucket: str
+    interview_bucket: str
     nvidia_api_key: str = ""
-    nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
-    nvidia_model: str = "deepseek-3.2"
+    nvidia_base_url: str
+    nvidia_model: str
     nvidia_timeout_seconds: float = Field(default=90, gt=0, le=180)
     nvidia_max_retries: int = Field(default=2, ge=0, le=2)
     nvidia_max_output_tokens: int = Field(default=4096, ge=256, le=8192)
     nvidia_temperature: float = Field(default=0.2, ge=0, le=1)
-    nvidia_prompt_version: str = "resume-improvement-v1"
+    nvidia_prompt_version: str
     # Groq — separate provider for interview questions (not an NVIDIA fallback).
     groq_api_key: str = ""
-    groq_base_url: str = "https://api.groq.com/openai/v1"
-    groq_model: str = "llama-3.3-70b-versatile"
+    groq_base_url: str
+    groq_model: str
     groq_timeout_seconds: float = Field(default=45, gt=0, le=180)
     groq_max_retries: int = Field(default=2, ge=0, le=2)
     groq_max_output_tokens: int = Field(default=2048, ge=256, le=8192)
     groq_temperature: float = Field(default=0.4, ge=0, le=1)
-    llm_provider: str = "groq"
+    llm_provider: str
     improvement_max_sections: int = Field(default=4, ge=1, le=8)
     improvement_max_source_chars: int = Field(default=30_000, ge=1_000, le=100_000)
     improvement_max_jd_chars: int = Field(default=12_000, ge=1_000, le=50_000)
@@ -59,6 +58,13 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
+
+    @field_validator("crewai_storage_dir", mode="before")
+    @classmethod
+    def normalize_crewai_storage_dir(cls, value: object) -> str:
+        if value is None or not str(value).strip():
+            return str(ROOT_DIR / ".data" / "crewai")
+        return str(value).strip()
 
     @field_validator("nvidia_base_url", "groq_base_url")
     @classmethod

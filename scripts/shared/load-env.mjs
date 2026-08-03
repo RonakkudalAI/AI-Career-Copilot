@@ -1,12 +1,14 @@
 import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 /**
  * Load the repository-root .env for scripts that run outside Next.js.
  * Explicit process environment values win over values from the file.
  */
 export function loadRootEnv() {
-  const envPath = resolve(process.cwd(), ".env");
+  const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+  const envPath = resolve(repositoryRoot, ".env");
   if (!existsSync(envPath)) return envPath;
 
   for (const rawLine of readFileSync(envPath, "utf8").split(/\r?\n/)) {
@@ -31,4 +33,3 @@ export function loadRootEnv() {
 
   return envPath;
 }
-

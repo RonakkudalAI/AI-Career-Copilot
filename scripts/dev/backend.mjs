@@ -13,7 +13,7 @@ if (!existsSync(backendPython)) {
 const child = spawn(
   backendPython,
   ["-m", "uvicorn", "app.main:app", "--reload", "--reload-dir", "backend", "--access-log", "--port", "8000", "--app-dir", "backend"],
-  { stdio: "inherit", env: process.env },
+  { cwd: process.cwd(), stdio: "inherit", env: process.env },
 );
 
 let stopping = false;

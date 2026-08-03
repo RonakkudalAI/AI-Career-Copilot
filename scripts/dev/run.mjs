@@ -1,5 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import { loadRootEnv } from "../shared/load-env.mjs";
 
 loadRootEnv();
@@ -10,7 +11,8 @@ if (!existsSync(backendPython)) {
   process.exit(1);
 }
 
-const frontendLockPresent = existsSync(".next/dev/lock");
+const frontendDirectory = resolve(process.cwd(), "frontend");
+const frontendLockPresent = existsSync(resolve(frontendDirectory, ".next", "dev", "lock"));
 const frontendEnvironment = { ...process.env };
 if (frontendLockPresent) {
   // A lock can remain after a crashed/stopped Next process. Use an isolated
@@ -24,19 +26,19 @@ const commands = [
     name: "backend",
     command: backendPython,
     args: ["-m", "uvicorn", "app.main:app", "--reload", "--reload-dir", "backend", "--access-log", "--port", "8000", "--app-dir", "backend"],
+    cwd: process.cwd(),
+    env: process.env,
   },
   {
     name: "frontend",
     command: process.execPath,
-    args: ["node_modules/next/dist/bin/next", "dev"],
+    args: [resolve(frontendDirectory, "node_modules", "next", "dist", "bin", "next"), "dev"],
+    cwd: frontendDirectory,
     env: frontendEnvironment,
   },
 ];
 
 const children = new Map();
-const restartTimers = new Map();
-const restartAttempts = new Map();
-const maxRestartAttempts = 3;
 let stopping = false;
 
 function terminate(child) {
@@ -51,7 +53,11 @@ function terminate(child) {
 function start(service) {
   if (stopping) return;
 
-  const child = spawn(service.command, service.args, { stdio: "inherit", env: service.env || process.env });
+  const child = spawn(service.command, service.args, {
+    cwd: service.cwd || process.cwd(),
+    stdio: "inherit",
+    env: service.env || process.env,
+  });
   children.set(service.name, child);
   child.on("error", (error) => {
     console.error(`[dev] ${service.name} failed to start: ${error.message}`);
@@ -59,28 +65,14 @@ function start(service) {
   child.on("exit", (code, signal) => {
     if (children.get(service.name) === child) children.delete(service.name);
     if (stopping) return;
-
-    const attempts = (restartAttempts.get(service.name) || 0) + 1;
-    restartAttempts.set(service.name, attempts);
-    if (attempts > maxRestartAttempts) {
-      console.error(`[dev] ${service.name} stopped ${maxRestartAttempts} times. Automatic restart paused so the original error remains visible.`);
-      return;
-    }
-
-    console.error(`[dev] ${service.name} stopped (code=${code ?? "none"}, signal=${signal ?? "none"}). Restarting (${attempts}/${maxRestartAttempts})...`);
-    const timer = setTimeout(() => {
-      restartTimers.delete(service.name);
-      start(service);
-    }, 1000);
-    restartTimers.set(service.name, timer);
+    console.error(`[dev] ${service.name} stopped (code=${code ?? "none"}, signal=${signal ?? "none"}). Stopping the other service.`);
+    stop(code ?? 1);
   });
 }
 
 function stop(code = 0) {
   if (stopping) return;
   stopping = true;
-  for (const timer of restartTimers.values()) clearTimeout(timer);
-  restartTimers.clear();
   for (const child of children.values()) terminate(child);
   children.clear();
   process.exit(code);

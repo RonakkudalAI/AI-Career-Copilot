@@ -11,29 +11,29 @@ from fastapi import APIRouter, Body, Depends, File, Form, Header, Response, Uplo
 from fastapi.responses import FileResponse
 from pathlib import Path
 
-from app.auth.account_deletion import (
+from app.features.auth.account_deletion import (
     CONFIRM_PHRASE,
     collect_user_storage_paths,
     confirmation_is_valid,
     email_matches_account,
     purge_user_storage,
 )
-from app.agents.ats import generate_ats_improvement_brief
-from app.agents.interview import generate_interview_questions
-from app.agents.profile_fill import build_profile_draft_enriched, profile_draft_response_payload
+from app.features.ats.agents import generate_ats_improvement_brief
+from app.features.mock_interview.agent import generate_interview_questions
+from app.features.profile.agent import build_profile_draft_enriched, profile_draft_response_payload
 from app.agents.registry import agents_status
-from app.ats.deterministic import score_resume
-from app.ats.scoring.schemas import ScoreResult
-from app.ats.scoring.service import score_resume_jd
-from app.auth.service import CurrentUser, create_access_token, get_current_user
-from app.profiles.avatars import (
+from app.features.ats.deterministic import evidence_match_status, score_resume
+from app.features.ats.scoring.schemas import ScoreResult
+from app.features.ats.scoring.service import score_resume_jd
+from app.features.auth.service import CurrentUser, create_access_token, get_current_user
+from app.features.profile.avatars import (
     attach_avatar_url,
     avatar_extension_for_mime,
     signed_avatar_url,
     validate_avatar_upload,
 )
 from app.core.config import Settings, get_settings
-from app.documents.service import (
+from app.features.document_parsing.service import (
     extract_sections,
     extract_skill_candidates,
     extract_text,
@@ -44,9 +44,9 @@ from app.documents.service import (
     validate_document,
 )
 from app.core.errors import ApiError
-from app.profiles.importer import insert_validated_batch
-from app.agents.profile_fill.normalize import normalize_date_value
-from app.db.repository import (
+from app.features.profile.importer import insert_validated_batch
+from app.features.profile.agent.normalize import normalize_date_value
+from app.database.repository import (
     CANDIDATE_TABLES,
     client_for,
     list_recent_activity,
@@ -55,7 +55,7 @@ from app.db.repository import (
     recalculate_completion,
     write_activity,
 )
-from app.api.routes.resume_improvements import router as resume_improvement_router
+from app.features.resume_improvement.routes import router as resume_improvement_router
 from app.api.schemas import (
     AccountDeleteRequest,
     AtsAnalysisCreate,
@@ -73,7 +73,7 @@ from app.api.schemas import (
     ProfilePatch,
     SavedJobPatch,
 )
-from app.db.client import database_client, database_probe
+from app.database.client import database_client, database_probe
 
 router = APIRouter()
 router.include_router(resume_improvement_router)
@@ -1875,8 +1875,8 @@ def _enrich_ats_analysis(client, user: CurrentUser, analysis: dict[str, Any]) ->
 def list_ats(user: CurrentUser = Depends(get_current_user), settings: Settings = Depends(get_settings)):
     client = client_for(settings, user)
     analyses = owned_rows(client, "ats_analyses", user, "created_at")
-    # Newest first for the history view; hide long-failed noise.
-    analyses = [row for row in reversed(analyses) if row.get("status") != "failed"]
+    # Keep every candidate-owned run visible so history counts remain truthful.
+    analyses = list(reversed(analyses))
     return [_enrich_ats_analysis(client, user, row) for row in analyses]
 
 
@@ -1990,6 +1990,28 @@ async def create_ats(
         "structured_reasons": structured_score.reasons if structured_score else None,
         "domain_gate": structured_score.gate.model_dump() if structured_score else None,
     }
+    missing_items = [
+        {
+            "term": item.requirement,
+            "category": item.requirement_type,
+            "priority": item.priority,
+            "suggested_section": item.suggested_section,
+            "match_strength": item.match_strength,
+        }
+        for item in score.evidence
+        if not item.matched
+    ]
+    matched_items = [
+        {
+            "term": item.requirement,
+            "evidence_line": item.resume_evidence,
+            "section": item.resume_section,
+            "match_strength": item.match_strength,
+            "matched_alias": item.matched_alias,
+        }
+        for item in score.evidence
+        if item.matched
+    ]
 
     analysis = (
         client.table("ats_analyses")
@@ -2007,22 +2029,22 @@ async def create_ats(
         .data[0]
     )
     try:
-        # Persist full coverage rows for scoring audit; UI shows missing keywords only.
+        # Persist full coverage rows for scoring audit and section-aware guidance.
         evidence_rows = [
             {
                 "user_id": str(user.id),
                 "analysis_id": analysis["id"],
                 "category": "keyword_coverage",
                 "requirement_text": item.requirement,
-                "requirement_type": "keyword",
+                "requirement_type": item.requirement_type,
                 "resume_evidence_text": None if gate_rejected else item.resume_evidence if item.matched else None,
                 "resume_section": item.resume_section,
                 "resume_source_reference": {"resume_version_id": str(payload.resume_version_id)},
                 "job_description_source_reference": {"job_description_id": str(payload.job_description_id)},
-                "match_status": "not_found" if gate_rejected else "strong_match" if item.matched else "not_found",
+                "match_status": "not_found" if gate_rejected else evidence_match_status(item.match_strength),
                 "score_contribution": 0 if gate_rejected else item.score_contribution,
-                "rule_id": "exact_normalized_keyword",
-                "explanation": structured_score.gate.reason if gate_rejected and structured_score else "",
+                "rule_id": "alias_phrase_section_match_v2",
+                "explanation": structured_score.gate.reason if gate_rejected and structured_score else item.explanation,
             }
             for item in score.evidence
         ]
@@ -2037,6 +2059,11 @@ async def create_ats(
             total_terms=len(score.evidence),
             role_title=job.get("role_title") or job.get("title"),
             company=job.get("company"),
+            missing_items=missing_items,
+            matched_items=matched_items,
+            structured_parameter_scores=structured_score.parameter_scores if structured_score else None,
+            domain_gate=structured_score.gate.model_dump() if structured_score else None,
+            resume_section_summary=score.section_summary,
         )
 
         completed = (
@@ -2052,11 +2079,20 @@ async def create_ats(
                         "missing": len(score.evidence) if gate_rejected else len(score.missing_terms),
                         "total": len(score.evidence),
                         "missing_terms": [item.requirement for item in score.evidence] if gate_rejected else score.missing_terms,
+                        "partial_terms": [] if gate_rejected else (score.partial_terms or []),
+                        "critical_missing": [item.requirement for item in score.evidence if item.priority == "critical" and not item.matched],
+                        "preferred_missing": [item.requirement for item in score.evidence if item.priority == "preferred" and not item.matched],
+                        "required_score": score.required_score,
+                        "preferred_score": score.preferred_score,
+                        "section_summary": score.section_summary or {},
                         "structured_composite_score": structured_score.composite_score if structured_score else None,
                         "structured_parameter_scores": structured_score.parameter_scores if structured_score else None,
                         "domain_gate": structured_score.gate.model_dump() if structured_score else None,
                         "overall_inference": brief.get("overall_inference"),
                         "focus_areas": brief.get("focus_areas") or [],
+                        "priority_actions": brief.get("priority_actions") or [],
+                        "section_guidance": brief.get("section_guidance") or [],
+                        "do_not_claim": brief.get("do_not_claim") or [],
                         "inference_provider": brief.get("provider"),
                         "inference_model": brief.get("model"),
                         "disclaimer": (

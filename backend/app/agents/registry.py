@@ -11,8 +11,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.agents.crew import crew_capability, crew_runtime_mode
-from app.agents.llm import GroqClient, NvidiaClient
+from app.features.resume_improvement.agents.crew import crew_capability, crew_runtime_mode
+from app.agents.providers import GroqClient, NvidiaClient
 from app.core.config import Settings
 
 

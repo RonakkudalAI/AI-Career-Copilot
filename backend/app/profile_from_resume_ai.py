@@ -1,6 +1,6 @@
-"""Compatibility shim — prefer `from app.agents.profile_fill import ...`."""
+"""Compatibility shim — prefer `from app.features.profile.agent import ...`."""
 
-from app.agents.profile_fill.pipeline import (
+from app.features.profile.agent.pipeline import (
     build_profile_draft_enriched,
     merge_profile_drafts,
     profile_draft_response_payload,

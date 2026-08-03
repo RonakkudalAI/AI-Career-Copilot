@@ -1,0 +1,24 @@
+import os
+import pytest
+
+@pytest.fixture(autouse=True, scope="session")
+def setup_test_environment():
+    os.environ["APP_NAME"] = "Test App"
+    os.environ["APP_ENV"] = "test"
+    os.environ["API_V1_PREFIX"] = "/api/v1"
+    os.environ["PUBLIC_API_BASE_URL"] = "http://localhost:8000"
+    os.environ["LOG_LEVEL"] = "ERROR"
+    os.environ["FRONTEND_ORIGINS"] = "http://localhost:3000"
+    os.environ["DATABASE_PATH"] = ":memory:"
+    os.environ["AUTH_SECRET"] = "test-secret"
+    os.environ["LOCAL_STORAGE_DIR"] = "/tmp/storage"
+    os.environ["CREWAI_STORAGE_DIR"] = "/tmp/crewai"
+    os.environ["DOCUMENT_BUCKET"] = "candidate-documents"
+    os.environ["AVATAR_BUCKET"] = "candidate-avatars"
+    os.environ["INTERVIEW_BUCKET"] = "interview-media"
+    os.environ["NVIDIA_BASE_URL"] = "https://integrate.api.nvidia.com/v1"
+    os.environ["NVIDIA_MODEL"] = "deepseek-3.2"
+    os.environ["NVIDIA_PROMPT_VERSION"] = "resume-improvement-v1"
+    os.environ["GROQ_BASE_URL"] = "https://api.groq.com/openai/v1"
+    os.environ["GROQ_MODEL"] = "llama-3.3-70b-versatile"
+    os.environ["LLM_PROVIDER"] = "groq"

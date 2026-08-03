@@ -1,21 +1,27 @@
 # Dependencies
 node_modules/
+frontend/node_modules/
 backend/.venv/
 .venv/
 
 # Build / framework caches
 .next/
+frontend/.next/
+frontend/.next-dev-*/
 .next-dev-*/
 .next-build-*/
 out/
 dist/
 build/
 coverage/
+frontend/coverage/
 *.tsbuildinfo
 
 # Test / tooling artifacts (if reintroduced)
 test-results/
+frontend/test-results/
 playwright-report/
+frontend/playwright-report/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
@@ -47,6 +53,9 @@ Thumbs.db
 
 # Local database files and uploaded objects
 .data/
+backend/.data/
+*.sqlite-shm
+*.sqlite-wal
 
 # Editor
 .idea/

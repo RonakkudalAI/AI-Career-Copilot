@@ -3,41 +3,18 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "postinstall": "node scripts/setup/backend.mjs && node scripts/setup/local-db.mjs",
+    "setup": "node scripts/setup/project.mjs",
     "dev": "node scripts/dev/preflight.mjs && node scripts/dev/run.mjs",
-    "db:setup": "node scripts/dev/preflight.mjs",
-    "dev:frontend": "next dev",
+    "dev:frontend": "node scripts/dev/frontend.mjs",
     "dev:backend": "node scripts/dev/backend.mjs",
-    "build": "next build",
-    "start": "next start",
-    "lint": "eslint .",
-    "typecheck": "tsc --noEmit",
-    "check": "npm run check:secrets && npm run check:env && npm run check:frontend",
+    "db:setup": "node scripts/dev/preflight.mjs",
+    "lint": "node scripts/run-frontend.mjs lint",
+    "typecheck": "node scripts/run-frontend.mjs typecheck",
+    "build:frontend": "node scripts/run-frontend.mjs build",
+    "check:frontend": "node scripts/run-frontend.mjs check:frontend",
     "check:env": "node scripts/diagnostics/verify-environment.mjs",
-    "check:frontend": "npm run lint && npm run typecheck && npm run build",
-    "check:secrets": "node scripts/diagnostics/check-secrets.mjs"
-  },
-  "dependencies": {
-    "@fontsource-variable/space-grotesk": "^5.3.0",
-    "@fontsource/ibm-plex-mono": "^5.3.0",
-    "@react-three/drei": "latest",
-    "@react-three/fiber": "latest",
-    "lucide-react": "latest",
-    "motion": "latest",
-    "next": "latest",
-    "react": "latest",
-    "react-dom": "latest",
-    "three": "latest"
-  },
-  "devDependencies": {
-    "@tailwindcss/postcss": "latest",
-    "@types/node": "latest",
-    "@types/react": "latest",
-    "@types/react-dom": "latest",
-    "@types/three": "latest",
-    "eslint": "latest",
-    "eslint-config-next": "latest",
-    "tailwindcss": "latest",
-    "typescript": "latest"
+    "check:secrets": "node scripts/diagnostics/check-secrets.mjs",
+    "check:boundaries": "node scripts/verify-boundaries.mjs",
+    "test:backend": "backend\\.venv\\Scripts\\python.exe -m pytest backend\\tests"
   }
 }
