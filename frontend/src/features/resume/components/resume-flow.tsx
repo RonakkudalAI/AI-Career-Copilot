@@ -13,11 +13,9 @@ type StructuredContent = {
   sections: Record<string, string[]>;
   unclassified_blocks?: string[];
   warnings?: string[];
-  source_blocks?: SourceBlock[];
-  evidence_block_ids?: Record<string, string[][]>;
   corrections?: Record<string, unknown>;
+  extraction_method?: string;
 };
-type SourceBlock = { block_id: string; page: number; text: string; heading_context?: string | null };
 type ResumeVersion = {
   id: string;
   resume_id: string;
@@ -600,15 +598,11 @@ type UploadStep = "upload" | "review";
 function SectionEntries({
   section,
   lines,
-  sourceBlocks,
-  evidenceBlockIds,
   editable = false,
   onEdit,
 }: {
   section: string;
   lines: string[];
-  sourceBlocks?: SourceBlock[];
-  evidenceBlockIds?: Record<string, string[][]>;
   editable?: boolean;
   onEdit?: (index: number, value: string) => void;
 }) {
@@ -618,10 +612,7 @@ function SectionEntries({
   return (
     <div className="extraction-entries">
       {lines.map((entry, index) => (
-        <div
-          key={`${index}-${entry.slice(0, 24)}`}
-          className="extraction-entry"
-        >
+        <div key={`${index}-${entry.slice(0, 24)}`} className="extraction-entry">
           {editable ? (
             <Textarea
               aria-label={`Edit ${section.replaceAll("_", " ")} entry ${index + 1}`}
@@ -632,20 +623,6 @@ function SectionEntries({
           ) : (
             entry
           )}
-          {sourceBlocks && evidenceBlockIds?.[section]?.[index]?.length ? (
-            <details className="extraction-evidence">
-              <summary>Source evidence</summary>
-              {evidenceBlockIds[section][index].map((blockId) => {
-                const block = sourceBlocks.find((candidate) => candidate.block_id === blockId);
-                return block ? (
-                  <p key={blockId}>
-                    <small>{blockId} · page {block.page}</small>
-                    {block.text}
-                  </p>
-                ) : null;
-              })}
-            </details>
-          ) : null}
         </div>
       ))}
     </div>
@@ -657,7 +634,6 @@ function ExtractionPanel({
   status,
   sections,
   fallbackText,
-  structuredContent,
   editable = false,
   onEdit,
 }: {
@@ -665,7 +641,6 @@ function ExtractionPanel({
   status: string;
   sections: Record<string, string[]>;
   fallbackText?: string;
-  structuredContent?: StructuredContent;
   editable?: boolean;
   onEdit?: (section: string, index: number, value: string) => void;
 }) {
@@ -680,7 +655,7 @@ function ExtractionPanel({
             {isResume ? <FileText size={18} strokeWidth={2.2} /> : <BriefcaseBusiness size={18} strokeWidth={2.2} />}
           </span>
           <div>
-            <p className="extraction-kicker">{isResume ? "Candidate document" : "Target role"}</p>
+            <p className="extraction-kicker">{isResume ? "Parsed resume" : "Parsed job description"}</p>
             <h2>{title.replace(/^Resume · |^Job description · /, "")}</h2>
           </div>
         </div>
@@ -689,7 +664,7 @@ function ExtractionPanel({
       <div className="extraction-card-meta">
         <span>{entries.length ? `${entries.length} sections` : "Raw text"}</span>
         <span aria-hidden="true">·</span>
-        <span>{contentCount ? `${contentCount} extracted entries` : "Needs review"}</span>
+        <span>{contentCount ? `${contentCount} entries` : "Needs review"}</span>
       </div>
       {entries.length ? (
         <div className="extraction-sections">
@@ -699,14 +674,12 @@ function ExtractionPanel({
                 <h3>{section.replaceAll("_", " ")}</h3>
                 <span>{lines.length}</span>
               </div>
-            <SectionEntries
-              section={section}
-              lines={lines}
-              sourceBlocks={structuredContent?.source_blocks}
-              evidenceBlockIds={structuredContent?.evidence_block_ids}
-              editable={editable}
-              onEdit={(index, value) => onEdit?.(section, index, value)}
-            />
+              <SectionEntries
+                section={section}
+                lines={lines}
+                editable={editable}
+                onEdit={(index, value) => onEdit?.(section, index, value)}
+              />
             </section>
           ))}
         </div>
@@ -1003,7 +976,6 @@ export function NewAnalysis({ embedded = false }: { embedded?: boolean }) {
               title={`Resume · ${resume?.title || "Uploaded resume"}`}
               status={resumeVersion.extraction_status}
               sections={resumeSections}
-              structuredContent={resumeVersion.structured_content}
               editable
               onEdit={(section, index, value) =>
                 setEditedResumeSections((current) => ({
@@ -1122,8 +1094,6 @@ export function AtsReport() {
   const criticalMissing = uniqueTerms(analysis.summary?.critical_missing || missingTerms);
   const preferredMissing = uniqueTerms(analysis.summary?.preferred_missing || []);
   const partialTerms = uniqueTerms(analysis.summary?.partial_terms || analysis.score_breakdown?.partial_terms || partial.map((item) => item.requirement_text));
-  const foundEvidence = evidence.filter((item) => item.match_status === "strong_match" || item.match_status === "partial_match");
-
   return (
     <div className="stack">
       <PageHeader
@@ -1163,13 +1133,12 @@ export function AtsReport() {
         <p>{analysis.summary?.disclaimer || "Keyword coverage is not a hiring prediction."}</p>
       </Card>
       <Card className="stack">
-        <h2 style={{ margin: 0 }}>Source vs evidence</h2>
+        <h2 style={{ margin: 0 }}>Matches</h2>
         <p className="muted" style={{ margin: 0, fontSize: "var(--text-sm)" }}>
-          <strong>Source</strong> is the job-description requirement. <strong>Evidence</strong> is an exact quote from
-          your resume when found — never AI-written text.
+          Each JD requirement is checked against your resume text. Found items quote the matching resume line.
         </p>
         {evidence.length === 0 ? (
-          <p className="muted" style={{ margin: 0 }}>No evidence rows were stored for this analysis.</p>
+          <p className="muted" style={{ margin: 0 }}>No match rows stored for this analysis.</p>
         ) : (
           <div className="stack" style={{ gap: 10 }}>
             {evidence.map((row) => {
@@ -1178,50 +1147,26 @@ export function AtsReport() {
                 <div key={row.id} className="panel-blue" style={{ padding: 14 }}>
                   <div className="row" style={{ alignItems: "flex-start", gap: 12 }}>
                     <div style={{ flex: 1 }}>
-                      <span className="eyebrow">Source (job description)</span>
-                      <p style={{ margin: "4px 0 0", fontWeight: 600 }}>{row.requirement_text}</p>
-                      {row.requirement_type ? (
-                        <p className="muted" style={{ margin: "4px 0 0", fontSize: "var(--text-xs)" }}>
-                          {row.requirement_type}
+                      <p style={{ margin: 0, fontWeight: 600 }}>{row.requirement_text}</p>
+                      {found && row.resume_evidence_text ? (
+                        <p className="muted" style={{ margin: "6px 0 0", fontSize: "var(--text-sm)" }}>
+                          In resume: “{row.resume_evidence_text}”
                         </p>
-                      ) : null}
+                      ) : (
+                        <p className="muted" style={{ margin: "6px 0 0", fontSize: "var(--text-sm)" }}>
+                          Not found in resume
+                        </p>
+                      )}
                     </div>
                     <Badge tone={found ? (row.match_status === "strong_match" ? "success" : "info") : "warning"}>
-                      {found ? (row.match_status === "strong_match" ? "Found" : "Partial") : "Not found"}
+                      {found ? (row.match_status === "strong_match" ? "Found" : "Partial") : "Missing"}
                     </Badge>
-                  </div>
-                  <div style={{ marginTop: 10 }}>
-                    <span className="eyebrow">Evidence (resume quote)</span>
-                    {found && row.resume_evidence_text ? (
-                      <p style={{ margin: "4px 0 0" }}>
-                        “{row.resume_evidence_text}”
-                        {row.resume_section ? (
-                          <span className="muted" style={{ marginLeft: 8, fontSize: "var(--text-xs)" }}>
-                            · {row.resume_section}
-                          </span>
-                        ) : null}
-                      </p>
-                    ) : (
-                      <p className="muted" style={{ margin: "4px 0 0" }}>
-                        No matching line in the confirmed resume source.
-                      </p>
-                    )}
-                    {row.explanation ? (
-                      <p className="muted" style={{ margin: "6px 0 0", fontSize: "var(--text-xs)" }}>
-                        {row.explanation}
-                      </p>
-                    ) : null}
                   </div>
                 </div>
               );
             })}
           </div>
         )}
-        {foundEvidence.length > 0 ? (
-          <p className="muted" style={{ margin: 0, fontSize: "var(--text-sm)" }}>
-            {foundEvidence.length} requirement(s) have resume evidence quotes.
-          </p>
-        ) : null}
       </Card>
       <Card className="stack">
         <h2 style={{ margin: 0 }}>Requirement gaps</h2>
@@ -1314,8 +1259,8 @@ export function AtsReport() {
       </Card>
       <Card>
         <p className="muted">
-          Method: {analysis.summary?.method || "Evidence-backed keyword coverage"}. Score only counts phrases found in
-          your resume source text. Evidence rows always quote the resume — they never invent wording.
+          Method: {analysis.summary?.method || "Keyword coverage"}. Score is the weighted share of JD requirements found
+          in your resume text (see <code>backend/app/features/ats/ats_score.py</code>).
         </p>
       </Card>
     </div>

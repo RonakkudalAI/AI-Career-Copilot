@@ -23,7 +23,7 @@ from app.features.interview.agent import generate_interview_questions
 from app.features.interview.preparation import generate_interview_preparation
 from app.features.profile.agent import build_profile_draft_enriched, profile_draft_response_payload
 from app.agents.registry import agents_status
-from app.features.ats.deterministic import evidence_match_status, score_resume
+from app.features.ats.ats_score import evidence_match_status, score_resume
 from app.features.auth.service import CurrentUser, create_access_token, get_current_user
 from app.features.profile.avatars import (
     attach_avatar_url,
@@ -43,8 +43,7 @@ from app.features.document_parsing.service import (
     sha256_bytes,
     validate_document,
 )
-from app.features.document_parsing.extractors import extract_document_blocks
-from app.features.document_parsing.pipeline import parse_source_blocks
+from app.features.document_parsing.pipeline import parse_document_bytes
 from app.core.errors import ApiError
 from app.features.profile.importer import insert_validated_batch
 from app.features.profile.agent.normalize import normalize_date_value
@@ -186,19 +185,9 @@ def utc_now() -> str:
 async def _extract_resume_content(
     content: bytes, filename: str, declared_mime: str | None, settings: Settings
 ) -> tuple[str, dict[str, Any]]:
-    """Extract layout-preserving blocks, then run the source-grounded parse pipeline."""
-    extraction = extract_document_blocks(content, filename, declared_mime or "")
-    if extraction.status != "SUCCESS":
-        raise ApiError(422, "ocr_required", extraction.message or "The document requires OCR before parsing.")
-    if not extraction.blocks:
-        raise ApiError(422, "document_has_no_text", "No usable source text was found in the document.")
-    structured = await parse_source_blocks(
-        extraction.blocks,
-        settings,
-        is_scanned=extraction.is_scanned,
-    )
-    plain_text = "\n".join(block.text for block in extraction.blocks if block.text.strip()).strip()
-    return plain_text, structured
+    """Parse resume with Docling + simple section map (sections only — no source-block payload)."""
+    mime = validate_document(filename or "document", declared_mime, content, settings.document_max_bytes)
+    return await parse_document_bytes(content, mime_type=mime, settings=settings)
 
 
 def ensure_preference_row(client, table: str, user_id: str) -> dict[str, Any]:
@@ -1364,8 +1353,7 @@ async def _upload_resume_version(
             "plain_text": text,
             "structured_content": structured,
             "extraction_status": "review_required",
-            "extraction_warnings": structured["warnings"],
-            "extraction_confidence": structured.get("confidence") or {},
+            "extraction_warnings": list(structured.get("warnings") or []),
         }
         return client.table("resume_versions").insert(record).execute().data[0]
     except ApiError:
@@ -1678,9 +1666,13 @@ async def create_jd(
     settings: Settings = Depends(get_settings),
 ):
     client = client_for(settings, user)
-    structured = await extract_sections_enriched(
+    # Text JD has no file bytes — section-parse the raw text only.
+    from app.features.document_parsing.pipeline import _clean_structured
+
+    raw_structured = await extract_sections_enriched(
         payload.raw_text, settings, schema_version="jd-extraction-v1"
     )
+    structured = _clean_structured(raw_structured, "jd-extraction-v1")
     inferred = infer_job_metadata(payload.raw_text)
     title = (payload.title or "").strip() or inferred["title"] or "Job description"
     role_title = (payload.role_title or "").strip() or inferred["role_title"]
@@ -1694,7 +1686,7 @@ async def create_jd(
         "input_type": "text",
         "structured_content": structured,
         "extraction_status": "review_required",
-        "extraction_warnings": structured["warnings"],
+        "extraction_warnings": list(structured.get("warnings") or []),
     }
     result = client.table("job_descriptions").insert(record).execute().data[0]
     write_activity(
@@ -1716,8 +1708,9 @@ async def upload_jd(
     mime = validate_document(
         file.filename or "document", file.content_type, content, settings.document_max_bytes
     )
-    text = extract_text(content, mime)
-    structured = await extract_sections_enriched(text, settings, schema_version="jd-extraction-v1")
+    text, structured = await parse_document_bytes(
+        content, mime_type=mime, settings=settings, schema_version="jd-extraction-v1"
+    )
     inferred = infer_job_metadata(text)
     resolved_title = (title or "").strip() or inferred["title"] or infer_resume_title(file.filename)
     resolved_role = (role_title or "").strip() or inferred["role_title"]
@@ -1745,7 +1738,7 @@ async def upload_jd(
             "raw_text": text,
             "structured_content": structured,
             "extraction_status": "review_required",
-            "extraction_warnings": structured["warnings"],
+            "extraction_warnings": list(structured.get("warnings") or []),
         }
         result = client.table("job_descriptions").insert(record).execute().data[0]
         write_activity(

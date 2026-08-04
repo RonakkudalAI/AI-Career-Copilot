@@ -1,4 +1,4 @@
-from app.features.ats.deterministic import ALGORITHM_VERSION, evidence_match_status, score_resume
+from app.features.ats.ats_score import ALGORITHM_VERSION, evidence_match_status, score_resume
 
 
 def test_match_strength_maps_to_persisted_evidence_status() -> None:

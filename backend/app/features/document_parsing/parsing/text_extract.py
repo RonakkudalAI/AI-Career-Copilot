@@ -1,11 +1,8 @@
 """
 Plain-text extraction from PDF/DOCX.
 
-Priority for PDF:
-  1) Docling (optional) — layout-aware, higher fidelity when installed
-  2) pypdf — always available fallback
-
-Never invents text; only returns what the extractor yields from the file bytes.
+PDF: Docling only (layout-aware). No pypdf fallback — install docling when missing.
+DOCX: python-docx (native structure) with optional Docling when useful.
 """
 
 from __future__ import annotations
@@ -17,7 +14,6 @@ import tempfile
 from pathlib import Path
 
 from docx import Document
-from pypdf import PdfReader
 
 from app.core.errors import ApiError
 
@@ -29,16 +25,15 @@ DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.docu
 
 def _normalize_extracted_text(text: str) -> str:
     """Preserve line structure; collapse weird whitespace without merging sections."""
-    # Normalize Windows/Mac newlines
     text = text.replace("\r\n", "\n").replace("\r", "\n")
-    # Soft hyphen / zero-width noise from PDFs
     text = text.replace("\u00ad", "").replace("\ufeff", "")
     lines: list[str] = []
     for raw in text.split("\n"):
-        # Collapse runs of spaces/tabs inside a line only
         line = re.sub(r"[ \t]+", " ", raw).strip()
+        # Drop markdown heading markers Docling may emit — keep the heading words.
+        if line.startswith("#"):
+            line = re.sub(r"^#+\s*", "", line).strip()
         lines.append(line)
-    # Collapse 3+ blank lines to a single blank (keep one separator for entry splits)
     cleaned: list[str] = []
     blank_run = 0
     for line in lines:
@@ -52,35 +47,29 @@ def _normalize_extracted_text(text: str) -> str:
     return "\n".join(cleaned).strip()
 
 
-def _extract_pdf_pypdf(content: bytes) -> str:
-    reader = PdfReader(io.BytesIO(content))
-    if reader.is_encrypted:
-        raise ApiError(400, "encrypted_pdf", "Password-protected PDFs are not supported.")
-    pages: list[str] = []
-    for page in reader.pages:
-        page_text = page.extract_text() or ""
-        pages.append(page_text)
-    return _normalize_extracted_text("\n".join(pages))
-
-
-def _extract_pdf_docling(content: bytes) -> str | None:
-    """
-    Optional Docling path. Returns None if Docling is not installed or fails,
-    so callers fall back to pypdf without breaking the app.
-    """
+def _require_docling():
     try:
         from docling.document_converter import DocumentConverter  # type: ignore
-    except Exception:
-        return None
 
+        return DocumentConverter
+    except Exception as exc:
+        raise ApiError(
+            503,
+            "docling_not_installed",
+            "Docling is required for accurate resume PDF parsing. "
+            "Install it with: pip install 'docling>=2.0,<3'",
+        ) from exc
+
+
+def _extract_with_docling(content: bytes, suffix: str) -> str:
+    DocumentConverter = _require_docling()
     tmp_path: str | None = None
     try:
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as handle:
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as handle:
             handle.write(content)
             tmp_path = handle.name
         converter = DocumentConverter()
         result = converter.convert(tmp_path)
-        # Prefer markdown/export_text for clearer section headings
         doc = result.document
         text = ""
         if hasattr(doc, "export_to_markdown"):
@@ -90,10 +79,22 @@ def _extract_pdf_docling(content: bytes) -> str | None:
         else:
             text = str(doc)
         text = _normalize_extracted_text(text)
-        return text or None
+        if not text:
+            raise ApiError(
+                422,
+                "document_has_no_text",
+                "Docling found no usable text. Scanned image PDFs need OCR-enabled Docling models.",
+            )
+        return text
+    except ApiError:
+        raise
     except Exception as exc:
-        logger.info("docling_pdf_extract_failed error=%s", exc)
-        return None
+        logger.exception("docling_extract_failed")
+        raise ApiError(
+            400,
+            "document_parse_failed",
+            "Docling could not parse this document. Try a text-based PDF or DOCX.",
+        ) from exc
     finally:
         if tmp_path:
             try:
@@ -111,7 +112,6 @@ def _docx_paragraph_text(document: Document) -> list[str]:
     for table in document.tables:
         for row in table.rows:
             cells = [(cell.text or "").strip() for cell in row.cells]
-            cells = [cell for cell in cells if cell]
             for cell in cells:
                 for part in cell.splitlines():
                     part = part.strip()
@@ -121,26 +121,34 @@ def _docx_paragraph_text(document: Document) -> list[str]:
 
 
 def extract_text(content: bytes, mime_type: str) -> str:
-    """Extract plain text from PDF or DOCX bytes. Raises ApiError on failure/empty."""
-    try:
-        if mime_type == PDF_MIME:
-            text = _extract_pdf_docling(content)
-            if not text:
-                text = _extract_pdf_pypdf(content)
-        elif mime_type == DOCX_MIME:
-            document = Document(io.BytesIO(content))
-            text = _normalize_extracted_text("\n".join(_docx_paragraph_text(document)))
-        else:
-            raise ApiError(415, "unsupported_document_type", "Only PDF and DOCX documents are supported.")
-    except ApiError:
-        raise
-    except Exception as exc:
-        raise ApiError(400, "document_parse_failed", "The document could not be read.") from exc
+    """
+    Extract plain text from PDF or DOCX bytes.
 
-    if not (text or "").strip():
-        raise ApiError(
-            422,
-            "document_has_no_text",
-            "No usable text was found. Scanned documents require OCR, which is not enabled.",
-        )
-    return text.strip()
+    PDF uses Docling only (accurate layout). No silent pypdf fallback.
+    """
+    if not content:
+        raise ApiError(400, "empty_document", "The selected document is empty.")
+
+    if mime_type == PDF_MIME:
+        return _extract_with_docling(content, ".pdf")
+
+    if mime_type == DOCX_MIME:
+        # Prefer Docling for consistency when available; native docx is reliable for Word files.
+        try:
+            return _extract_with_docling(content, ".docx")
+        except ApiError as exc:
+            if exc.code == "docling_not_installed":
+                document = Document(io.BytesIO(content))
+                text = _normalize_extracted_text("\n".join(_docx_paragraph_text(document)))
+                if not text:
+                    raise ApiError(422, "document_has_no_text", "No usable text was found in the DOCX.")
+                return text
+            # If Docling is installed but failed on this file, try native docx once.
+            if exc.code == "document_parse_failed":
+                document = Document(io.BytesIO(content))
+                text = _normalize_extracted_text("\n".join(_docx_paragraph_text(document)))
+                if text:
+                    return text
+            raise
+
+    raise ApiError(415, "unsupported_document_type", "Only PDF and DOCX documents are supported.")
