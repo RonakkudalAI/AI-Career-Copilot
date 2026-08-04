@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "setup": "node scripts/setup/project.mjs",
+    "postinstall": "node scripts/setup/project.mjs",
     "dev": "node scripts/dev/preflight.mjs && node scripts/dev/run.mjs",
     "dev:frontend": "node scripts/dev/frontend.mjs",
     "dev:backend": "node scripts/dev/backend.mjs",

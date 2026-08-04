@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import io
 import logging
+import os
 import re
 import tempfile
 from pathlib import Path
@@ -49,6 +50,10 @@ def _normalize_extracted_text(text: str) -> str:
 
 def _require_docling():
     try:
+        # Docling enables torch.compile by default. On Windows CPU installs,
+        # that path requires MSVC's `cl` compiler and fails during PDF parsing.
+        # Resume parsing does not need compilation, so keep inference portable.
+        os.environ.setdefault("DOCLING_INFERENCE_COMPILE_TORCH_MODELS", "false")
         from docling.document_converter import DocumentConverter  # type: ignore
 
         return DocumentConverter

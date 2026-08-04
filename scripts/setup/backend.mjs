@@ -143,7 +143,7 @@ const smoke = spawnSync(
   venvPython,
   [
     "-c",
-    "from app.main import app; from app.agents.crew import crew_runtime_mode, try_import_crewai; ok,_,_=try_import_crewai(); print('app', app.title); print('python_ok'); print('crew_runtime', crew_runtime_mode()); print('official_crewai', ok)",
+    "from app.main import app; from app.features.resume_improvement.agents.crew import crew_runtime_mode, try_import_crewai; ok,_,_=try_import_crewai(); print('app', app.title); print('python_ok'); print('crew_runtime', crew_runtime_mode()); print('official_crewai', ok)",
   ],
   { encoding: "utf-8", cwd: process.cwd() },
 );
