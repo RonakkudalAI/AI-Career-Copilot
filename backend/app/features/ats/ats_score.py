@@ -78,7 +78,8 @@ STOP_WORDS = {
     "preferred", "required", "requirements", "responsibilities", "role", "should",
     "skills", "strong", "team", "that", "the", "their", "this", "using", "with",
     "work", "years", "you", "your", "will", "within", "ability", "looking", "join",
-    "etc", "such", "well", "good", "plus",
+    "etc", "such", "well", "good", "plus", "we", "a", "an", "be", "can", "could",
+    "would", "person", "people", "value", "looking", "collaborative", "motivated", "passionate",
 }
 PREFERRED_MARKERS = ("preferred", "nice to have", "nice-to-have", "bonus", "plus", "desired")
 REQUIRED_MARKERS = ("required", "must have", "must-have", "minimum", "qualifications")
@@ -103,6 +104,18 @@ ALIAS_TO_CANONICAL = {
     for canonical, aliases in ALIAS_GROUPS.items()
     for alias in aliases
 }
+KNOWN_TECH_TERMS = {
+    "aws", "azure", "gcp", "fastapi", "flask", "django", "java", "kotlin", "swift", "rust",
+    "python", "php", "ruby", "scala", "c++", "c#", "sql", "nosql", "mysql", "mongodb",
+    "redis", "graphql", "html", "css", "tailwind", "next.js", "react", "react native",
+    "angular", "vue", "spring", "git", "github", "gitlab", "linux", "terraform", "jenkins",
+    "figma", "pandas", "numpy", "pytorch", "tensorflow", "spark", "hadoop", "airflow",
+    "snowflake", "databricks", "tableau", "power bi", "excel", "selenium", "playwright",
+}
+RELEVANT_LINE_MARKERS = (
+    "required", "must have", "qualifications", "requirements", "skills", "technologies",
+    "technical", "responsibilities", "experience with", "proficient", "preferred", "nice to have",
+)
 
 
 @dataclass(frozen=True)
@@ -253,7 +266,7 @@ def _classify_requirement(line: str, previous_type: str) -> str:
     return previous_type
 
 
-def _candidate_terms(text: str, limit: int = 80) -> list[tuple[str, str]]:
+def _candidate_terms_legacy(text: str, limit: int = 80) -> list[tuple[str, str]]:
     """Extract JD requirement phrases from the job description text only."""
     candidates: list[tuple[str, str]] = []
     seen: set[tuple[str, str]] = set()
@@ -314,6 +327,92 @@ def _candidate_terms(text: str, limit: int = 80) -> list[tuple[str, str]]:
     indexed = list(enumerate(candidates))
     indexed.sort(key=lambda pair: (0 if pair[1][0] in known else 1, pair[0]))
     return [item for _, item in indexed[:limit]]
+
+
+def _candidate_terms(text: str, limit: int = 80) -> list[tuple[str, str]]:
+    """Extract only source-backed, requirement-like phrases from the JD.
+
+    Ordinary prose is not expanded into arbitrary n-grams. A phrase must be a
+    known technical term present in the JD, a short item from a requirements or
+    skills line, or a short technical-looking bullet. Nothing is generated from
+    the resume and no phrase is invented.
+    """
+    candidates: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    current_type = "required"
+    known = set(ALIAS_GROUPS) | KNOWN_TECH_TERMS
+
+    def add(value: str, kind: str) -> None:
+        normalized = _normalize(value).strip(" .,:;|-")
+        if not normalized:
+            return
+        canonical = _canonical(normalized)
+        if canonical in STOP_WORDS or len(canonical) < 2:
+            return
+        key = (canonical, kind)
+        if key in seen or len(candidates) >= limit:
+            return
+        seen.add(key)
+        candidates.append((canonical, kind))
+
+    def add_known_terms(line: str, kind: str) -> None:
+        normalized_line = _normalize(line)
+        for term in sorted(known, key=len, reverse=True):
+            normalized_term = _normalize(term)
+            if re.search(rf"(?<![a-z0-9+#]){re.escape(normalized_term)}(?![a-z0-9+#])", normalized_line):
+                add(term, kind)
+
+    for raw in (text or "").splitlines() or [text]:
+        line = raw.strip()
+        if not line:
+            continue
+        segments = re.split(
+            r"(?i)(?=\b(?:preferred|nice to have|nice-to-have|bonus|desired)\s*:)",
+            line,
+        )
+        for segment in segments:
+            if not segment.strip():
+                continue
+            preferred_segment = bool(
+                re.match(r"(?i)\s*(?:preferred|nice to have|nice-to-have|bonus|desired)\s*:", segment)
+            )
+            segment_type = "preferred" if preferred_segment else _classify_requirement(segment, current_type)
+            if not preferred_segment:
+                current_type = segment_type
+
+            relevant_line = bool(
+                re.search(
+                    r"(?i)\b(?:" + "|".join(map(re.escape, RELEVANT_LINE_MARKERS)) + r")\b",
+                    segment,
+                )
+            )
+            bullet_line = bool(re.match(r"^[\u2022\u2023\u25E6*\-]\s+", segment))
+            if not (relevant_line or bullet_line):
+                continue
+            add_known_terms(segment, segment_type)
+
+            payload = re.sub(r"^[^:]{0,60}:\s*", "", segment).strip()
+            chunks = re.split(r"[,;|/.\u2022]|\s+and\s+", payload, flags=re.IGNORECASE)
+            for chunk in chunks:
+                cleaned = re.sub(r"^[\-*\s]+|[.!?]+$", "", chunk).strip()
+                words = _tokens(cleaned)
+                if not words or len(words) > 5:
+                    continue
+                if any(word in STOP_WORDS for word in words if word not in SHORT_TECH_TERMS):
+                    continue
+                normalized = _normalize(cleaned)
+                if normalized in known or any(term in normalized for term in known):
+                    add(cleaned, segment_type)
+                    continue
+                original_words = re.findall(r"[A-Za-z][A-Za-z0-9+#./-]*", cleaned)
+                technical_shape = any(
+                    any(char in word for char in "+#./-") or word[:1].isupper()
+                    for word in original_words
+                )
+                if technical_shape and len(words) <= 3:
+                    add(cleaned, segment_type)
+
+    return candidates[:limit]
 
 
 def _aliases(term: str) -> tuple[str, ...]:

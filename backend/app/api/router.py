@@ -23,7 +23,7 @@ from app.features.interview.agent import generate_interview_questions
 from app.features.interview.preparation import generate_interview_preparation
 from app.features.profile.agent import build_profile_draft_enriched, profile_draft_response_payload
 from app.agents.registry import agents_status
-from app.features.ats.ats_score import evidence_match_status, score_resume
+from app.features.ats.ats_score import ALGORITHM_VERSION, evidence_match_status, score_resume
 from app.features.auth.service import CurrentUser, create_access_token, get_current_user
 from app.features.profile.avatars import (
     attach_avatar_url,
@@ -90,7 +90,7 @@ from app.features.learning.service import generate_learning_path_from_ats
 router = APIRouter()
 router.include_router(resume_improvement_router)
 logger = logging.getLogger(__name__)
-SCORING_ALGORITHM_VERSION = "evidence-keyword-coverage-v3"
+SCORING_ALGORITHM_VERSION = ALGORITHM_VERSION
 
 
 def _password_hash(password: str, salt: bytes | None = None) -> str:
@@ -1851,7 +1851,9 @@ def confirm_jd(
     return result
 
 
-def _enrich_ats_analysis(client, user: CurrentUser, analysis: dict[str, Any]) -> dict[str, Any]:
+def _enrich_ats_analysis(
+    client, user: CurrentUser, analysis: dict[str, Any], *, include_parsed: bool = False
+) -> dict[str, Any]:
     """Attach the resume version and job description used for a stored ATS run."""
     enriched = dict(analysis)
     try:
@@ -1875,6 +1877,15 @@ def _enrich_ats_analysis(client, user: CurrentUser, analysis: dict[str, Any]) ->
                 "created_at": version.get("created_at"),
                 "unavailable": False,
             }
+            if include_parsed:
+                enriched["parsed_inputs"] = {
+                    "resume": {
+                        "filename": version.get("original_filename"),
+                        "extraction_status": version.get("extraction_status"),
+                        "plain_text": version.get("plain_text") or "",
+                        "structured_content": version.get("structured_content") or {},
+                    }
+                }
     except ApiError:
         enriched["resume"] = {
             "id": None,
@@ -1896,6 +1907,13 @@ def _enrich_ats_analysis(client, user: CurrentUser, analysis: dict[str, Any]) ->
             "created_at": job.get("created_at"),
             "unavailable": False,
         }
+        if include_parsed:
+            enriched.setdefault("parsed_inputs", {})["job_description"] = {
+                "filename": job.get("original_filename"),
+                "extraction_status": job.get("extraction_status"),
+                "plain_text": job.get("raw_text") or "",
+                "structured_content": job.get("structured_content") or {},
+            }
     except ApiError:
         enriched["job_description"] = {
             "id": None,
@@ -1926,7 +1944,9 @@ def get_ats(
     settings: Settings = Depends(get_settings),
 ):
     client = client_for(settings, user)
-    return _enrich_ats_analysis(client, user, owned_row(client, "ats_analyses", analysis_id, user))
+    return _enrich_ats_analysis(
+        client, user, owned_row(client, "ats_analyses", analysis_id, user), include_parsed=True
+    )
 
 
 @router.delete("/ats-analyses/{analysis_id}", status_code=204)

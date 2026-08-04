@@ -111,6 +111,11 @@ p { color: var(--muted); line-height: 1.65; font-size: var(--text-md); margin-bo
 .button-quiet { border-color: transparent; box-shadow: none; background: transparent; color: var(--ink); }
 .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; box-shadow: var(--shadow-md); padding: var(--space-6); }
 .panel-blue { background: var(--surface-blue); }
+.parsed-section { display: grid; gap: 4px; padding-top: 10px; border-top: 1px solid var(--border); }
+.parsed-section:first-child { padding-top: 0; border-top: 0; }
+.parsed-section h3 { margin: 0; font-size: var(--text-sm); text-transform: capitalize; }
+.parsed-section p { margin: 0; font-size: var(--text-sm); white-space: pre-wrap; }
+.parsed-source { max-height: 360px; overflow: auto; margin: 12px 0 0; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--background-subtle); color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; font: 400 var(--text-sm)/1.55 var(--font-family); }
 .field { width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--ink); box-shadow: none; font-family: var(--font-ui); font-size: var(--text-md); }
 .field:focus { outline: none; border-color: var(--primary-strong); box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 45%, transparent); }
 .field[aria-invalid="true"] { border-color: var(--error-border); background: var(--error-bg); }

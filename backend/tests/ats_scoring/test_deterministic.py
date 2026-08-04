@@ -52,3 +52,15 @@ def test_no_evidence_without_source_quote() -> None:
     result = score_resume("Summary\nBackend engineer", "Required: Kubernetes, Docker")
     assert result.overall_score == 0
     assert all(not item.matched and item.resume_evidence is None for item in result.evidence)
+
+
+def test_ordinary_jd_prose_does_not_become_requirements() -> None:
+    result = score_resume(
+        "Skills: Python, React",
+        "Required: Python, React. We are looking for a collaborative person who can deliver value.",
+    )
+
+    requirements = {item.requirement for item in result.evidence}
+    assert {"python", "react"} <= requirements
+    assert "collaborative person who" not in requirements
+    assert "deliver value" not in requirements

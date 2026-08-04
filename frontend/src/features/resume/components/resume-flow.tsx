@@ -102,6 +102,16 @@ type Analysis = {
     original_filename?: string | null;
     created_at?: string;
   } | null;
+  parsed_inputs?: {
+    resume?: ParsedInput | null;
+    job_description?: ParsedInput | null;
+  };
+};
+type ParsedInput = {
+  filename?: string | null;
+  extraction_status?: string | null;
+  plain_text?: string;
+  structured_content?: StructuredContent;
 };
 type AtsEvidence = {
   id: string;
@@ -176,6 +186,52 @@ function jdLabel(analysis: Analysis) {
       ? ` · ${job.input_type}`
       : "";
   return `${title}${company}${source}`;
+}
+
+function parsedSections(input?: ParsedInput | null) {
+  return Object.entries(input?.structured_content?.sections || {}).filter(
+    ([, values]) => values.some((value) => value.trim()),
+  );
+}
+
+function ParsedInputPanel({ title, input }: { title: string; input?: ParsedInput | null }) {
+  if (!input) {
+    return (
+      <Card className="stack">
+        <h2 style={{ margin: 0 }}>{title}</h2>
+        <p className="muted" style={{ margin: 0 }}>Parsed source is unavailable for this analysis.</p>
+      </Card>
+    );
+  }
+
+  const sections = parsedSections(input);
+  return (
+    <Card className="stack">
+      <div className="row" style={{ alignItems: "flex-start" }}>
+        <div>
+          <h2 style={{ margin: 0 }}>{title}</h2>
+          <p className="muted" style={{ margin: "4px 0 0", fontSize: "var(--text-sm)" }}>
+            {input.filename || "Pasted text"} · {input.extraction_status || "parsed"}
+          </p>
+        </div>
+        <Badge tone="success">Source text</Badge>
+      </div>
+      {sections.length > 0 ? (
+        <div className="stack" style={{ gap: 10 }}>
+          {sections.map(([section, values]) => (
+            <section key={section} className="parsed-section">
+              <h3>{section.replace(/_/g, " ")}</h3>
+              {values.map((value, index) => <p key={`${section}-${index}`}>{value}</p>)}
+            </section>
+          ))}
+        </div>
+      ) : null}
+      <details>
+        <summary>Show complete parsed text</summary>
+        <pre className="parsed-source">{input.plain_text || "No parsed text was stored."}</pre>
+      </details>
+    </Card>
+  );
 }
 
 export function AnalysisHistory() {
@@ -1124,6 +1180,10 @@ export function AtsReport() {
         </div>
         <p style={{ margin: 0 }}>Analyzed {formatDate(analysis.created_at)}</p>
       </Card>
+      <div className="grid-2">
+        <ParsedInputPanel title="Parsed resume" input={analysis.parsed_inputs?.resume} />
+        <ParsedInputPanel title="Parsed job description" input={analysis.parsed_inputs?.job_description} />
+      </div>
       <Card className="stack panel-blue">
         <Progress value={analysis.overall_score || 0} label="JD keyword coverage" />
         <p>

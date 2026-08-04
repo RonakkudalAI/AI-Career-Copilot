@@ -104,6 +104,29 @@ def _validate_inference(text: str, allowed_items: list[dict[str, Any]]) -> str:
     return " ".join(safe).strip()
 
 
+def _grounded_items(
+    items: list[str],
+    evidence_items: list[dict[str, Any]],
+    *,
+    generic_prefixes: tuple[str, ...] = (),
+) -> list[str]:
+    """Keep LLM list items tied to supplied terms or explicit safety rules."""
+    terms = {
+        str(item.get("term", "")).casefold().strip()
+        for item in evidence_items
+        if str(item.get("term", "")).strip()
+    }
+    grounded: list[str] = []
+    for raw in items:
+        item = str(raw).strip()
+        lowered = item.casefold()
+        if any(term in lowered for term in terms) or any(
+            lowered.startswith(prefix) for prefix in generic_prefixes
+        ):
+            grounded.append(item)
+    return grounded
+
+
 async def generate_ats_improvement_brief(
     settings: Settings,
     *,
@@ -162,11 +185,21 @@ async def generate_ats_improvement_brief(
                     score=overall_score, missing=missing, matched_count=matched_count,
                     total=total_terms, role_title=role_title, missing_items=missing_items,
                 )["overall_inference"]
+            priority_actions = _grounded_items(result.priority_actions, evidence_items)
+            section_guidance = _grounded_items(result.section_guidance, evidence_items)
+            do_not_claim = _grounded_items(
+                result.do_not_claim, evidence_items,
+                generic_prefixes=("do not", "never", "only", "avoid"),
+            )
+            fallback = _deterministic_brief(
+                score=overall_score, missing=missing, matched_count=matched_count,
+                total=total_terms, role_title=role_title, missing_items=missing_items,
+            )
             return {
                 "overall_inference": inference, "focus_areas": focus[:12],
-                "priority_actions": result.priority_actions[:12],
-                "section_guidance": result.section_guidance[:20],
-                "do_not_claim": result.do_not_claim[:12], "provider": "nvidia",
+                "priority_actions": priority_actions[:12] or fallback["priority_actions"],
+                "section_guidance": section_guidance[:20] or fallback["section_guidance"],
+                "do_not_claim": do_not_claim[:12] or fallback["do_not_claim"], "provider": "nvidia",
                 "model": settings.nvidia_model, "agent": "ats_improvement_brief", "fallback": False,
             }
         except Exception as exc:
@@ -187,11 +220,21 @@ async def generate_ats_improvement_brief(
                     score=overall_score, missing=missing, matched_count=matched_count,
                     total=total_terms, role_title=role_title, missing_items=missing_items,
                 )["overall_inference"]
+            priority_actions = _grounded_items(result.priority_actions, evidence_items)
+            section_guidance = _grounded_items(result.section_guidance, evidence_items)
+            do_not_claim = _grounded_items(
+                result.do_not_claim, evidence_items,
+                generic_prefixes=("do not", "never", "only", "avoid"),
+            )
+            fallback = _deterministic_brief(
+                score=overall_score, missing=missing, matched_count=matched_count,
+                total=total_terms, role_title=role_title, missing_items=missing_items,
+            )
             return {
                 "overall_inference": inference,
-                "focus_areas": focus[:12], "priority_actions": result.priority_actions[:12],
-                "section_guidance": result.section_guidance[:20],
-                "do_not_claim": result.do_not_claim[:12], "provider": "groq",
+                "focus_areas": focus[:12], "priority_actions": priority_actions[:12] or fallback["priority_actions"],
+                "section_guidance": section_guidance[:20] or fallback["section_guidance"],
+                "do_not_claim": do_not_claim[:12] or fallback["do_not_claim"], "provider": "groq",
                 "model": settings.groq_model, "agent": "ats_improvement_brief", "fallback": False,
             }
         except Exception as exc:
