@@ -1,0 +1,148 @@
+{
+  "fixture_meta": {
+    "fixture_id": 16,
+    "fixture_slug": "16_icons",
+    "filename": "16_icons.pdf",
+    "expected_status": "SUCCESS"
+  },
+  "contact": {
+    "full_name": {
+      "value": "Avery Bennett",
+      "evidence_block_ids": [
+        "page-1-block-01"
+      ],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "email": {
+      "value": "avery.bennett@email.com",
+      "evidence_block_ids": [
+        "page-1-block-02"
+      ],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "phone": {
+      "value": "(555) 019-7733",
+      "evidence_block_ids": [
+        "page-1-block-02"
+      ],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "location": {
+      "value": "Portland, OR",
+      "evidence_block_ids": [
+        "page-1-block-02"
+      ],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "linkedin": {
+      "value": null,
+      "evidence_block_ids": [],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "github": {
+      "value": null,
+      "evidence_block_ids": [],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "portfolio": {
+      "value": "averybennett.dev",
+      "evidence_block_ids": [
+        "page-1-block-02"
+      ],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "other_links": []
+  },
+  "professional_summary": {
+    "value": null,
+    "evidence_block_ids": [],
+    "confidence": "HIGH",
+    "warning": null
+  },
+  "target_role": {
+    "value": null,
+    "evidence_block_ids": [],
+    "confidence": "HIGH",
+    "warning": null
+  },
+  "skills": [],
+  "experience": [
+    {
+      "employer": {
+        "value": "EcoTech Systems",
+        "evidence_block_ids": [
+          "page-1-block-05"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "role": {
+        "value": "Senior Backend Developer",
+        "evidence_block_ids": [
+          "page-1-block-05"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "location": {
+        "value": null,
+        "evidence_block_ids": [],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "start_date": {
+        "value": "2020",
+        "evidence_block_ids": [
+          "page-1-block-05"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "end_date": {
+        "value": null,
+        "evidence_block_ids": [],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "is_current": {
+        "value": true,
+        "evidence_block_ids": [
+          "page-1-block-05"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "responsibilities": [
+        {
+          "value": "Built REST APIs using Python and Django.",
+          "evidence_block_ids": [
+            "page-1-block-06"
+          ],
+          "confidence": "HIGH",
+          "warning": null
+        }
+      ],
+      "technologies": []
+    }
+  ],
+  "projects": [],
+  "education": [],
+  "certifications": [],
+  "licences": [],
+  "achievements": [],
+  "publications": [],
+  "languages": [],
+  "volunteer_experience": [],
+  "training": [],
+  "links": [],
+  "additional_sections": [],
+  "warnings": [],
+  "unclassified_blocks": []
+}

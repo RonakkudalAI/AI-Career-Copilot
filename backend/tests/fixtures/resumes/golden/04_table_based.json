@@ -1,0 +1,236 @@
+{
+  "fixture_meta": {
+    "fixture_id": 4,
+    "fixture_slug": "04_table_based",
+    "filename": "04_table_based.pdf",
+    "expected_status": "SUCCESS"
+  },
+  "contact": {
+    "full_name": {
+      "value": "Samuel Oak",
+      "evidence_block_ids": [
+        "page-1-block-01"
+      ],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "email": {
+      "value": "samuel.oak@example.com",
+      "evidence_block_ids": [
+        "page-1-block-02"
+      ],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "phone": {
+      "value": "(555) 321-9876",
+      "evidence_block_ids": [
+        "page-1-block-02"
+      ],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "location": {
+      "value": null,
+      "evidence_block_ids": [],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "linkedin": {
+      "value": null,
+      "evidence_block_ids": [],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "github": {
+      "value": null,
+      "evidence_block_ids": [],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "portfolio": {
+      "value": null,
+      "evidence_block_ids": [],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "other_links": []
+  },
+  "professional_summary": {
+    "value": "Experienced Full Stack Developer specializing in React, Node.js, and Python web architectures.",
+    "evidence_block_ids": [
+      "page-1-block-04"
+    ],
+    "confidence": "HIGH",
+    "warning": null
+  },
+  "target_role": {
+    "value": "Full Stack Developer",
+    "evidence_block_ids": [
+      "page-1-block-04"
+    ],
+    "confidence": "HIGH",
+    "warning": null
+  },
+  "skills": [
+    {
+      "name": {
+        "value": "React",
+        "evidence_block_ids": [
+          "page-1-block-06"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "category": {
+        "value": null,
+        "evidence_block_ids": [],
+        "confidence": "HIGH",
+        "warning": null
+      }
+    },
+    {
+      "name": {
+        "value": "Node.js",
+        "evidence_block_ids": [
+          "page-1-block-06"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "category": {
+        "value": null,
+        "evidence_block_ids": [],
+        "confidence": "HIGH",
+        "warning": null
+      }
+    }
+  ],
+  "experience": [
+    {
+      "employer": {
+        "value": "WebMatrix Inc",
+        "evidence_block_ids": [
+          "page-1-block-08"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "role": {
+        "value": "Full Stack Lead",
+        "evidence_block_ids": [
+          "page-1-block-08"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "location": {
+        "value": null,
+        "evidence_block_ids": [],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "start_date": {
+        "value": "2019",
+        "evidence_block_ids": [
+          "page-1-block-08"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "end_date": {
+        "value": null,
+        "evidence_block_ids": [],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "is_current": {
+        "value": true,
+        "evidence_block_ids": [
+          "page-1-block-08"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "responsibilities": [
+        {
+          "value": "Led development of SaaS enterprise dashboard.",
+          "evidence_block_ids": [
+            "page-1-block-08"
+          ],
+          "confidence": "HIGH",
+          "warning": null
+        }
+      ],
+      "technologies": []
+    }
+  ],
+  "projects": [],
+  "education": [
+    {
+      "institution": {
+        "value": "Oregon State University",
+        "evidence_block_ids": [
+          "page-1-block-10"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "degree": {
+        "value": "B.S. Software Engineering",
+        "evidence_block_ids": [
+          "page-1-block-10"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "field_of_study": {
+        "value": "Software Engineering",
+        "evidence_block_ids": [
+          "page-1-block-10"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "start_date": {
+        "value": "2015",
+        "evidence_block_ids": [
+          "page-1-block-10"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "end_date": {
+        "value": "2019",
+        "evidence_block_ids": [
+          "page-1-block-10"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "grade": {
+        "value": null,
+        "evidence_block_ids": [],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "location": {
+        "value": null,
+        "evidence_block_ids": [],
+        "confidence": "HIGH",
+        "warning": null
+      }
+    }
+  ],
+  "certifications": [],
+  "licences": [],
+  "achievements": [],
+  "publications": [],
+  "languages": [],
+  "volunteer_experience": [],
+  "training": [],
+  "links": [],
+  "additional_sections": [],
+  "warnings": [],
+  "unclassified_blocks": []
+}

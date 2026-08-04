@@ -1,0 +1,167 @@
+{
+  "fixture_meta": {
+    "fixture_id": 15,
+    "fixture_slug": "15_no_headings",
+    "filename": "15_no_headings.pdf",
+    "expected_status": "SUCCESS"
+  },
+  "contact": {
+    "full_name": {
+      "value": "Riley Harper",
+      "evidence_block_ids": [
+        "page-1-block-01"
+      ],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "email": {
+      "value": "riley.harper@email.com",
+      "evidence_block_ids": [
+        "page-1-block-02"
+      ],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "phone": {
+      "value": "(555) 777-8899",
+      "evidence_block_ids": [
+        "page-1-block-02"
+      ],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "location": {
+      "value": "San Diego, CA",
+      "evidence_block_ids": [
+        "page-1-block-02"
+      ],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "linkedin": {
+      "value": null,
+      "evidence_block_ids": [],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "github": {
+      "value": null,
+      "evidence_block_ids": [],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "portfolio": {
+      "value": null,
+      "evidence_block_ids": [],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "other_links": []
+  },
+  "professional_summary": {
+    "value": "Software engineer with 5 years experience specializing in web APIs.",
+    "evidence_block_ids": [
+      "page-1-block-03"
+    ],
+    "confidence": "HIGH",
+    "warning": null
+  },
+  "target_role": {
+    "value": "Software Developer",
+    "evidence_block_ids": [
+      "page-1-block-02"
+    ],
+    "confidence": "HIGH",
+    "warning": null
+  },
+  "skills": [
+    {
+      "name": {
+        "value": "Python",
+        "evidence_block_ids": [
+          "page-1-block-06"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "category": {
+        "value": null,
+        "evidence_block_ids": [],
+        "confidence": "HIGH",
+        "warning": null
+      }
+    }
+  ],
+  "experience": [
+    {
+      "employer": {
+        "value": "WebWorks Corp",
+        "evidence_block_ids": [
+          "page-1-block-04"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "role": {
+        "value": "Software Engineer",
+        "evidence_block_ids": [
+          "page-1-block-04"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "location": {
+        "value": null,
+        "evidence_block_ids": [],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "start_date": {
+        "value": "2021",
+        "evidence_block_ids": [
+          "page-1-block-04"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "end_date": {
+        "value": null,
+        "evidence_block_ids": [],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "is_current": {
+        "value": true,
+        "evidence_block_ids": [
+          "page-1-block-04"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "responsibilities": [
+        {
+          "value": "Developed Python FastAPI services and React components.",
+          "evidence_block_ids": [
+            "page-1-block-04"
+          ],
+          "confidence": "HIGH",
+          "warning": null
+        }
+      ],
+      "technologies": []
+    }
+  ],
+  "projects": [],
+  "education": [],
+  "certifications": [],
+  "licences": [],
+  "achievements": [],
+  "publications": [],
+  "languages": [],
+  "volunteer_experience": [],
+  "training": [],
+  "links": [],
+  "additional_sections": [],
+  "warnings": [],
+  "unclassified_blocks": []
+}

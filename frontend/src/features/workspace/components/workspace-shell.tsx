@@ -15,6 +15,8 @@ import {
   type ProfileMissingItem,
   type ProfileUpdatedDetail,
 } from "@/features/profile/model/profile-completion";
+import { isDemoSession } from "@/features/auth/demo-session";
+import { DEMO_COOKIE_NAME } from "@/shared/config";
 
 const navigation = [
   { href: routes.dashboard, label: "Dashboard", icon: Gauge },
@@ -58,7 +60,7 @@ function completionFromBootstrap(data: Bootstrap | null): {
 }
 
 function readDemoMode() {
-  return typeof document !== "undefined" && document.cookie.split("; ").includes("career_copilot_demo=1");
+  return isDemoSession();
 }
 
 function subscribeDemoMode() {
@@ -82,7 +84,7 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
   const fetchGen = useRef(0);
 
   const loadBootstrap = useCallback(() => {
-    if (document.cookie.split("; ").includes("career_copilot_demo=1")) return;
+    if (isDemoSession()) return;
     const gen = ++fetchGen.current;
     apiRequest<Bootstrap>("/me/bootstrap")
       .then((data) => {
@@ -173,7 +175,7 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
 
   async function logout() {
     if (demoMode) {
-      document.cookie = "career_copilot_demo=; Max-Age=0; Path=/; SameSite=Lax";
+      document.cookie = `${DEMO_COOKIE_NAME}=; Max-Age=0; Path=/; SameSite=Lax`;
       router.replace("/");
       router.refresh();
       return;

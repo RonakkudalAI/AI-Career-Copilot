@@ -1,0 +1,82 @@
+{
+  "fixture_meta": {
+    "fixture_id": 21,
+    "fixture_slug": "21_corrupted",
+    "filename": "21_corrupted.pdf",
+    "expected_status": "CORRUPTED_FILE"
+  },
+  "contact": {
+    "full_name": {
+      "value": null,
+      "evidence_block_ids": [],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "email": {
+      "value": null,
+      "evidence_block_ids": [],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "phone": {
+      "value": null,
+      "evidence_block_ids": [],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "location": {
+      "value": null,
+      "evidence_block_ids": [],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "linkedin": {
+      "value": null,
+      "evidence_block_ids": [],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "github": {
+      "value": null,
+      "evidence_block_ids": [],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "portfolio": {
+      "value": null,
+      "evidence_block_ids": [],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "other_links": []
+  },
+  "professional_summary": {
+    "value": null,
+    "evidence_block_ids": [],
+    "confidence": "HIGH",
+    "warning": null
+  },
+  "target_role": {
+    "value": null,
+    "evidence_block_ids": [],
+    "confidence": "HIGH",
+    "warning": null
+  },
+  "skills": [],
+  "experience": [],
+  "projects": [],
+  "education": [],
+  "certifications": [],
+  "licences": [],
+  "achievements": [],
+  "publications": [],
+  "languages": [],
+  "volunteer_experience": [],
+  "training": [],
+  "links": [],
+  "additional_sections": [],
+  "warnings": [
+    "File structure is malformed or unparseable"
+  ],
+  "unclassified_blocks": []
+}

@@ -1,0 +1,213 @@
+{
+  "fixture_meta": {
+    "fixture_id": 6,
+    "fixture_slug": "06_minimal_fresher",
+    "filename": "06_minimal_fresher.pdf",
+    "expected_status": "SUCCESS"
+  },
+  "contact": {
+    "full_name": {
+      "value": "Sam Rivera",
+      "evidence_block_ids": [
+        "page-1-block-01"
+      ],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "email": {
+      "value": "sam.rivera@gmail.com",
+      "evidence_block_ids": [
+        "page-1-block-02"
+      ],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "phone": {
+      "value": "(555) 444-3322",
+      "evidence_block_ids": [
+        "page-1-block-02"
+      ],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "location": {
+      "value": "Chicago, IL",
+      "evidence_block_ids": [
+        "page-1-block-02"
+      ],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "linkedin": {
+      "value": null,
+      "evidence_block_ids": [],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "github": {
+      "value": null,
+      "evidence_block_ids": [],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "portfolio": {
+      "value": null,
+      "evidence_block_ids": [],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "other_links": []
+  },
+  "professional_summary": {
+    "value": "Enthusiastic Computer Science graduate seeking an entry-level Junior Software Developer position.",
+    "evidence_block_ids": [
+      "page-1-block-05"
+    ],
+    "confidence": "HIGH",
+    "warning": null
+  },
+  "target_role": {
+    "value": "Junior Software Developer",
+    "evidence_block_ids": [
+      "page-1-block-05"
+    ],
+    "confidence": "HIGH",
+    "warning": null
+  },
+  "skills": [
+    {
+      "name": {
+        "value": "Python",
+        "evidence_block_ids": [
+          "page-1-block-10"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "category": {
+        "value": null,
+        "evidence_block_ids": [],
+        "confidence": "HIGH",
+        "warning": null
+      }
+    }
+  ],
+  "experience": [],
+  "projects": [
+    {
+      "name": {
+        "value": "Student Portal App",
+        "evidence_block_ids": [
+          "page-1-block-12"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "project_type": {
+        "value": "Academic Capstone",
+        "evidence_block_ids": [
+          "page-1-block-12"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "description": {
+        "value": "Created a web portal using Python Flask and SQLite for managing course assignments.",
+        "evidence_block_ids": [
+          "page-1-block-13"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "role": {
+        "value": null,
+        "evidence_block_ids": [],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "technologies": [
+        {
+          "value": "Python",
+          "evidence_block_ids": [
+            "page-1-block-13"
+          ],
+          "confidence": "HIGH",
+          "warning": null
+        }
+      ],
+      "responsibilities": [],
+      "outcomes": [],
+      "links": [],
+      "evidence_block_ids": [
+        "page-1-block-13"
+      ]
+    }
+  ],
+  "education": [
+    {
+      "institution": {
+        "value": "University of Illinois Chicago",
+        "evidence_block_ids": [
+          "page-1-block-07"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "degree": {
+        "value": "B.S. in Computer Science",
+        "evidence_block_ids": [
+          "page-1-block-07"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "field_of_study": {
+        "value": "Computer Science",
+        "evidence_block_ids": [
+          "page-1-block-07"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "start_date": {
+        "value": null,
+        "evidence_block_ids": [],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "end_date": {
+        "value": "2024-05",
+        "evidence_block_ids": [
+          "page-1-block-07"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "grade": {
+        "value": "3.7 / 4.0",
+        "evidence_block_ids": [
+          "page-1-block-08"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "location": {
+        "value": null,
+        "evidence_block_ids": [],
+        "confidence": "HIGH",
+        "warning": null
+      }
+    }
+  ],
+  "certifications": [],
+  "licences": [],
+  "achievements": [],
+  "publications": [],
+  "languages": [],
+  "volunteer_experience": [],
+  "training": [],
+  "links": [],
+  "additional_sections": [],
+  "warnings": [],
+  "unclassified_blocks": []
+}

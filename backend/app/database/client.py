@@ -13,6 +13,7 @@ from typing import Any
 from urllib.parse import quote
 
 from app.core.config import Settings
+from app.core.constants import SQLITE_BUSY_TIMEOUT_MS, SQLITE_CONNECT_TIMEOUT_SECONDS
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _TABLES = {
@@ -270,12 +271,12 @@ class LocalClient:
             return connection
         connection = sqlite3.connect(
             Path(self.settings.database_path).resolve(),
-            timeout=10,
+            timeout=SQLITE_CONNECT_TIMEOUT_SECONDS,
             check_same_thread=True,
         )
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA busy_timeout = 10000")
+        connection.execute(f"PRAGMA busy_timeout = {int(SQLITE_BUSY_TIMEOUT_MS)}")
         connection.execute("PRAGMA journal_mode = WAL")
         connection.execute("PRAGMA synchronous = NORMAL")
         self._thread_state.connection = connection

@@ -23,7 +23,10 @@ from app.api.schemas import ProfileResumeExtractResult
 
 logger = logging.getLogger(__name__)
 
-_PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / "fill_profile_from_resume_v1.txt"
+# pipeline.py lives at features/profile/agent/ → app root is parents[3]
+_PROMPT_PATH = (
+    Path(__file__).resolve().parents[3] / "agents" / "prompts" / "fill_profile_from_resume_v1.txt"
+)
 _MAX_RESUME_CHARS = 28_000
 
 

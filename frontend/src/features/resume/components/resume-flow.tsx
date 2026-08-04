@@ -13,7 +13,11 @@ type StructuredContent = {
   sections: Record<string, string[]>;
   unclassified_blocks?: string[];
   warnings?: string[];
+  source_blocks?: SourceBlock[];
+  evidence_block_ids?: Record<string, string[][]>;
+  corrections?: Record<string, unknown>;
 };
+type SourceBlock = { block_id: string; page: number; text: string; heading_context?: string | null };
 type ResumeVersion = {
   id: string;
   resume_id: string;
@@ -38,6 +42,9 @@ type JobDescription = {
   created_at?: string;
   confidence?: string | null;
 };
+function uniqueTerms(values: string[]): string[] {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+}
 type Analysis = {
   id: string;
   status: string;
@@ -101,7 +108,9 @@ type Analysis = {
 type AtsEvidence = {
   id: string;
   requirement_text: string;
+  requirement_type?: string | null;
   resume_evidence_text?: string | null;
+  resume_section?: string | null;
   match_status: "strong_match" | "partial_match" | "not_found" | "unverified" | "not_applicable";
   explanation?: string | null;
 };
@@ -279,7 +288,7 @@ function ResumeLibrary() {
   }, [preview]);
 
   async function resolvePdfPreviewUrl(data: ResumePreview): Promise<string> {
-    // After in-place edits, original upload is stale — show PDF rendered from current content.
+    // Prefer rendered PDF when structured content changed from the original upload.
     const useRendered =
       data.prefer_rendered_pdf ||
       data.version.content_edited ||
@@ -547,7 +556,7 @@ function AtsHistoryList() {
               <div>
                 <p className="eyebrow">Previous ATS run</p>
                 <h2 style={{ marginBottom: 6 }}>
-                  {analysis.overall_score == null ? "No score" : `${analysis.overall_score}/100`}
+                  {analysis.overall_score == null ? "No score" : `${Math.round(Number(analysis.overall_score))}%`}
                 </h2>
                 <p style={{ margin: 0 }}>{formatDate(analysis.created_at)}</p>
               </div>
@@ -588,7 +597,21 @@ function AtsHistoryList() {
 
 type UploadStep = "upload" | "review";
 
-function SectionEntries({ lines }: { lines: string[] }) {
+function SectionEntries({
+  section,
+  lines,
+  sourceBlocks,
+  evidenceBlockIds,
+  editable = false,
+  onEdit,
+}: {
+  section: string;
+  lines: string[];
+  sourceBlocks?: SourceBlock[];
+  evidenceBlockIds?: Record<string, string[][]>;
+  editable?: boolean;
+  onEdit?: (index: number, value: string) => void;
+}) {
   if (!lines?.length) {
     return <p style={{ margin: "6px 0 0" }}>No content extracted for this section.</p>;
   }
@@ -599,7 +622,30 @@ function SectionEntries({ lines }: { lines: string[] }) {
           key={`${index}-${entry.slice(0, 24)}`}
           className="extraction-entry"
         >
-          {entry}
+          {editable ? (
+            <Textarea
+              aria-label={`Edit ${section.replaceAll("_", " ")} entry ${index + 1}`}
+              value={entry}
+              onChange={(event) => onEdit?.(index, event.target.value)}
+              rows={Math.min(6, Math.max(2, entry.split("\n").length))}
+            />
+          ) : (
+            entry
+          )}
+          {sourceBlocks && evidenceBlockIds?.[section]?.[index]?.length ? (
+            <details className="extraction-evidence">
+              <summary>Source evidence</summary>
+              {evidenceBlockIds[section][index].map((blockId) => {
+                const block = sourceBlocks.find((candidate) => candidate.block_id === blockId);
+                return block ? (
+                  <p key={blockId}>
+                    <small>{blockId} · page {block.page}</small>
+                    {block.text}
+                  </p>
+                ) : null;
+              })}
+            </details>
+          ) : null}
         </div>
       ))}
     </div>
@@ -611,11 +657,17 @@ function ExtractionPanel({
   status,
   sections,
   fallbackText,
+  structuredContent,
+  editable = false,
+  onEdit,
 }: {
   title: string;
   status: string;
   sections: Record<string, string[]>;
   fallbackText?: string;
+  structuredContent?: StructuredContent;
+  editable?: boolean;
+  onEdit?: (section: string, index: number, value: string) => void;
 }) {
   const entries = Object.entries(sections || {});
   const contentCount = entries.reduce((total, [, lines]) => total + lines.length, 0);
@@ -647,7 +699,14 @@ function ExtractionPanel({
                 <h3>{section.replaceAll("_", " ")}</h3>
                 <span>{lines.length}</span>
               </div>
-            <SectionEntries lines={lines} />
+            <SectionEntries
+              section={section}
+              lines={lines}
+              sourceBlocks={structuredContent?.source_blocks}
+              evidenceBlockIds={structuredContent?.evidence_block_ids}
+              editable={editable}
+              onEdit={(index, value) => onEdit?.(section, index, value)}
+            />
             </section>
           ))}
         </div>
@@ -672,6 +731,7 @@ export function NewAnalysis({ embedded = false }: { embedded?: boolean }) {
   const [jdFile, setJdFile] = useState<File | null>(null);
   const [resume, setResume] = useState<Resume | null>(null);
   const [resumeVersion, setResumeVersion] = useState<ResumeVersion | null>(null);
+  const [editedResumeSections, setEditedResumeSections] = useState<Record<string, string[]>>({});
   const [job, setJob] = useState<JobDescription | null>(null);
   const [reviewed, setReviewed] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -725,6 +785,7 @@ export function NewAnalysis({ embedded = false }: { embedded?: boolean }) {
 
       setResume(resumeResult.resume);
       setResumeVersion(resumeResult.version);
+      setEditedResumeSections(resumeResult.version.structured_content?.sections || {});
       setJob(jobResult);
       setReviewed(false);
       setMessage(
@@ -746,6 +807,19 @@ export function NewAnalysis({ embedded = false }: { embedded?: boolean }) {
     setMessage("Confirming extractions and calculating ATS score…");
     try {
       let confirmedVersion = resumeVersion;
+      if (JSON.stringify(editedResumeSections) !== JSON.stringify(resumeVersion.structured_content?.sections || {})) {
+        confirmedVersion = await apiRequest<ResumeVersion>(`/resume-versions/${resumeVersion.id}/extraction`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            structured_content: {
+              ...resumeVersion.structured_content,
+              sections: editedResumeSections,
+              corrections: { ...(resumeVersion.structured_content.corrections || {}), candidate_review: true },
+            },
+          }),
+        });
+        setResumeVersion(confirmedVersion);
+      }
       if (confirmedVersion.extraction_status !== "confirmed") {
         confirmedVersion = await apiRequest<ResumeVersion>(`/resume-versions/${confirmedVersion.id}/confirm`, {
           method: "POST",
@@ -779,7 +853,7 @@ export function NewAnalysis({ embedded = false }: { embedded?: boolean }) {
     }
   }
 
-  const resumeSections = resumeVersion?.structured_content?.sections || {};
+  const resumeSections = editedResumeSections;
   const jobSections = job?.structured_content?.sections || {};
 
   return (
@@ -929,6 +1003,16 @@ export function NewAnalysis({ embedded = false }: { embedded?: boolean }) {
               title={`Resume · ${resume?.title || "Uploaded resume"}`}
               status={resumeVersion.extraction_status}
               sections={resumeSections}
+              structuredContent={resumeVersion.structured_content}
+              editable
+              onEdit={(section, index, value) =>
+                setEditedResumeSections((current) => ({
+                  ...current,
+                  [section]: (current[section] || []).map((entry, entryIndex) =>
+                    entryIndex === index ? value : entry,
+                  ),
+                }))
+              }
             />
             <ExtractionPanel
               title={`Job description · ${job.role_title || job.title}${job.company ? ` · ${job.company}` : ""}`}
@@ -1021,45 +1105,38 @@ export function AtsReport() {
 
   const missing = evidence.filter((item) => item.match_status === "not_found");
   const partial = evidence.filter((item) => item.match_status === "partial_match");
-  const missingTerms =
+  const missingTerms = uniqueTerms(
     analysis.summary?.missing_terms?.length
       ? analysis.summary.missing_terms
       : analysis.score_breakdown?.missing_terms?.length
         ? analysis.score_breakdown.missing_terms
-        : missing.map((item) => item.requirement_text).filter(Boolean);
+        : missing.map((item) => item.requirement_text).filter(Boolean)
+  );
   const total = analysis.summary?.total ?? evidence.length;
   const matchedCount = analysis.summary?.matched ?? Math.max(0, total - missingTerms.length);
   const overallInference = analysis.summary?.overall_inference || "";
-  const focusAreas = analysis.summary?.focus_areas || [];
-  const priorityActions = analysis.summary?.priority_actions || [];
-  const sectionGuidance = analysis.summary?.section_guidance || [];
-  const doNotClaim = analysis.summary?.do_not_claim || [];
-  const criticalMissing = analysis.summary?.critical_missing || missingTerms;
-  const preferredMissing = analysis.summary?.preferred_missing || [];
-  const partialTerms = analysis.summary?.partial_terms || analysis.score_breakdown?.partial_terms || partial.map((item) => item.requirement_text);
-  const keywordScore = analysis.score_breakdown?.keyword_coverage_score;
-  const structuredScores =
-    analysis.summary?.structured_parameter_scores || analysis.score_breakdown?.structured_parameter_scores || null;
-  const domainGate = analysis.summary?.domain_gate || analysis.score_breakdown?.domain_gate || null;
-  const structuredScoring = Boolean(structuredScores || analysis.summary?.structured_composite_score != null);
+  const focusAreas = uniqueTerms(analysis.summary?.focus_areas || []);
+  const priorityActions = uniqueTerms(analysis.summary?.priority_actions || []);
+  const sectionGuidance = uniqueTerms(analysis.summary?.section_guidance || []);
+  const doNotClaim = uniqueTerms(analysis.summary?.do_not_claim || []);
+  const criticalMissing = uniqueTerms(analysis.summary?.critical_missing || missingTerms);
+  const preferredMissing = uniqueTerms(analysis.summary?.preferred_missing || []);
+  const partialTerms = uniqueTerms(analysis.summary?.partial_terms || analysis.score_breakdown?.partial_terms || partial.map((item) => item.requirement_text));
+  const foundEvidence = evidence.filter((item) => item.match_status === "strong_match" || item.match_status === "partial_match");
 
   return (
     <div className="stack">
       <PageHeader
-        eyebrow={structuredScoring ? "Structured ATS scoring" : "ATS keyword coverage"}
-        title={`${analysis.overall_score ?? 0}/100`}
-        description={
-          structuredScoring
-            ? "Structured ATS composite score with parameter-level scoring and deterministic keyword evidence."
-            : "Exact keyword coverage vs the job description with deterministic evidence."
-        }
+        eyebrow="ATS keyword coverage"
+        title={`${Math.round(Number(analysis.overall_score ?? 0))}%`}
+        description="Simple keyword coverage: each hit quotes an exact line from your confirmed resume. Nothing is invented."
         action={
           <div className="cluster">
-            <Link className="button button-primary" href={`/resume-analysis/report/${params.reportId}/edit`}>
-              Edit resume to improve score
-            </Link>
-            <Link className="button button-secondary" href="/resume-analysis?tab=upload">
+            <Link className="button button-primary" href="/resume-analysis?tab=upload">
               New analysis
+            </Link>
+            <Link className="button button-secondary" href="/resume-analysis">
+              Resume library
             </Link>
           </div>
         }
@@ -1076,62 +1153,112 @@ export function AtsReport() {
           </div>
         </div>
         <p style={{ margin: 0 }}>Analyzed {formatDate(analysis.created_at)}</p>
-        <div className="cluster">
-          <Link className="button button-primary" href={`/resume-analysis/report/${params.reportId}/edit`}>
-            Edit resume to improve score
-          </Link>
-        </div>
       </Card>
       <Card className="stack panel-blue">
-        <Progress value={analysis.overall_score || 0} label={structuredScoring ? "ATS composite score" : "JD keyword coverage"} />
-        {structuredScoring && keywordScore != null ? (
-          <div className="grid-2">
-            <div><strong>Keyword coverage</strong><p style={{ margin: "6px 0 0", fontSize: "var(--text-xl)" }}>{Math.round(keywordScore)}/100</p></div>
-            <div><strong>Structured composite</strong><p style={{ margin: "6px 0 0", fontSize: "var(--text-xl)" }}>{Math.round(analysis.overall_score || 0)}/100</p></div>
-          </div>
-        ) : null}
+        <Progress value={analysis.overall_score || 0} label="JD keyword coverage" />
         <p>
           <strong>{missingTerms.length}</strong> missing of <strong>{total || "—"}</strong> scored terms
           {matchedCount != null ? ` (${matchedCount} matched)` : ""}.
         </p>
         <p>{analysis.summary?.disclaimer || "Keyword coverage is not a hiring prediction."}</p>
-        {domainGate?.decision === "REJECT" ? (
-          <p className="field-error" role="alert">
-            Domain gate rejected this comparison: {domainGate.reason || "The resume is out of domain for this job."}
+      </Card>
+      <Card className="stack">
+        <h2 style={{ margin: 0 }}>Source vs evidence</h2>
+        <p className="muted" style={{ margin: 0, fontSize: "var(--text-sm)" }}>
+          <strong>Source</strong> is the job-description requirement. <strong>Evidence</strong> is an exact quote from
+          your resume when found — never AI-written text.
+        </p>
+        {evidence.length === 0 ? (
+          <p className="muted" style={{ margin: 0 }}>No evidence rows were stored for this analysis.</p>
+        ) : (
+          <div className="stack" style={{ gap: 10 }}>
+            {evidence.map((row) => {
+              const found = row.match_status === "strong_match" || row.match_status === "partial_match";
+              return (
+                <div key={row.id} className="panel-blue" style={{ padding: 14 }}>
+                  <div className="row" style={{ alignItems: "flex-start", gap: 12 }}>
+                    <div style={{ flex: 1 }}>
+                      <span className="eyebrow">Source (job description)</span>
+                      <p style={{ margin: "4px 0 0", fontWeight: 600 }}>{row.requirement_text}</p>
+                      {row.requirement_type ? (
+                        <p className="muted" style={{ margin: "4px 0 0", fontSize: "var(--text-xs)" }}>
+                          {row.requirement_type}
+                        </p>
+                      ) : null}
+                    </div>
+                    <Badge tone={found ? (row.match_status === "strong_match" ? "success" : "info") : "warning"}>
+                      {found ? (row.match_status === "strong_match" ? "Found" : "Partial") : "Not found"}
+                    </Badge>
+                  </div>
+                  <div style={{ marginTop: 10 }}>
+                    <span className="eyebrow">Evidence (resume quote)</span>
+                    {found && row.resume_evidence_text ? (
+                      <p style={{ margin: "4px 0 0" }}>
+                        “{row.resume_evidence_text}”
+                        {row.resume_section ? (
+                          <span className="muted" style={{ marginLeft: 8, fontSize: "var(--text-xs)" }}>
+                            · {row.resume_section}
+                          </span>
+                        ) : null}
+                      </p>
+                    ) : (
+                      <p className="muted" style={{ margin: "4px 0 0" }}>
+                        No matching line in the confirmed resume source.
+                      </p>
+                    )}
+                    {row.explanation ? (
+                      <p className="muted" style={{ margin: "6px 0 0", fontSize: "var(--text-xs)" }}>
+                        {row.explanation}
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {foundEvidence.length > 0 ? (
+          <p className="muted" style={{ margin: 0, fontSize: "var(--text-sm)" }}>
+            {foundEvidence.length} requirement(s) have resume evidence quotes.
           </p>
         ) : null}
       </Card>
-      {structuredScores ? (
-        <Card className="stack">
-          <h2 style={{ margin: 0 }}>Structured score breakdown</h2>
-          <div className="grid-2">
-            {Object.entries(structuredScores).map(([key, value]) => (
-              <div key={key} className="panel-blue" style={{ padding: 14 }}>
-                <strong>{key.replaceAll("_", " ")}</strong>
-                <p style={{ margin: "6px 0 0", fontSize: "var(--text-xl)" }}>{Math.round(value)}/100</p>
-              </div>
-            ))}
-          </div>
-        </Card>
-      ) : null}
       <Card className="stack">
         <h2 style={{ margin: 0 }}>Requirement gaps</h2>
         {criticalMissing.length ? (
           <div className="stack" style={{ gap: 8 }}>
             <strong>Critical / required</strong>
-            <div className="cluster" style={{ gap: 8 }}>{criticalMissing.map((term) => <Link key={`critical-${term}`} className="badge badge-warning" href={`/resume-analysis/report/${params.reportId}/edit#resume-section-skills`}>{term}</Link>)}</div>
+            <div className="cluster" style={{ gap: 8 }}>
+              {criticalMissing.map((term) => (
+                <Badge key={`critical-${term}`} tone="warning">
+                  {term}
+                </Badge>
+              ))}
+            </div>
           </div>
         ) : null}
         {preferredMissing.length ? (
           <div className="stack" style={{ gap: 8 }}>
             <strong>Preferred</strong>
-            <div className="cluster" style={{ gap: 8 }}>{preferredMissing.map((term) => <Link key={`preferred-${term}`} className="badge badge-info" href={`/resume-analysis/report/${params.reportId}/edit#resume-section-skills`}>{term}</Link>)}</div>
+            <div className="cluster" style={{ gap: 8 }}>
+              {preferredMissing.map((term) => (
+                <Badge key={`preferred-${term}`} tone="info">
+                  {term}
+                </Badge>
+              ))}
+            </div>
           </div>
         ) : null}
         {partialTerms.length ? (
           <div className="stack" style={{ gap: 8 }}>
             <strong>Partial evidence</strong>
-            <div className="cluster" style={{ gap: 8 }}>{partialTerms.map((term) => <Link key={`partial-${term}`} className="badge badge-info" href={`/resume-analysis/report/${params.reportId}/edit#resume-section-skills`}>{term}</Link>)}</div>
+            <div className="cluster" style={{ gap: 8 }}>
+              {partialTerms.map((term) => (
+                <Badge key={`partial-${term}`} tone="info">
+                  {term}
+                </Badge>
+              ))}
+            </div>
           </div>
         ) : null}
         {!criticalMissing.length && !preferredMissing.length && !partialTerms.length ? (
@@ -1147,12 +1274,15 @@ export function AtsReport() {
           </div>
         ) : null}
         <p className="muted" style={{ margin: 0, fontSize: "var(--text-sm)" }}>
-          Next: open the editor to add only true keywords, rewrite sections, apply AI suggestions, export PDF/DOCX, then
-          re-run ATS against this job description.
+          Use this report to update your resume outside the app (or re-upload a revised file), then run a new analysis
+          against the same job description to re-check keyword coverage.
         </p>
         <div className="cluster">
-          <Link className="button button-primary" href={`/resume-analysis/report/${params.reportId}/edit`}>
-            Edit resume to improve score
+          <Link className="button button-primary" href="/resume-analysis?tab=upload">
+            Upload revised resume
+          </Link>
+          <Link className="button button-secondary" href="/resume-analysis?tab=ats">
+            New analysis
           </Link>
         </div>
       </Card>
@@ -1184,8 +1314,8 @@ export function AtsReport() {
       </Card>
       <Card>
         <p className="muted">
-          Method: {analysis.summary?.method || "Deterministic normalized keyword coverage"}. Matching is exact after
-          normalization. Improvement text is limited to missing keywords and must not invent experience.
+          Method: {analysis.summary?.method || "Evidence-backed keyword coverage"}. Score only counts phrases found in
+          your resume source text. Evidence rows always quote the resume — they never invent wording.
         </p>
       </Card>
     </div>

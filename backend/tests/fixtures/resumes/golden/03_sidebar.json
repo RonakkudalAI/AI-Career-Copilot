@@ -1,0 +1,196 @@
+{
+  "fixture_meta": {
+    "fixture_id": 3,
+    "fixture_slug": "03_sidebar",
+    "filename": "03_sidebar.pdf",
+    "expected_status": "SUCCESS"
+  },
+  "contact": {
+    "full_name": {
+      "value": "Marcus Vance",
+      "evidence_block_ids": [
+        "page-1-block-12"
+      ],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "email": {
+      "value": "marcus.vance@example.com",
+      "evidence_block_ids": [
+        "page-1-block-02"
+      ],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "phone": {
+      "value": "+1 (555) 019-4820",
+      "evidence_block_ids": [
+        "page-1-block-03"
+      ],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "location": {
+      "value": "Austin, TX",
+      "evidence_block_ids": [
+        "page-1-block-04"
+      ],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "linkedin": {
+      "value": "linkedin.com/in/mvance",
+      "evidence_block_ids": [
+        "page-1-block-05"
+      ],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "github": {
+      "value": null,
+      "evidence_block_ids": [],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "portfolio": {
+      "value": null,
+      "evidence_block_ids": [],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "other_links": []
+  },
+  "professional_summary": {
+    "value": "Principal Cloud Infrastructure Systems Engineer with over 10 years experience designing high-availability distributed systems.",
+    "evidence_block_ids": [
+      "page-1-block-16"
+    ],
+    "confidence": "HIGH",
+    "warning": null
+  },
+  "target_role": {
+    "value": "Principal Cloud Infrastructure Systems Engineer",
+    "evidence_block_ids": [
+      "page-1-block-13"
+    ],
+    "confidence": "HIGH",
+    "warning": null
+  },
+  "skills": [
+    {
+      "name": {
+        "value": "Python",
+        "evidence_block_ids": [
+          "page-1-block-07"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "category": {
+        "value": null,
+        "evidence_block_ids": [],
+        "confidence": "HIGH",
+        "warning": null
+      }
+    },
+    {
+      "name": {
+        "value": "AWS",
+        "evidence_block_ids": [
+          "page-1-block-09"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "category": {
+        "value": null,
+        "evidence_block_ids": [],
+        "confidence": "HIGH",
+        "warning": null
+      }
+    }
+  ],
+  "experience": [
+    {
+      "employer": {
+        "value": "CloudScale Systems",
+        "evidence_block_ids": [
+          "page-1-block-18"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "role": {
+        "value": "Principal Cloud Engineer",
+        "evidence_block_ids": [
+          "page-1-block-18"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "location": {
+        "value": null,
+        "evidence_block_ids": [],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "start_date": {
+        "value": "2020",
+        "evidence_block_ids": [
+          "page-1-block-18"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "end_date": {
+        "value": null,
+        "evidence_block_ids": [],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "is_current": {
+        "value": true,
+        "evidence_block_ids": [
+          "page-1-block-18"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "responsibilities": [
+        {
+          "value": "Designed Kubernetes orchestration platform automating multiregion deployments.",
+          "evidence_block_ids": [
+            "page-1-block-19"
+          ],
+          "confidence": "HIGH",
+          "warning": null
+        }
+      ],
+      "technologies": []
+    }
+  ],
+  "projects": [],
+  "education": [],
+  "certifications": [],
+  "licences": [],
+  "achievements": [],
+  "publications": [],
+  "languages": [
+    {
+      "language": {
+        "value": "English",
+        "evidence_block_ids": [
+          "page-1-block-11"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      }
+    }
+  ],
+  "volunteer_experience": [],
+  "training": [],
+  "links": [],
+  "additional_sections": [],
+  "warnings": [],
+  "unclassified_blocks": []
+}

@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.features.resume_improvement.agents.crew import crew_capability, crew_runtime_mode
+from app.features.learning.service import learning_agent_capability
 from app.agents.providers import GroqClient, NvidiaClient
 from app.core.config import Settings
 
@@ -22,12 +23,15 @@ AGENT_PROFILE_FILL = "profile_fill"
 AGENT_INTERVIEW_QUESTIONS = "interview_questions"
 AGENT_ATS_IMPROVEMENT_BRIEF = "ats_improvement_brief"
 AGENT_RESUME_IMPROVEMENT_CREW = "resume_improvement_crew"
+AGENT_LEARNING_YOUTUBE_CREW = "learning_youtube_crew"
+AGENT_DOCUMENT_SECTION_EXTRACT = "document_section_extract"
 
 
 def list_agents(settings: Settings) -> list[dict[str, Any]]:
     nvidia = NvidiaClient(settings).capability()
     groq = GroqClient(settings).capability()
     crew = crew_capability(settings)
+    learning = learning_agent_capability(settings)
 
     return [
         {
@@ -100,6 +104,45 @@ def list_agents(settings: Settings) -> list[dict[str, Any]]:
             else (groq.get("model") if groq.get("configured") else None),
             "endpoint": "POST /api/v1/ats-analyses (summary.overall_inference)",
             "fallback": "Deterministic missing-keyword brief when no LLM is available.",
+        },
+        {
+            "id": AGENT_LEARNING_YOUTUBE_CREW,
+            "name": learning.get("name") or "Learning path YouTube crew",
+            "description": (
+                "CrewAI-compatible sequential crew: ATS gap analyst → YouTube planner (Groq) → "
+                "resource validator. Recommends free YouTube learning only for completed ATS gaps; "
+                "never invents video IDs."
+            ),
+            "provider": "groq",
+            "prompt": "learning_youtube_path_v1.txt (+ crew tools)",
+            "configured": bool(groq.get("configured")),
+            "ready": True,  # deterministic plan + search URLs always work
+            "model": groq.get("model") if groq.get("configured") else None,
+            "endpoint": "POST /api/v1/learning-paths/generate",
+            "fallback": "Deterministic gap→YouTube search plan when Groq is unavailable.",
+            "framework": learning.get("framework"),
+            "runtime": learning.get("runtime"),
+            "crew_agents": learning.get("agents"),
+            "crew_tasks": learning.get("tasks"),
+            "algorithm_version": learning.get("algorithm_version"),
+            "truthfulness": learning.get("truthfulness"),
+        },
+        {
+            "id": AGENT_DOCUMENT_SECTION_EXTRACT,
+            "name": "Document section segregation",
+            "description": (
+                "Segregates resume/JD plain text into source-true sections using one short LLM call. "
+                "NVIDIA first (rate-limit throttled); Groq only on NVIDIA 429; structural layout fallback."
+            ),
+            "provider": "nvidia_or_groq",
+            "prompt": "document_section_extract_v1.txt",
+            "configured": bool(nvidia.get("configured") or groq.get("configured")),
+            "ready": True,
+            "model": nvidia.get("model")
+            if nvidia.get("configured")
+            else (groq.get("model") if groq.get("configured") else None),
+            "endpoint": "POST /api/v1/resumes, POST /api/v1/job-descriptions",
+            "fallback": "Structural layout parser when no LLM is available.",
         },
     ]
 

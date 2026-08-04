@@ -5,8 +5,12 @@ import jwt
 from fastapi import Cookie, Depends, Header
 
 from app.core.config import Settings, get_settings
+from app.core.constants import JWT_ALGORITHM
 from app.core.errors import ApiError
 from app.database.client import database_client
+
+# Cookie name must match frontend SESSION_COOKIE_NAME.
+SESSION_COOKIE_NAME = "career_copilot_session"
 
 
 @dataclass(frozen=True)
@@ -27,12 +31,12 @@ def parse_bearer_header(value: str | None) -> str:
 
 
 def create_access_token(user_id: UUID, email: str, settings: Settings) -> str:
-    return jwt.encode({"sub": str(user_id), "email": email}, settings.auth_secret, algorithm="HS256")
+    return jwt.encode({"sub": str(user_id), "email": email}, settings.auth_secret, algorithm=JWT_ALGORITHM)
 
 
 def _user_from_token(token: str, settings: Settings) -> CurrentUser:
     try:
-        payload = jwt.decode(token, settings.auth_secret, algorithms=["HS256"])
+        payload = jwt.decode(token, settings.auth_secret, algorithms=[JWT_ALGORITHM])
         user_id = UUID(str(payload["sub"]))
     except (jwt.PyJWTError, KeyError, TypeError, ValueError) as exc:
         raise ApiError(401, "invalid_access_token", "The authentication session is invalid or expired.") from exc
@@ -45,6 +49,7 @@ def _user_from_token(token: str, settings: Settings) -> CurrentUser:
 
 async def get_current_user(
     authorization: str | None = Header(default=None),
+    # FastAPI binds this parameter name as the cookie name (must equal SESSION_COOKIE_NAME).
     career_copilot_session: str | None = Cookie(default=None),
     settings: Settings = Depends(get_settings),
 ) -> CurrentUser:

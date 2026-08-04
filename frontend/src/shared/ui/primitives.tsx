@@ -29,4 +29,17 @@ export function PageHeader({ eyebrow, title, description, action }: { eyebrow?: 
 export function EmptyState({ title, description, href, action }: { title: string; description: string; href?: string; action?: string }) { return <Card className="empty-state"><Inbox aria-hidden /><h2>{title}</h2><p>{description}</p>{href && action && <ButtonLink href={href}>{action}</ButtonLink>}</Card>; }
 export function ErrorState({ onRetry }: { onRetry?: () => void }) { return <Card className="empty-state"><AlertTriangle aria-hidden /><h2>We could not load this section</h2><p>Your stored records were not changed. Check the API connection and try again.</p>{onRetry && <Button onClick={onRetry}>Retry</Button>}</Card>; }
 export function Skeleton({ lines = 3 }: { lines?: number }) { return <div className="panel skeleton" aria-label="Loading content">{Array.from({ length: lines }, (_, i) => <span key={i} />)}</div>; }
-export function Progress({ value, label }: { value: number; label: string }) { return <div className="progress-wrap"><div className="row"><span>{label}</span><strong>{value}%</strong></div><div className="progress" role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={value}><span style={{ width: `${value}%` }} /></div></div>; }
+export function Progress({ value, label }: { value: number; label: string }) {
+  const pct = Math.max(0, Math.min(100, Math.round(Number(value) || 0)));
+  return (
+    <div className="progress-wrap">
+      <div className="row">
+        <span>{label}</span>
+        <strong>{pct}%</strong>
+      </div>
+      <div className="progress" role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct}>
+        <span style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+}

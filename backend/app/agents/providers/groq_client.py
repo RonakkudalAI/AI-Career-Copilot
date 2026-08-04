@@ -29,6 +29,39 @@ TRANSIENT_STATUS = {408, 429, 500, 502, 503, 504}
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 
 
+def _strict_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Make a Pydantic JSON schema acceptable to Groq strict structured outputs."""
+    result = dict(schema)
+    result.pop("title", None)
+    result.pop("default", None)
+    result["additionalProperties"] = False
+    properties = result.get("properties")
+    if isinstance(properties, dict):
+        result["required"] = list(properties)
+        result["properties"] = {
+            key: _strict_schema(value) if isinstance(value, dict) else value
+            for key, value in properties.items()
+        }
+    for key in ("items",):
+        value = result.get(key)
+        if isinstance(value, dict):
+            result[key] = _strict_schema(value)
+    for key in ("anyOf", "oneOf", "allOf"):
+        value = result.get(key)
+        if isinstance(value, list):
+            result[key] = [
+                _strict_schema(item) if isinstance(item, dict) else item
+                for item in value
+            ]
+    defs = result.get("$defs")
+    if isinstance(defs, dict):
+        result["$defs"] = {
+            key: _strict_schema(value) if isinstance(value, dict) else value
+            for key, value in defs.items()
+        }
+    return result
+
+
 class GroqClient:
     def __init__(self, settings: Settings, transport: httpx.AsyncBaseTransport | None = None):
         self.settings = settings
@@ -40,7 +73,7 @@ class GroqClient:
             "model": self.settings.groq_model or None,
             "provider": "groq",
             "base_url": self.settings.groq_base_url or None,
-            "tasks": ["interview_questions", "ats_improvement_brief"],
+            "tasks": ["interview_questions", "ats_improvement_brief", "learning_youtube_path"],
         }
 
     def _strip_json_fence(self, content: str) -> str:
@@ -53,6 +86,11 @@ class GroqClient:
         user_payload: dict[str, Any],
         schema_model: type,
         temperature: float | None = None,
+        allow_repair: bool = True,
+        model: str | None = None,
+        timeout_seconds: float | None = None,
+        max_retries: int | None = None,
+        strict_schema: bool = False,
     ) -> Any:
         if not self.settings.groq_configured:
             raise ApiError(
@@ -61,11 +99,21 @@ class GroqClient:
                 "Groq is not configured. Set GROQ_API_KEY and GROQ_MODEL for interview questions.",
             )
         schema = schema_model.model_json_schema()
+        response_format: dict[str, Any] = {"type": "json_object"}
+        if strict_schema:
+            response_format = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "resume_extraction",
+                    "strict": True,
+                    "schema": _strict_schema(schema),
+                },
+            }
         payload = {
-            "model": self.settings.groq_model,
+            "model": model or self.settings.groq_model,
             "temperature": self.settings.groq_temperature if temperature is None else temperature,
             "max_tokens": self.settings.groq_max_output_tokens,
-            "response_format": {"type": "json_object"},
+            "response_format": response_format,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {
@@ -77,10 +125,16 @@ class GroqClient:
                 },
             ],
         }
-        raw = await self._request(payload)
+        raw = await self._request(payload, timeout_seconds=timeout_seconds, max_retries=max_retries)
         try:
             return schema_model.model_validate(parse_json_object(raw))
         except (json.JSONDecodeError, ValidationError, TypeError, ValueError):
+            if not allow_repair:
+                raise ApiError(
+                    502,
+                    "invalid_groq_response",
+                    "Groq returned an invalid structured response.",
+                )
             # One repair pass (parity with NVIDIA client).
             repair_path = PROMPTS_DIR / "repair_structured_output_v1.txt"
             repair_prompt = (
@@ -104,7 +158,9 @@ class GroqClient:
                     },
                 ],
             }
-            repaired = await self._request(repair_payload)
+            repaired = await self._request(
+                repair_payload, timeout_seconds=timeout_seconds, max_retries=max_retries
+            )
             try:
                 return schema_model.model_validate(parse_json_object(repaired))
             except (json.JSONDecodeError, ValidationError, TypeError, ValueError) as exc:
@@ -114,13 +170,19 @@ class GroqClient:
                     "Groq returned an invalid structured response after repair.",
                 ) from exc
 
-    async def _request(self, payload: dict[str, Any]) -> str:
+    async def _request(
+        self,
+        payload: dict[str, Any],
+        *,
+        timeout_seconds: float | None = None,
+        max_retries: int | None = None,
+    ) -> str:
         headers = {
             "Authorization": f"Bearer {self.settings.groq_api_key}",
             "Content-Type": "application/json",
         }
-        timeout = httpx.Timeout(self.settings.groq_timeout_seconds)
-        attempts = self.settings.groq_max_retries + 1
+        timeout = httpx.Timeout(timeout_seconds or self.settings.groq_timeout_seconds)
+        attempts = (self.settings.groq_max_retries if max_retries is None else max_retries) + 1
         async with httpx.AsyncClient(timeout=timeout, transport=self.transport) as client:
             for attempt in range(attempts):
                 try:

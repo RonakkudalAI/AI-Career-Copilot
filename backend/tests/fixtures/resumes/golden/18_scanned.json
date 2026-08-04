@@ -1,0 +1,82 @@
+{
+  "fixture_meta": {
+    "fixture_id": 18,
+    "fixture_slug": "18_scanned",
+    "filename": "18_scanned.pdf",
+    "expected_status": "OCR_REQUIRED"
+  },
+  "contact": {
+    "full_name": {
+      "value": null,
+      "evidence_block_ids": [],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "email": {
+      "value": null,
+      "evidence_block_ids": [],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "phone": {
+      "value": null,
+      "evidence_block_ids": [],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "location": {
+      "value": null,
+      "evidence_block_ids": [],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "linkedin": {
+      "value": null,
+      "evidence_block_ids": [],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "github": {
+      "value": null,
+      "evidence_block_ids": [],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "portfolio": {
+      "value": null,
+      "evidence_block_ids": [],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "other_links": []
+  },
+  "professional_summary": {
+    "value": null,
+    "evidence_block_ids": [],
+    "confidence": "HIGH",
+    "warning": null
+  },
+  "target_role": {
+    "value": null,
+    "evidence_block_ids": [],
+    "confidence": "HIGH",
+    "warning": null
+  },
+  "skills": [],
+  "experience": [],
+  "projects": [],
+  "education": [],
+  "certifications": [],
+  "licences": [],
+  "achievements": [],
+  "publications": [],
+  "languages": [],
+  "volunteer_experience": [],
+  "training": [],
+  "links": [],
+  "additional_sections": [],
+  "warnings": [
+    "Scanned document detected (no selectable text layer); OCR pipeline triggered"
+  ],
+  "unclassified_blocks": []
+}

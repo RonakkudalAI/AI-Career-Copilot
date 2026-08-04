@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-const protectedRoots = ["/dashboard", "/resume-analysis", "/resume-builder", "/mock-interview", "/learning", "/jobs", "/settings", "/onboarding"];
+const protectedRoots = ["/dashboard", "/resume-analysis", "/mock-interview", "/learning", "/jobs", "/settings", "/onboarding"];
 
 export function updateSession(request: NextRequest) {
   const path = request.nextUrl.pathname;

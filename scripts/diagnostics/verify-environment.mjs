@@ -16,6 +16,17 @@ const checks = [
   ["GROQ_API_KEY", "SERVER-ONLY-OPTIONAL"],
   ["GROQ_BASE_URL", "SERVER-ONLY-OPTIONAL"],
   ["GROQ_MODEL", "SERVER-ONLY-OPTIONAL"],
+  ["GROQ_RESUME_PARSER_ENABLED", "SERVER-ONLY-OPTIONAL"],
+  ["GROQ_RESUME_PARSER_MODEL", "SERVER-ONLY-OPTIONAL"],
+  ["GROQ_RESUME_PARSER_FALLBACK_MODEL", "SERVER-ONLY-OPTIONAL"],
+  ["GROQ_RESUME_PARSER_TIMEOUT_SECONDS", "SERVER-ONLY-OPTIONAL"],
+  ["GROQ_RESUME_PARSER_MAX_RETRIES", "SERVER-ONLY-OPTIONAL"],
+  ["GROQ_RESUME_PARSER_MAX_INPUT_TOKENS", "SERVER-ONLY-OPTIONAL"],
+  ["GROQ_RESUME_PARSER_TEMPERATURE", "SERVER-ONLY-OPTIONAL"],
+  ["YOUTUBE_API_KEY", "SERVER-ONLY-OPTIONAL"],
+  ["YOUTUBE_API_BASE_URL", "SERVER-ONLY-OPTIONAL"],
+  ["YOUTUBE_SEARCH_MAX_RESULTS", "SERVER-ONLY-OPTIONAL"],
+  ["YOUTUBE_TIMEOUT_SECONDS", "SERVER-ONLY-OPTIONAL"],
 ];
 
 const failures = [];
@@ -35,7 +46,7 @@ for (const [name, scope] of checks) {
 }
 
 for (const name of Object.keys(environment)) {
-  if (/^NEXT_PUBLIC_.*(SECRET|SERVICE|PASSWORD|DB_URL|NVIDIA)/.test(name)) {
+  if (/^NEXT_PUBLIC_.*(SECRET|SERVICE|PASSWORD|DB_URL|NVIDIA|GROQ)/.test(name)) {
     failures.push(`${name}: SERVER SECRET HAS CLIENT-SAFE PREFIX`);
   }
 }
@@ -50,6 +61,14 @@ if (environment.NVIDIA_API_KEY && !environment.NVIDIA_MODEL) {
 }
 if (environment.GROQ_API_KEY && !environment.GROQ_MODEL) {
   failures.push("GROQ_MODEL: MISSING while Groq interview generation is enabled");
+}
+if (environment.GROQ_API_KEY && environment.GROQ_RESUME_PARSER_ENABLED === "true") {
+  if (!environment.GROQ_RESUME_PARSER_MODEL) {
+    failures.push("GROQ_RESUME_PARSER_MODEL: MISSING while Groq resume parsing is enabled");
+  }
+  if (!environment.GROQ_RESUME_PARSER_FALLBACK_MODEL) {
+    failures.push("GROQ_RESUME_PARSER_FALLBACK_MODEL: MISSING while Groq resume parsing is enabled");
+  }
 }
 
 if (failures.length) {

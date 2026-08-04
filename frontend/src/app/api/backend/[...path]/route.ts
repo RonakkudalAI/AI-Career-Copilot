@@ -1,20 +1,21 @@
 import { NextResponse } from "next/server";
+import { API_V1_PREFIX, resolveUpstreamApiOrigin } from "@/shared/config";
 
 export const runtime = "nodejs";
 
 async function forward(request: Request, context: { params: Promise<{ path: string[] }> }) {
   const { path } = await context.params;
-  const backendBase =
-    process.env.PUBLIC_API_BASE_URL ||
-    process.env.NEXT_PUBLIC_API_BASE_URL;
-  if (!backendBase) {
+  let backendBase: string;
+  try {
+    backendBase = resolveUpstreamApiOrigin();
+  } catch {
     return NextResponse.json(
       { error: { code: "configuration_error", message: "API base URL is not configured." } },
       { status: 500 }
     );
   }
   const incoming = new URL(request.url);
-  const target = `${backendBase.replace(/\/$/, "")}/api/v1/${path.map(encodeURIComponent).join("/")}${incoming.search}`;
+  const target = `${backendBase}${API_V1_PREFIX}/${path.map(encodeURIComponent).join("/")}${incoming.search}`;
   const headers = new Headers(request.headers);
   headers.delete("host");
   headers.delete("content-length");

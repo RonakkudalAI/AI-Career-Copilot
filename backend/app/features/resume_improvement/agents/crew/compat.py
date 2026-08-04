@@ -23,10 +23,13 @@ def official_crewai_installed() -> bool:
     return python_supports_official_crewai() and find_spec("crewai") is not None
 
 
-def try_import_crewai() -> tuple[bool, str | None, Any | None]:
+def try_import_crewai(*, import_module: bool = False) -> tuple[bool, str | None, Any | None]:
     """
     Returns (available, reason_if_not, module_or_none).
     Never raises — safe for capability checks.
+
+    By default does **not** import the heavy crewai package (status/health paths).
+    Pass import_module=True only when the module object is required.
     """
     if not python_supports_official_crewai():
         return (
@@ -35,6 +38,10 @@ def try_import_crewai() -> tuple[bool, str | None, Any | None]:
             "Using Career Copilot CrewAI-compatible orchestrator.",
             None,
         )
+    if find_spec("crewai") is None:
+        return False, "crewai package not installed", None
+    if not import_module:
+        return True, None, None
     try:
         import crewai  # type: ignore
 

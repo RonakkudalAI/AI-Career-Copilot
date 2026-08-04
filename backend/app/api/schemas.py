@@ -183,10 +183,31 @@ class InterviewResponseCreate(BaseModel):
     duration_seconds: int | None = Field(default=None, ge=0)
 
 
+class InterviewPreparationCreate(BaseModel):
+    """Build preparation material from candidate-confirmed ATS sources only."""
+
+    model_config = ConfigDict(extra="forbid")
+    resume_version_id: UUID
+    job_description_id: UUID
+
+
 class LearningPathCreate(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     description: str | None = Field(default=None, max_length=2000)
     source_type: Literal["candidate_selected"] = "candidate_selected"
+
+
+class LearningPathGenerate(BaseModel):
+    source_analysis_id: UUID | None = None
+
+
+class LearningItemProgressPatch(BaseModel):
+    status: Literal["pending", "in_progress", "completed"]
+
+
+class JobRecommendationGenerate(BaseModel):
+    resume_version_id: UUID | None = None
+    limit: int = Field(default=20, ge=1, le=50)
 
 
 class SavedJobPatch(BaseModel):
@@ -283,15 +304,6 @@ class ResumeSuggestionDecision(BaseModel):
 class ResumeExportCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     format: Literal["pdf", "docx"]
-
-
-class ManualResumeVersionCreate(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    structured_content: dict[str, Any]
-    candidate_confirmed: Literal[True]
-    # Default: patch the existing resume version (same resume + same version id).
-    # "new_version" keeps the prior content as history and is opt-in only.
-    apply_mode: Literal["in_place", "new_version"] = "in_place"
 
 
 class ApplyImprovementBody(BaseModel):

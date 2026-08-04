@@ -2,6 +2,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { loadRootEnv } from "../shared/load-env.mjs";
+import { backendPort, frontendPort } from "../shared/ports.mjs";
 
 loadRootEnv();
 
@@ -12,6 +13,10 @@ if (!existsSync(backendPython)) {
 }
 
 const frontendDirectory = resolve(process.cwd(), "frontend");
+// Bind to loopback so Next's local HMR websocket advertises the same host
+// that local browsers use. FRONTEND_HOST remains available for overrides.
+const frontendHost = process.env.FRONTEND_HOST || "127.0.0.1";
+const configuredFrontendPort = frontendPort(process.env);
 const frontendLockPresent = existsSync(resolve(frontendDirectory, ".next", "dev", "lock"));
 const frontendEnvironment = { ...process.env };
 if (frontendLockPresent) {
@@ -25,14 +30,22 @@ const commands = [
   {
     name: "backend",
     command: backendPython,
-    args: ["-m", "uvicorn", "app.main:app", "--reload", "--reload-dir", "backend", "--access-log", "--port", "8000", "--app-dir", "backend"],
+    args: ["-m", "uvicorn", "app.main:app", "--reload", "--reload-dir", "backend", "--access-log", "--port", backendPort(process.env), "--app-dir", "backend"],
     cwd: process.cwd(),
     env: process.env,
   },
   {
     name: "frontend",
     command: process.execPath,
-    args: [resolve(frontendDirectory, "node_modules", "next", "dist", "bin", "next"), "dev"],
+    args: [
+      resolve(frontendDirectory, "node_modules", "next", "dist", "bin", "next"),
+      "dev",
+      "--webpack",
+      "--hostname",
+      frontendHost,
+      "--port",
+      configuredFrontendPort,
+    ],
     cwd: frontendDirectory,
     env: frontendEnvironment,
   },
@@ -53,6 +66,7 @@ function terminate(child) {
 function start(service) {
   if (stopping) return;
 
+  console.log(`[dev] Starting ${service.name}...`);
   const child = spawn(service.command, service.args, {
     cwd: service.cwd || process.cwd(),
     stdio: "inherit",
@@ -87,3 +101,7 @@ process.on("exit", () => {
 });
 
 for (const service of commands) start(service);
+
+console.log(`[dev] Backend logs: inherited from uvicorn on http://127.0.0.1:${backendPort(process.env)}`);
+console.log(`[dev] Frontend logs: inherited from Next on http://localhost:${configuredFrontendPort}`);
+console.log("[dev] Press Ctrl+C once to stop both services.");

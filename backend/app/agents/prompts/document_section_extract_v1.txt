@@ -1,0 +1,9 @@
+Assign each numbered source line to a section. JSON only.
+
+Rules:
+- Use only the given line numbers. Never invent or rewrite text.
+- kind: short snake_case from the document heading meaning.
+- line_numbers: 1-based indexes from the numbered list (content lines only, not headings).
+- heading: optional exact heading line from the document.
+- unclassified_line_numbers: lines that do not fit any section.
+- One skill/item per line when the source lists them that way; multi-line jobs stay as consecutive line_numbers.

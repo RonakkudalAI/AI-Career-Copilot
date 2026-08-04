@@ -1,8 +1,10 @@
-"""Deterministic, evidence-backed ATS phrase coverage scoring.
+"""Simple, evidence-only ATS keyword coverage.
 
-This module deliberately uses transparent rules instead of embeddings. Every
-score contribution can be traced to a JD requirement, a normalized alias, and
-the resume line/section where the evidence was found.
+Rules (intentional simplicity):
+  - Score is only from JD requirements found in the resume source text.
+  - Every match must quote an exact resume line (source of truth).
+  - No LLM scoring path here — nothing is invented or paraphrased.
+  - Aliases only expand how a JD term is searched; evidence is still resume text.
 """
 
 from __future__ import annotations
@@ -10,14 +12,15 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-ALGORITHM_VERSION = "deterministic-phrase-coverage-v2"
+ALGORITHM_VERSION = "evidence-keyword-coverage-v3"
 EVIDENCE_MATCH_STATUS = {
     "strong": "strong_match",
     "partial": "partial_match",
     "missing": "not_found",
 }
+
 TOKEN_PATTERN = re.compile(r"[a-zA-Z][a-zA-Z0-9+#./-]*")
-SHORT_TECH_TERMS = {"ai", "bi", "go", "ml", "r", "ui", "ux", "js"}
+SHORT_TECH_TERMS = {"ai", "bi", "go", "ml", "r", "ui", "ux", "js", "ts", "c", "c++", "c#"}
 STOP_WORDS = {
     "about", "also", "and", "are", "been", "being", "candidate", "company",
     "description", "excellent", "experience", "familiarity", "for", "from",
@@ -25,26 +28,12 @@ STOP_WORDS = {
     "preferred", "required", "requirements", "responsibilities", "role", "should",
     "skills", "strong", "team", "that", "the", "their", "this", "using", "with",
     "work", "years", "you", "your", "will", "within", "ability", "looking", "join",
-}
-SECTION_NAMES = {
-    "skills": "skills",
-    "technical skills": "skills",
-    "core skills": "skills",
-    "professional experience": "experience",
-    "work experience": "experience",
-    "experience": "experience",
-    "projects": "projects",
-    "education": "education",
-    "certifications": "certifications",
-    "certificates": "certifications",
-    "summary": "summary",
-    "profile": "summary",
+    "etc", "such", "well", "good", "plus",
 }
 PREFERRED_MARKERS = ("preferred", "nice to have", "nice-to-have", "bonus", "plus", "desired")
 REQUIRED_MARKERS = ("required", "must have", "must-have", "minimum", "qualifications")
 
-# Canonical name -> accepted spellings. The canonical name is what appears in
-# evidence and reports; aliases remain visible in the rule_id for auditability.
+# Search aliases only — never shown as invented resume content.
 ALIAS_GROUPS: dict[str, tuple[str, ...]] = {
     "javascript": ("javascript", "js"),
     "typescript": ("typescript", "ts"),
@@ -109,11 +98,14 @@ class AtsScore:
             "preferred_score": self.preferred_score,
             "section_summary": self.section_summary or {},
             "keyword_coverage_score": self.overall_score,
+            "truthfulness": (
+                "Score and evidence use only confirmed resume/JD text. "
+                "resume_evidence is always an exact quote from the resume source."
+            ),
         }
 
 
 def evidence_match_status(match_strength: str) -> str:
-    """Translate internal match strength into the persisted API status contract."""
     return EVIDENCE_MATCH_STATUS.get(match_strength, "unverified")
 
 
@@ -122,8 +114,7 @@ def _normalize(text: str) -> str:
     value = value.replace("–", "-").replace("—", "-")
     value = re.sub(r"[\u2018\u2019]", "'", value)
     value = re.sub(r"[^a-z0-9+#./\s-]", " ", value)
-    value = re.sub(r"\s+", " ", value).strip()
-    return value
+    return re.sub(r"\s+", " ", value).strip()
 
 
 def _tokens(text: str) -> list[str]:
@@ -135,22 +126,71 @@ def _canonical(value: str) -> str:
     return ALIAS_TO_CANONICAL.get(normalized, normalized)
 
 
-def _resume_lines(resume_text: str) -> list[tuple[str, str]]:
-    section = "summary"
-    result: list[tuple[str, str]] = []
-    for raw in resume_text.splitlines():
+def _section_from_heading(line: str) -> str | None:
+    """Map a heading-like line to a simple section key using the heading words themselves."""
+    header = _normalize(line).strip("-:| ")
+    if not header or len(header) > 60:
+        return None
+    # Use heading tokens as the section name (slug) — no closed heading catalog.
+    if len(header.split()) > 8:
+        return None
+    slug = re.sub(r"[^a-z0-9]+", "_", header).strip("_")
+    return slug[:40] or None
+
+
+def _resume_lines(
+    resume_text: str,
+    structured_sections: dict[str, list[str]] | None = None,
+) -> list[tuple[str, str]]:
+    """
+    Build (exact_line, section) pairs from resume source.
+
+    Prefer confirmed structured sections when present; otherwise split plain text
+    by layout headings. Section labels never invent resume body text.
+    """
+    if structured_sections:
+        result: list[tuple[str, str]] = []
+        for section, items in structured_sections.items():
+            for item in items or []:
+                for raw in str(item or "").splitlines():
+                    line = re.sub(r"\s+", " ", raw).strip()
+                    if line:
+                        result.append((line, str(section)))
+        if result:
+            return result
+
+    section = "body"
+    result = []
+    pending_blank = True
+    for raw in (resume_text or "").splitlines():
         line = re.sub(r"\s+", " ", raw).strip()
         if not line:
+            pending_blank = True
             continue
-        header = _normalize(line).strip("-:| ")
-        if header in SECTION_NAMES:
-            section = SECTION_NAMES[header]
-            continue
-        heading_match = re.match(r"^([^:]{2,40}):\s*(.+)$", line)
-        if heading_match and _normalize(heading_match.group(1)) in SECTION_NAMES:
-            section = SECTION_NAMES[_normalize(heading_match.group(1))]
-            line = heading_match.group(2).strip()
+        # Inline "Skills: Python, React"
+        inline = re.match(r"^([^:]{2,40}):\s*(.+)$", line)
+        if inline:
+            heading = _section_from_heading(inline.group(1))
+            if heading and len(inline.group(1).split()) <= 6:
+                section = heading
+                body = inline.group(2).strip()
+                if body:
+                    result.append((body, section))
+                pending_blank = False
+                continue
+        if pending_blank or not result:
+            heading = _section_from_heading(line)
+            # Treat short title-like lines after blanks as section switches.
+            if heading and not line.endswith(".") and len(line.split()) <= 6:
+                letters = [ch for ch in line if ch.isalpha()]
+                titled = sum(1 for w in re.findall(r"[A-Za-z]+", line) if w[:1].isupper())
+                words = re.findall(r"[A-Za-z]+", line)
+                if line.isupper() or line.endswith(":") or (words and titled / len(words) >= 0.8):
+                    section = heading
+                    pending_blank = False
+                    continue
         result.append((line, section))
+        pending_blank = False
     return result
 
 
@@ -163,17 +203,20 @@ def _classify_requirement(line: str, previous_type: str) -> str:
     return previous_type
 
 
-def _candidate_terms(text: str, limit: int = 120) -> list[tuple[str, str]]:
-    """Extract useful unigrams and contiguous bigrams/trigrams from JD lines."""
+def _candidate_terms(text: str, limit: int = 80) -> list[tuple[str, str]]:
+    """Extract JD requirement phrases from the job description text only."""
     candidates: list[tuple[str, str]] = []
     seen: set[tuple[str, str]] = set()
     current_type = "required"
     known = set(ALIAS_GROUPS)
-    for raw in text.splitlines() or [text]:
+
+    for raw in (text or "").splitlines() or [text]:
         line = raw.strip()
         if not line:
             continue
-        preferred_start = re.search(r"(?i)\b(?:preferred|nice to have|nice-to-have|bonus|desired)\s*:", line)
+        preferred_start = re.search(
+            r"(?i)\b(?:preferred|nice to have|nice-to-have|bonus|desired)\s*:", line
+        )
         classification_text = line[: preferred_start.start()] if preferred_start else line
         current_type = _classify_requirement(classification_text, current_type)
         segments = re.split(
@@ -181,44 +224,43 @@ def _candidate_terms(text: str, limit: int = 120) -> list[tuple[str, str]]:
             line,
         )
         for segment in segments:
-            segment_type = "preferred" if re.match(r"(?i)\s*(?:preferred|nice to have|nice-to-have|bonus|desired)\s*:", segment) else current_type
+            segment_type = (
+                "preferred"
+                if re.match(r"(?i)\s*(?:preferred|nice to have|nice-to-have|bonus|desired)\s*:", segment)
+                else current_type
+            )
             segment = re.sub(r"^[^:]{0,50}:\s*", "", segment)
             chunks = re.split(r"[,;|•]|\s+and\s+", segment, flags=re.IGNORECASE)
             for chunk in chunks:
                 tokens = [token for token in _tokens(chunk) if token not in STOP_WORDS]
                 if not tokens:
                     continue
-                phrase_tokens = " ".join(tokens)
-                if len(tokens) <= 4 and (len(tokens) > 1 or len(phrase_tokens) >= 3):
-                    canonical = _canonical(phrase_tokens)
-                    if canonical in known or len(tokens) <= 3:
-                        key = (canonical, segment_type)
-                        if key not in seen:
-                            seen.add(key)
-                            candidates.append((canonical, segment_type))
-                for size in (2, 1):
+                # Prefer multi-word technical phrases (max 3 tokens).
+                for size in (3, 2, 1):
+                    if size > len(tokens):
+                        continue
                     for index in range(len(tokens) - size + 1):
                         phrase = " ".join(tokens[index : index + size])
                         if size == 1 and len(phrase) < 3 and phrase not in SHORT_TECH_TERMS:
                             continue
-                        canonical = _canonical(phrase)
-                        if size == 2 and canonical not in known and len(tokens) > 3:
+                        if size == 1 and phrase in STOP_WORDS:
                             continue
+                        canonical = _canonical(phrase)
+                        # Drop unigrams that are already covered by a multiword candidate.
                         key = (canonical, segment_type)
-                        if key not in seen:
+                        if key in seen:
+                            continue
+                        if size == 1 and any(
+                            canonical in multi.split() and multi_kind == segment_type
+                            for multi, multi_kind in seen
+                            if " " in multi
+                        ):
+                            continue
+                        if size >= 2 or canonical in known or len(phrase) >= 3:
                             seen.add(key)
                             candidates.append((canonical, segment_type))
-    # Prefer explicit known phrases and then stable first appearance. Do not
-    # allow a long JD to turn every grammatical fragment into a requirement.
-    multiword = {(item[0], item[1]) for item in candidates if " " in item[0]}
-    candidates = [
-        item for item in candidates
-        if not (
-            " " not in item[0]
-            and any(item[0] in phrase.split() for phrase, kind in multiword if kind == item[1])
-        )
-    ]
-    known = {canonical for canonical in ALIAS_GROUPS}
+
+    # Prefer known tech phrases, then first appearance; cap noise from long JDs.
     indexed = list(enumerate(candidates))
     indexed.sort(key=lambda pair: (0 if pair[1][0] in known else 1, pair[0]))
     return [item for _, item in indexed[:limit]]
@@ -229,14 +271,41 @@ def _aliases(term: str) -> tuple[str, ...]:
     return ALIAS_GROUPS.get(canonical, (canonical,))
 
 
-def _find_match(term: str, lines: list[tuple[str, str]]) -> tuple[str | None, str | None, str | None, str | None]:
-    normalized_aliases = tuple(_normalize(alias) for alias in _aliases(term))
+def _find_match(
+    term: str, lines: list[tuple[str, str]]
+) -> tuple[str | None, str | None, str, str | None]:
+    """
+    Return (exact_resume_line, section, strength, matched_alias).
+
+    The returned line is always the original resume string — never rewritten.
+    """
+    normalized_aliases = tuple(_normalize(alias) for alias in _aliases(term) if _normalize(alias))
+    if not normalized_aliases:
+        return None, None, "missing", None
+
     for line, section in lines:
         normalized_line = _normalize(line)
-        matched_alias = next((alias for alias in normalized_aliases if re.search(rf"(?<![a-z0-9]){re.escape(alias)}(?![a-z0-9])", normalized_line)), None)
-        if matched_alias:
-            strength = "strong" if section == "skills" else "partial"
-            return line, section, strength, matched_alias
+        if not normalized_line:
+            continue
+        matched_alias = next(
+            (
+                alias
+                for alias in normalized_aliases
+                if re.search(rf"(?<![a-z0-9+#]){re.escape(alias)}(?![a-z0-9+#])", normalized_line)
+            ),
+            None,
+        )
+        if not matched_alias:
+            continue
+        # Strong = exact requirement phrase (or primary alias) in skills-like section
+        # or exact multi-word match; otherwise partial (still evidence-backed).
+        section_l = (section or "").casefold()
+        exact_primary = matched_alias == _normalize(term) or matched_alias == term
+        in_skills = any(token in section_l for token in ("skill", "technolog", "tool", "stack", "competenc"))
+        strength = "strong" if (exact_primary and in_skills) or (" " in matched_alias and exact_primary) else "partial"
+        if in_skills and exact_primary:
+            strength = "strong"
+        return line, section, strength, matched_alias
     return None, None, "missing", None
 
 
@@ -251,18 +320,27 @@ def _suggested_section(term: str) -> str:
 
 def _explanation(term: str, line: str | None, section: str | None, strength: str, alias: str | None) -> str:
     if strength == "missing":
-        return "Not found in the confirmed resume text."
-    alias_note = f" via alias '{alias}'" if alias and alias != term else ""
-    return f"Matched{alias_note} in the {section or 'resume'} section; evidence strength is {strength}."
+        return "Not found as an exact phrase in the confirmed resume source text."
+    alias_note = f" (matched via '{alias}')" if alias and _normalize(alias) != _normalize(term) else ""
+    where = f" in section '{section}'" if section else ""
+    return f"Found in resume source{where}{alias_note}. Evidence quotes the resume line exactly."
 
 
-def score_resume(resume_text: str, job_description: str) -> AtsScore:
-    """Return auditable phrase coverage; this is not a hiring prediction."""
+def score_resume(
+    resume_text: str,
+    job_description: str,
+    *,
+    structured_sections: dict[str, list[str]] | None = None,
+) -> AtsScore:
+    """Return auditable phrase coverage. Not a hiring prediction."""
     requirements = _candidate_terms(job_description)
     if not requirements:
         raise ValueError("The job description does not contain enough scorable terms.")
 
-    lines = _resume_lines(resume_text)
+    lines = _resume_lines(resume_text, structured_sections)
+    if not lines:
+        raise ValueError("The resume does not contain enough text to score.")
+
     weighted_total = sum(2.0 if kind == "required" else 1.0 for _, kind in requirements)
     earned_required = 0.0
     earned_preferred = 0.0
@@ -270,7 +348,7 @@ def score_resume(resume_text: str, job_description: str) -> AtsScore:
     partial: list[str] = []
     missing: list[str] = []
     evidence: list[AtsEvidenceItem] = []
-    section_summary: dict[str, list[str]] = {key: [] for key in SECTION_NAMES.values()}
+    section_summary: dict[str, list[str]] = {}
 
     for term, requirement_type in requirements:
         line, section, strength, alias = _find_match(term, lines)
@@ -287,21 +365,24 @@ def score_resume(resume_text: str, job_description: str) -> AtsScore:
             partial.append(term)
         else:
             missing.append(term)
-        if section and term not in section_summary.setdefault(section, []):
-            section_summary[section].append(term)
+        if section and strength != "missing":
+            section_summary.setdefault(section, [])
+            if term not in section_summary[section]:
+                section_summary[section].append(term)
         evidence.append(
             AtsEvidenceItem(
                 requirement=term,
                 matched=strength != "missing",
-                resume_evidence=line,
-                resume_section=section,
-                score_contribution=contribution,
+                # Only quote real resume text when matched — never fabricate evidence.
+                resume_evidence=line if strength != "missing" else None,
+                resume_section=section if strength != "missing" else None,
+                score_contribution=contribution if strength != "missing" else 0.0,
                 explanation=_explanation(term, line, section, strength, alias),
                 requirement_type=requirement_type,
                 priority="critical" if requirement_type == "required" else "preferred",
                 match_strength=strength,
                 suggested_section=_suggested_section(term),
-                matched_alias=alias,
+                matched_alias=alias if strength != "missing" else None,
             )
         )
 

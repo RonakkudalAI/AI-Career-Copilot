@@ -1,5 +1,6 @@
 import { createClient as createAuthClient } from "@/features/auth/api/client";
 import { demoApiRequest, isDemoSession } from "@/features/auth/demo-session";
+import { resolveApiBase } from "@/shared/config";
 
 export type ApiErrorBody = { error?: { code?: string; message?: string; request_id?: string } };
 
@@ -10,7 +11,9 @@ const inFlightGets = new Map<string, Promise<unknown>>();
 export async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (isDemoSession()) return demoApiRequest<T>(path, init);
   const authClient = createAuthClient();
-  const { data: { session } } = await authClient.auth.getSession();
+  const {
+    data: { session },
+  } = await authClient.auth.getSession();
   if (!session) throw new Error("Your session has expired. Sign in again.");
   const method = (init.method || "GET").toUpperCase();
   const requestKey = `${method}:${path}:${session.access_token}`;
@@ -18,12 +21,7 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
     const existing = inFlightGets.get(requestKey);
     if (existing) return existing as Promise<T>;
   }
-  const base = (() => {
-    if (typeof window !== "undefined") return "/api/backend";
-    const url = process.env.PUBLIC_API_BASE_URL || process.env.NEXT_PUBLIC_API_BASE_URL;
-    if (!url) throw new Error("API base URL is not configured.");
-    return `${url}/api/v1`;
-  })();
+  const base = resolveApiBase();
   const request = (async () => {
     let response: Response;
     try {
@@ -38,15 +36,14 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
       });
     } catch {
       throw new Error(
-        "Could not reach the API. Start the backend (npm run dev) and confirm NEXT_PUBLIC_API_BASE_URL.",
+        "Could not reach the API. Start the backend (npm run dev) and confirm NEXT_PUBLIC_API_BASE_URL."
       );
     }
     if (!response.ok) {
       const body = (await response.json().catch(() => ({}))) as ApiErrorBody;
       if (response.status === 503) {
         throw new Error(
-          body.error?.message ||
-            "The service is temporarily unavailable. Please try again in a moment.",
+          body.error?.message || "The service is temporarily unavailable. Please try again in a moment."
         );
       }
       throw new Error(body.error?.message || `Request failed (${response.status}).`);

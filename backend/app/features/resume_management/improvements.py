@@ -45,7 +45,7 @@ def capabilities(settings: Settings) -> dict[str, Any]:
         "improvement_available": provider["configured"],
         "export_formats": ["pdf", "docx"],
         "ats_context_available": True,
-        "manual_editing_available": True,
+        "manual_editing_available": False,
         "groq_configured": groq.get("configured"),
         "groq_model": groq.get("model"),
         "agents": status["agents"],
@@ -504,91 +504,3 @@ def compare_versions(client, user: CurrentUser, left_id: str, right_id: str) -> 
             }
         )
     return {"source_version": left, "target_version": right, "changes": changes}
-
-
-def create_manual_version(
-    client,
-    settings: Settings,
-    user: CurrentUser,
-    source_version_id: str,
-    structured_content: dict[str, Any],
-    *,
-    apply_mode: str = "in_place",
-) -> dict[str, Any]:
-    """Save candidate edits onto the existing resume (default) or optional new version."""
-    source = confirmed_version(client, source_version_id, user)
-    merged = _merge_structured_preserve_identity(source.get("structured_content") or {}, structured_content)
-
-    if apply_mode != "new_version":
-        return update_existing_resume_content(
-            client,
-            user,
-            source["id"],
-            merged,
-            change_metadata={"manual_edit": True},
-        )
-
-    if merged == (source.get("structured_content") or {}):
-        raise ApiError(409, "resume_unchanged", "Make a change before creating a new version.")
-    count = (
-        client.table("resume_versions")
-        .select("id", count="exact", head=True)
-        .eq("resume_id", source["resume_id"])
-        .execute()
-        .count
-        or 0
-    )
-    version_id = str(uuid.uuid4())
-    version_number = count + 1
-    content = render_docx(merged)
-    path = f"{user.id}/resumes/{source['resume_id']}/versions/{version_id}/{uuid.uuid4()}.docx"
-    try:
-        client.storage.from_(settings.document_bucket).upload(
-            path, content, {"content-type": DOCX_MIME, "upsert": "false"}
-        )
-        record = (
-            client.table("resume_versions")
-            .insert(
-                {
-                    "id": version_id,
-                    "resume_id": source["resume_id"],
-                    "user_id": str(user.id),
-                    "version_number": version_number,
-                    "source_type": "edited",
-                    "original_filename": source.get("original_filename") or f"resume-v{version_number}.docx",
-                    "storage_path": path,
-                    "mime_type": DOCX_MIME,
-                    "size_bytes": len(content),
-                    "sha256": sha256_bytes(content),
-                    "plain_text": _plain_text(merged),
-                    "structured_content": merged,
-                    "extraction_status": "confirmed",
-                    "candidate_confirmed_at": datetime.now(UTC).isoformat(),
-                    "created_from_version_id": source["id"],
-                    "change_metadata": {
-                        "manual_edit": True,
-                        "candidate_confirmed": True,
-                        "in_place_edit": False,
-                    },
-                }
-            )
-            .execute()
-            .data[0]
-        )
-    except Exception as exc:
-        try:
-            client.storage.from_(settings.document_bucket).remove([path])
-        except Exception:
-            pass
-        raise ApiError(
-            500, "resume_version_create_failed", "The edited resume version could not be created."
-        ) from exc
-    write_activity(
-        client,
-        user,
-        "resume_version_created",
-        "Candidate-edited resume version created",
-        "resume_version",
-        version_id,
-    )
-    return record

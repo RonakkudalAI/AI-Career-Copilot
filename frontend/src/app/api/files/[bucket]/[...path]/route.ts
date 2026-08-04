@@ -1,20 +1,15 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-
-const apiBase = () => {
-  const base = process.env.NEXT_PUBLIC_API_BASE_URL;
-  if (!base) throw new Error("API base URL is not configured.");
-  return base;
-};
+import { API_V1_PREFIX, resolveUpstreamApiOrigin, SESSION_COOKIE_NAME } from "@/shared/config";
 
 type RouteContext = { params: Promise<{ bucket: string; path: string[] }> };
 
 export async function GET(request: Request, context: RouteContext) {
   const { bucket, path } = await context.params;
-  const session = (await cookies()).get("career_copilot_session")?.value;
+  const session = (await cookies()).get(SESSION_COOKIE_NAME)?.value;
   if (!session) return NextResponse.json({ error: { message: "Authentication is required." } }, { status: 401 });
 
-  const upstream = `${apiBase()}/api/v1/files/${encodeURIComponent(bucket)}/${path.map(encodeURIComponent).join("/")}`;
+  const upstream = `${resolveUpstreamApiOrigin()}${API_V1_PREFIX}/files/${encodeURIComponent(bucket)}/${path.map(encodeURIComponent).join("/")}`;
   let response: Response;
   try {
     response = await fetch(upstream, {

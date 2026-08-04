@@ -5,6 +5,7 @@ import logging
 import re
 from typing import Any
 
+from app.core.constants import ATS_COMPOSITE_WEIGHTS, DOMAIN_GATE_MIN_SKILL_OVERLAP
 from app.features.ats.agent.agents import (
     _configure_crewai_storage,
     build_agents,
@@ -42,10 +43,13 @@ def evaluate_domain_gate(resume: ResumeParsed, jd: JDParsed) -> GateResult:
     required = {_value for skill in jd.required_skills for _value in _tokens(skill)}
     overlap = len(resume_skills & required) / len(required) if required else 0
     domain_mismatch = _domain_family(resume.experience[0].industry_tags[0] if resume.experience and resume.experience[0].industry_tags else "") != _domain_family(jd.domain)
-    if domain_mismatch and overlap < 0.15:
+    if domain_mismatch and overlap < DOMAIN_GATE_MIN_SKILL_OVERLAP:
         return GateResult(
             decision="REJECT",
-            reason=f"Domain mismatch with required-skill overlap of {overlap:.2f}, below the 0.15 threshold.",
+            reason=(
+                f"Domain mismatch with required-skill overlap of {overlap:.2f}, "
+                f"below the {DOMAIN_GATE_MIN_SKILL_OVERLAP} threshold."
+            ),
         )
 
     role_tokens = _tokens(jd.role_family)
@@ -84,11 +88,7 @@ def _rejected_result(gate: GateResult) -> ScoreResult:
 
 def _composite(scores: dict[str, float]) -> float:
     return round(
-        0.4 * scores["hard_skill_match"]
-        + 0.25 * scores["experience_relevance"]
-        + 0.15 * scores["education_match"]
-        + 0.10 * scores["certifications_match"]
-        + 0.10 * scores["seniority_alignment"],
+        sum(ATS_COMPOSITE_WEIGHTS[key] * scores[key] for key in ATS_COMPOSITE_WEIGHTS),
         2,
     )
 

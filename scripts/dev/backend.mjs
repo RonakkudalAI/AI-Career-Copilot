@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { loadRootEnv } from "../shared/load-env.mjs";
+import { backendPort } from "../shared/ports.mjs";
 
 loadRootEnv();
 
@@ -10,9 +11,10 @@ if (!existsSync(backendPython)) {
   process.exit(1);
 }
 
+const port = backendPort(process.env);
 const child = spawn(
   backendPython,
-  ["-m", "uvicorn", "app.main:app", "--reload", "--reload-dir", "backend", "--access-log", "--port", "8000", "--app-dir", "backend"],
+  ["-m", "uvicorn", "app.main:app", "--reload", "--reload-dir", "backend", "--access-log", "--port", port, "--app-dir", "backend"],
   { cwd: process.cwd(), stdio: "inherit", env: process.env },
 );
 

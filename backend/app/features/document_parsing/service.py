@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from app.core.errors import ApiError
+from app.features.document_parsing.parsing.llm_sections import extract_sections_enriched
 from app.features.document_parsing.parsing.sections import (
     HEADING_ALIASES,
     extract_sections,
@@ -35,6 +36,7 @@ __all__ = [
     "validate_document",
     "extract_text",
     "extract_sections",
+    "extract_sections_enriched",
     "match_section_heading",
     "infer_resume_title",
     "infer_job_metadata",
@@ -162,108 +164,41 @@ def infer_job_metadata(text: str) -> dict[str, str | None]:
     }
 
 
-_SKILL_CANDIDATES = (
-    "python",
-    "java",
-    "javascript",
-    "typescript",
-    "sql",
-    "react",
-    "node.js",
-    "nodejs",
-    "next.js",
-    "nextjs",
-    "django",
-    "fastapi",
-    "spring boot",
-    "aws",
-    "azure",
-    "gcp",
-    "docker",
-    "kubernetes",
-    "git",
-    "linux",
-    "html",
-    "css",
-    "mongodb",
-    "postgresql",
-    "mysql",
-    "redis",
-    "graphql",
-    "rest",
-    "power bi",
-    "tableau",
-    "machine learning",
-    "pandas",
-    "numpy",
-    "c++",
-    "c#",
-    "go",
-    "rust",
-    "kotlin",
-    "swift",
-    "figma",
-    "jira",
-)
-
-
 def extract_skill_candidates(text: str, limit: int = 20) -> list[str]:
-    """Extract known skill tokens from resume or JD text (deterministic)."""
-    haystack = f" {(text or '').lower()} "
-    labels = {
-        "python": "Python",
-        "java": "Java",
-        "javascript": "JavaScript",
-        "typescript": "TypeScript",
-        "sql": "SQL",
-        "react": "React",
-        "node.js": "Node.js",
-        "nodejs": "Node.js",
-        "next.js": "Next.js",
-        "nextjs": "Next.js",
-        "django": "Django",
-        "fastapi": "FastAPI",
-        "spring boot": "Spring Boot",
-        "aws": "AWS",
-        "azure": "Azure",
-        "gcp": "GCP",
-        "docker": "Docker",
-        "kubernetes": "Kubernetes",
-        "git": "Git",
-        "linux": "Linux",
-        "html": "HTML",
-        "css": "CSS",
-        "mongodb": "MongoDB",
-        "postgresql": "PostgreSQL",
-        "mysql": "MySQL",
-        "redis": "Redis",
-        "graphql": "GraphQL",
-        "rest": "REST",
-        "power bi": "Power BI",
-        "tableau": "Tableau",
-        "machine learning": "Machine Learning",
-        "pandas": "Pandas",
-        "numpy": "NumPy",
-        "c++": "C++",
-        "c#": "C#",
-        "go": "Go",
-        "rust": "Rust",
-        "kotlin": "Kotlin",
-        "swift": "Swift",
-        "figma": "Figma",
-        "jira": "Jira",
-    }
+    """
+    Extract skill-like tokens from free text without a fixed vocabulary.
+
+    Prefer commas/pipes/bullets and short token-like fragments that appear in the source.
+    """
     found: list[str] = []
     seen: set[str] = set()
-    for skill in _SKILL_CANDIDATES:
-        token = skill.lower()
-        pattern = rf"(?<![a-z0-9+#]){re.escape(token)}(?![a-z0-9+#])"
-        if re.search(pattern, haystack):
-            label = labels.get(token, skill.title())
-            key = label.lower()
-            if key not in seen:
-                found.append(label)
-                seen.add(key)
-        if len(found) >= limit:
-            break
+    for raw_line in (text or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        payload = line
+        if ":" in line:
+            left, right = line.split(":", 1)
+            if len(left.strip()) <= 48:
+                payload = right
+        parts = [p.strip() for p in re.split(r"[,;|/]|·|•", payload) if p.strip()]
+        if len(parts) < 2:
+            # Single fragment lines that look like a skill token (short, no sentence).
+            if len(line.split()) <= 4 and len(line) <= 48 and not line.endswith("."):
+                parts = [line]
+            else:
+                continue
+        for part in parts:
+            cleaned = re.sub(r"\s+", " ", part).strip(" -–—•*")
+            if len(cleaned) < 2 or len(cleaned) > 48:
+                continue
+            if cleaned.count(" ") > 4:
+                continue
+            key = cleaned.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            found.append(cleaned)
+            if len(found) >= limit:
+                return found
     return found

@@ -1,5 +1,11 @@
 "use client";
 
+/**
+ * Global error UI must be self-contained (no app providers).
+ * Uses the same semantic palette as light theme tokens, expressed as literals
+ * because this boundary may render without globals.css cascade reliability.
+ * Exception documented for FE-009: isolation requires inline presentation values.
+ */
 export default function GlobalError({ reset }: { error: Error & { digest?: string }; reset: () => void }) {
   return (
     <html lang="en">
@@ -49,7 +55,7 @@ export default function GlobalError({ reset }: { error: Error & { digest?: strin
                 margin: "0 0 12px",
                 fontSize: "1.5rem",
                 lineHeight: 1.2,
-                fontFamily: '"Source Serif 4", Georgia, serif',
+                fontFamily: '"Source Serif 4", Georgia, "Times New Roman", serif',
                 fontWeight: 600,
               }}
             >

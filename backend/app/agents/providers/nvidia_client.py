@@ -106,6 +106,7 @@ class NvidiaClient:
         user_payload: dict[str, Any],
         schema_model: type,
         temperature: float | None = None,
+        allow_repair: bool = True,
     ) -> Any:
         """Call NVIDIA chat/completions and validate JSON against a Pydantic model."""
         if not self.settings.nvidia_configured:
@@ -135,6 +136,12 @@ class NvidiaClient:
         try:
             return schema_model.model_validate(parse_json_object(raw))
         except (json.JSONDecodeError, ValidationError, TypeError, ValueError):
+            if not allow_repair:
+                raise ApiError(
+                    502,
+                    "invalid_provider_response",
+                    "The AI provider returned an invalid structured response.",
+                )
             repair_prompt = (PROMPTS_DIR / "repair_structured_output_v1.txt").read_text(encoding="utf-8")
             repair_payload = {
                 **payload,

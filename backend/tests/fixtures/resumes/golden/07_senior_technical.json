@@ -1,0 +1,235 @@
+{
+  "fixture_meta": {
+    "fixture_id": 7,
+    "fixture_slug": "07_senior_technical",
+    "filename": "07_senior_technical.pdf",
+    "expected_status": "SUCCESS"
+  },
+  "contact": {
+    "full_name": {
+      "value": "Vikram Patel",
+      "evidence_block_ids": [
+        "page-1-block-01"
+      ],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "email": {
+      "value": "vikram.patel@techleader.io",
+      "evidence_block_ids": [
+        "page-1-block-02"
+      ],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "phone": {
+      "value": null,
+      "evidence_block_ids": [],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "location": {
+      "value": "Seattle, WA",
+      "evidence_block_ids": [
+        "page-1-block-02"
+      ],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "linkedin": {
+      "value": null,
+      "evidence_block_ids": [],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "github": {
+      "value": "github.com/vpatel-staff",
+      "evidence_block_ids": [
+        "page-1-block-02"
+      ],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "portfolio": {
+      "value": null,
+      "evidence_block_ids": [],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "other_links": []
+  },
+  "professional_summary": {
+    "value": "Staff Distributed Systems Architect with 12+ years of experience designing fault-tolerant cloud infrastructures.",
+    "evidence_block_ids": [
+      "page-1-block-05"
+    ],
+    "confidence": "HIGH",
+    "warning": null
+  },
+  "target_role": {
+    "value": "Staff Distributed Systems Architect",
+    "evidence_block_ids": [
+      "page-1-block-02"
+    ],
+    "confidence": "HIGH",
+    "warning": null
+  },
+  "skills": [
+    {
+      "name": {
+        "value": "Go",
+        "evidence_block_ids": [
+          "page-1-block-07"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "category": {
+        "value": "Languages",
+        "evidence_block_ids": [
+          "page-1-block-07"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      }
+    }
+  ],
+  "experience": [
+    {
+      "employer": {
+        "value": "HyperScale Systems",
+        "evidence_block_ids": [
+          "page-1-block-11"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "role": {
+        "value": "Staff Engineer & Architect",
+        "evidence_block_ids": [
+          "page-1-block-11"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "location": {
+        "value": null,
+        "evidence_block_ids": [],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "start_date": {
+        "value": "2021",
+        "evidence_block_ids": [
+          "page-1-block-11"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "end_date": {
+        "value": null,
+        "evidence_block_ids": [],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "is_current": {
+        "value": true,
+        "evidence_block_ids": [
+          "page-1-block-11"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "responsibilities": [
+        {
+          "value": "Lead architect for real-time payment settlement engine processing 100,000 TPS.",
+          "evidence_block_ids": [
+            "page-1-block-12"
+          ],
+          "confidence": "HIGH",
+          "warning": null
+        }
+      ],
+      "technologies": []
+    }
+  ],
+  "projects": [],
+  "education": [
+    {
+      "institution": {
+        "value": "University of Washington",
+        "evidence_block_ids": [
+          "page-1-block-18"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "degree": {
+        "value": "M.S. in Computer Science",
+        "evidence_block_ids": [
+          "page-1-block-18"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "field_of_study": {
+        "value": "Computer Science",
+        "evidence_block_ids": [
+          "page-1-block-18"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "start_date": {
+        "value": "2012",
+        "evidence_block_ids": [
+          "page-1-block-18"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "end_date": {
+        "value": "2014",
+        "evidence_block_ids": [
+          "page-1-block-18"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "grade": {
+        "value": null,
+        "evidence_block_ids": [],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "location": {
+        "value": null,
+        "evidence_block_ids": [],
+        "confidence": "HIGH",
+        "warning": null
+      }
+    }
+  ],
+  "certifications": [
+    {
+      "name": {
+        "value": "Certified Kubernetes Administrator (CKA)",
+        "evidence_block_ids": [
+          "page-1-block-19"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      }
+    }
+  ],
+  "licences": [],
+  "achievements": [],
+  "publications": [],
+  "languages": [],
+  "volunteer_experience": [],
+  "training": [],
+  "links": [],
+  "additional_sections": [],
+  "warnings": [],
+  "unclassified_blocks": []
+}

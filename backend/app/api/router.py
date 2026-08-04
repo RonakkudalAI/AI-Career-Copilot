@@ -19,12 +19,11 @@ from app.features.auth.account_deletion import (
     purge_user_storage,
 )
 from app.features.ats.agents import generate_ats_improvement_brief
-from app.features.mock_interview.agent import generate_interview_questions
+from app.features.interview.agent import generate_interview_questions
+from app.features.interview.preparation import generate_interview_preparation
 from app.features.profile.agent import build_profile_draft_enriched, profile_draft_response_payload
 from app.agents.registry import agents_status
 from app.features.ats.deterministic import evidence_match_status, score_resume
-from app.features.ats.scoring.schemas import ScoreResult
-from app.features.ats.scoring.service import score_resume_jd
 from app.features.auth.service import CurrentUser, create_access_token, get_current_user
 from app.features.profile.avatars import (
     attach_avatar_url,
@@ -33,8 +32,9 @@ from app.features.profile.avatars import (
     validate_avatar_upload,
 )
 from app.core.config import Settings, get_settings
+from app.core.constants import MIN_PASSWORD_LENGTH
 from app.features.document_parsing.service import (
-    extract_sections,
+    extract_sections_enriched,
     extract_skill_candidates,
     extract_text,
     infer_job_metadata,
@@ -43,6 +43,8 @@ from app.features.document_parsing.service import (
     sha256_bytes,
     validate_document,
 )
+from app.features.document_parsing.extractors import extract_document_blocks
+from app.features.document_parsing.pipeline import parse_source_blocks
 from app.core.errors import ApiError
 from app.features.profile.importer import insert_validated_batch
 from app.features.profile.agent.normalize import normalize_date_value
@@ -61,10 +63,14 @@ from app.api.schemas import (
     AtsAnalysisCreate,
     ExtractionPatch,
     InterviewCreate,
+    InterviewPreparationCreate,
     InterviewResponseCreate,
     JobDescriptionMetadataPatch,
     JobDescriptionTextCreate,
     LearningPathCreate,
+    LearningPathGenerate,
+    LearningItemProgressPatch,
+    JobRecommendationGenerate,
     NotificationSettings,
     PreferencesUpdate,
     PrivacySettings,
@@ -74,11 +80,18 @@ from app.api.schemas import (
     SavedJobPatch,
 )
 from app.database.client import database_client, database_probe
+from app.features.career_matching import (
+    ALGORITHM_VERSION as CAREER_MATCH_ALGORITHM_VERSION,
+    candidate_skill_evidence,
+    progress_percentage,
+    score_job,
+)
+from app.features.learning.service import generate_learning_path_from_ats
 
 router = APIRouter()
 router.include_router(resume_improvement_router)
 logger = logging.getLogger(__name__)
-SCORING_ALGORITHM_VERSION = "structured-llm-gated-v1"
+SCORING_ALGORITHM_VERSION = "evidence-keyword-coverage-v3"
 
 
 def _password_hash(password: str, salt: bytes | None = None) -> str:
@@ -106,8 +119,12 @@ def auth_sign_up(payload: dict[str, Any] = Body(...), settings: Settings = Depen
     email = str(payload.get("email") or "").strip().lower()
     password = str(payload.get("password") or "")
     full_name = str(payload.get("full_name") or "").strip()[:120] or None
-    if "@" not in email or len(password) < 6:
-        raise ApiError(400, "invalid_signup", "Enter a valid email and a password with at least 6 characters.")
+    if "@" not in email or len(password) < MIN_PASSWORD_LENGTH:
+        raise ApiError(
+            400,
+            "invalid_signup",
+            f"Enter a valid email and a password with at least {MIN_PASSWORD_LENGTH} characters.",
+        )
     client = database_client(settings)
     if client.table("users").select("id").eq("email", email).limit(1).execute().data:
         raise ApiError(409, "user_already_exists", "An account with this email already exists.")
@@ -152,14 +169,36 @@ def auth_reset_password():
 @router.post("/auth/update-password")
 def auth_update_password(payload: dict[str, Any] = Body(...), user: CurrentUser = Depends(get_current_user), settings: Settings = Depends(get_settings)):
     password = str(payload.get("password") or "")
-    if len(password) < 6:
-        raise ApiError(400, "invalid_password", "Password must contain at least 6 characters.")
+    if len(password) < MIN_PASSWORD_LENGTH:
+        raise ApiError(
+            400,
+            "invalid_password",
+            f"Password must contain at least {MIN_PASSWORD_LENGTH} characters.",
+        )
     database_client(settings).table("users").update({"password_hash": _password_hash(password)}).eq("id", str(user.id)).execute()
     return {"updated": True}
 
 
 def utc_now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+async def _extract_resume_content(
+    content: bytes, filename: str, declared_mime: str | None, settings: Settings
+) -> tuple[str, dict[str, Any]]:
+    """Extract layout-preserving blocks, then run the source-grounded parse pipeline."""
+    extraction = extract_document_blocks(content, filename, declared_mime or "")
+    if extraction.status != "SUCCESS":
+        raise ApiError(422, "ocr_required", extraction.message or "The document requires OCR before parsing.")
+    if not extraction.blocks:
+        raise ApiError(422, "document_has_no_text", "No usable source text was found in the document.")
+    structured = await parse_source_blocks(
+        extraction.blocks,
+        settings,
+        is_scanned=extraction.is_scanned,
+    )
+    plain_text = "\n".join(block.text for block in extraction.blocks if block.text.strip()).strip()
+    return plain_text, structured
 
 
 def ensure_preference_row(client, table: str, user_id: str) -> dict[str, Any]:
@@ -866,7 +905,7 @@ async def preview_profile_from_resume(
     plain_text = version.get("plain_text") or ""
     structured = version.get("structured_content") or {}
     if not isinstance(structured, dict) or not structured.get("sections"):
-        structured = extract_sections(plain_text)
+        structured = await extract_sections_enriched(plain_text, settings)
     draft = await build_profile_draft_enriched(
         plain_text,
         structured if isinstance(structured, dict) else {},
@@ -898,8 +937,9 @@ async def preview_profile_from_resume_upload(
     mime = validate_document(
         file.filename or "resume.pdf", file.content_type, raw, settings.document_max_bytes
     )
-    plain_text = extract_text(raw, mime)
-    structured = extract_sections(plain_text)
+    plain_text, structured = await _extract_resume_content(
+        raw, file.filename or "resume", mime, settings
+    )
     draft = await build_profile_draft_enriched(plain_text, structured, settings)
     return profile_draft_response_payload(
         draft,
@@ -1286,7 +1326,7 @@ def delete_candidate_record(
     recalculate_completion(client, user)
 
 
-def _upload_resume_version(
+async def _upload_resume_version(
     client, settings: Settings, user: CurrentUser, resume_id: str, file: UploadFile, content: bytes
 ) -> dict[str, Any]:
     mime = validate_document(
@@ -1307,8 +1347,9 @@ def _upload_resume_version(
         client.storage.from_(settings.document_bucket).upload(
             path, content, {"content-type": mime, "upsert": "false"}
         )
-        text = extract_text(content, mime)
-        structured = extract_sections(text)
+        text, structured = await _extract_resume_content(
+            content, file.filename or "document", mime, settings
+        )
         record = {
             "id": version_id,
             "resume_id": resume_id,
@@ -1324,6 +1365,7 @@ def _upload_resume_version(
             "structured_content": structured,
             "extraction_status": "review_required",
             "extraction_warnings": structured["warnings"],
+            "extraction_confidence": structured.get("confidence") or {},
         }
         return client.table("resume_versions").insert(record).execute().data[0]
     except ApiError:
@@ -1372,7 +1414,7 @@ def list_resumes(user: CurrentUser = Depends(get_current_user), settings: Settin
 
 
 @router.post("/resumes", status_code=201)
-def create_resume(
+async def create_resume(
     file: UploadFile = File(...),
     title: str | None = Form(default=None),
     user: CurrentUser = Depends(get_current_user),
@@ -1408,7 +1450,8 @@ def create_resume(
         .data[0]
     )
     try:
-        version = _upload_resume_version(client, settings, user, resume_id, file, file.file.read())
+        content = await file.read()
+        version = await _upload_resume_version(client, settings, user, resume_id, file, content)
     except Exception:
         client.table("resumes").delete().eq("id", resume_id).eq("user_id", str(user.id)).execute()
         raise
@@ -1555,7 +1598,7 @@ def activate_resume(
 
 
 @router.post("/resumes/{resume_id}/versions", status_code=201)
-def create_resume_version(
+async def create_resume_version(
     resume_id: UUID,
     file: UploadFile = File(...),
     user: CurrentUser = Depends(get_current_user),
@@ -1563,7 +1606,8 @@ def create_resume_version(
 ):
     client = client_for(settings, user)
     owned_row(client, "resumes", resume_id, user)
-    return _upload_resume_version(client, settings, user, str(resume_id), file, file.file.read())
+    content = await file.read()
+    return await _upload_resume_version(client, settings, user, str(resume_id), file, content)
 
 
 @router.get("/resume-versions/{version_id}")
@@ -1628,13 +1672,15 @@ def list_jds(user: CurrentUser = Depends(get_current_user), settings: Settings =
 
 
 @router.post("/job-descriptions", status_code=201)
-def create_jd(
+async def create_jd(
     payload: JobDescriptionTextCreate,
     user: CurrentUser = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ):
     client = client_for(settings, user)
-    structured = extract_sections(payload.raw_text, "jd-extraction-v1")
+    structured = await extract_sections_enriched(
+        payload.raw_text, settings, schema_version="jd-extraction-v1"
+    )
     inferred = infer_job_metadata(payload.raw_text)
     title = (payload.title or "").strip() or inferred["title"] or "Job description"
     role_title = (payload.role_title or "").strip() or inferred["role_title"]
@@ -1658,7 +1704,7 @@ def create_jd(
 
 
 @router.post("/job-descriptions/upload", status_code=201)
-def upload_jd(
+async def upload_jd(
     file: UploadFile = File(...),
     title: str | None = Form(default=None),
     company: str | None = Form(default=None),
@@ -1666,12 +1712,12 @@ def upload_jd(
     user: CurrentUser = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ):
-    content = file.file.read()
+    content = await file.read()
     mime = validate_document(
         file.filename or "document", file.content_type, content, settings.document_max_bytes
     )
     text = extract_text(content, mime)
-    structured = extract_sections(text, "jd-extraction-v1")
+    structured = await extract_sections_enriched(text, settings, schema_version="jd-extraction-v1")
     inferred = infer_job_metadata(text)
     resolved_title = (title or "").strip() or inferred["title"] or infer_resume_title(file.filename)
     resolved_role = (role_title or "").strip() or inferred["role_title"]
@@ -1954,41 +2000,27 @@ async def create_ats(
     if existing:
         return existing[0]
 
+    structured = version.get("structured_content") or {}
+    structured_sections = structured.get("sections") if isinstance(structured, dict) else None
+    if not isinstance(structured_sections, dict):
+        structured_sections = None
+
     try:
-        score = score_resume(version.get("plain_text") or "", job.get("raw_text") or "")
+        score = score_resume(
+            version.get("plain_text") or "",
+            job.get("raw_text") or "",
+            structured_sections=structured_sections,
+        )
     except ValueError as exc:
         raise ApiError(422, "ats_input_insufficient", str(exc)) from exc
 
-    structured_score: ScoreResult | None = None
-    try:
-        structured_score = await score_resume_jd(
-            version.get("plain_text") or "",
-            job.get("raw_text") or "",
-        )
-    except ApiError as exc:
-        logger.warning("ats_structured_pipeline_fallback code=%s", exc.code)
-    except Exception:
-        logger.exception("ats_structured_pipeline_fallback_unexpected")
-
-    gate_rejected = bool(structured_score and structured_score.gate.decision == "REJECT")
-    scoring_method = (
-        "Structured LLM scoring with deterministic keyword evidence"
-        if structured_score
-        else "Deterministic keyword coverage fallback"
-    )
-    persisted_score = (
-        0
-        if gate_rejected
-        else structured_score.composite_score
-        if structured_score
-        else score.overall_score
-    )
+    # Single scoring path: deterministic keyword coverage only.
+    # Source = JD requirement text. Evidence = exact resume quote or null.
+    scoring_method = "Evidence-backed keyword coverage"
+    persisted_score = score.overall_score
     score_breakdown = {
         **score.breakdown,
         "method": scoring_method,
-        "structured_parameter_scores": structured_score.parameter_scores if structured_score else None,
-        "structured_reasons": structured_score.reasons if structured_score else None,
-        "domain_gate": structured_score.gate.model_dump() if structured_score else None,
     }
     missing_items = [
         {
@@ -2029,7 +2061,6 @@ async def create_ats(
         .data[0]
     )
     try:
-        # Persist full coverage rows for scoring audit and section-aware guidance.
         evidence_rows = [
             {
                 "user_id": str(user.id),
@@ -2037,14 +2068,23 @@ async def create_ats(
                 "category": "keyword_coverage",
                 "requirement_text": item.requirement,
                 "requirement_type": item.requirement_type,
-                "resume_evidence_text": None if gate_rejected else item.resume_evidence if item.matched else None,
-                "resume_section": item.resume_section,
-                "resume_source_reference": {"resume_version_id": str(payload.resume_version_id)},
-                "job_description_source_reference": {"job_description_id": str(payload.job_description_id)},
-                "match_status": "not_found" if gate_rejected else evidence_match_status(item.match_strength),
-                "score_contribution": 0 if gate_rejected else item.score_contribution,
-                "rule_id": "alias_phrase_section_match_v2",
-                "explanation": structured_score.gate.reason if gate_rejected and structured_score else item.explanation,
+                "resume_evidence_text": item.resume_evidence if item.matched else None,
+                "resume_section": item.resume_section if item.matched else None,
+                "resume_source_reference": {
+                    "resume_version_id": str(payload.resume_version_id),
+                    "quoted_line": item.resume_evidence if item.matched else None,
+                    "section": item.resume_section if item.matched else None,
+                    "matched_alias": item.matched_alias if item.matched else None,
+                },
+                "job_description_source_reference": {
+                    "job_description_id": str(payload.job_description_id),
+                    "requirement": item.requirement,
+                    "requirement_type": item.requirement_type,
+                },
+                "match_status": evidence_match_status(item.match_strength),
+                "score_contribution": item.score_contribution,
+                "rule_id": "exact_resume_quote_match_v3",
+                "explanation": item.explanation,
             }
             for item in score.evidence
         ]
@@ -2054,15 +2094,15 @@ async def create_ats(
         brief = await generate_ats_improvement_brief(
             settings,
             overall_score=persisted_score,
-            missing_terms=[item.requirement for item in score.evidence] if gate_rejected else score.missing_terms,
-            matched_count=0 if gate_rejected else len(score.matched_terms),
+            missing_terms=score.missing_terms,
+            matched_count=len(score.matched_terms),
             total_terms=len(score.evidence),
             role_title=job.get("role_title") or job.get("title"),
             company=job.get("company"),
             missing_items=missing_items,
             matched_items=matched_items,
-            structured_parameter_scores=structured_score.parameter_scores if structured_score else None,
-            domain_gate=structured_score.gate.model_dump() if structured_score else None,
+            structured_parameter_scores=None,
+            domain_gate=None,
             resume_section_summary=score.section_summary,
         )
 
@@ -2075,19 +2115,24 @@ async def create_ats(
                     "score_breakdown": score_breakdown,
                     "summary": {
                         "method": scoring_method,
-                        "matched": 0 if gate_rejected else len(score.matched_terms),
-                        "missing": len(score.evidence) if gate_rejected else len(score.missing_terms),
+                        "matched": len(score.matched_terms),
+                        "missing": len(score.missing_terms),
                         "total": len(score.evidence),
-                        "missing_terms": [item.requirement for item in score.evidence] if gate_rejected else score.missing_terms,
-                        "partial_terms": [] if gate_rejected else (score.partial_terms or []),
-                        "critical_missing": [item.requirement for item in score.evidence if item.priority == "critical" and not item.matched],
-                        "preferred_missing": [item.requirement for item in score.evidence if item.priority == "preferred" and not item.matched],
+                        "missing_terms": score.missing_terms,
+                        "partial_terms": score.partial_terms or [],
+                        "critical_missing": [
+                            item.requirement
+                            for item in score.evidence
+                            if item.priority == "critical" and not item.matched
+                        ],
+                        "preferred_missing": [
+                            item.requirement
+                            for item in score.evidence
+                            if item.priority == "preferred" and not item.matched
+                        ],
                         "required_score": score.required_score,
                         "preferred_score": score.preferred_score,
                         "section_summary": score.section_summary or {},
-                        "structured_composite_score": structured_score.composite_score if structured_score else None,
-                        "structured_parameter_scores": structured_score.parameter_scores if structured_score else None,
-                        "domain_gate": structured_score.gate.model_dump() if structured_score else None,
                         "overall_inference": brief.get("overall_inference"),
                         "focus_areas": brief.get("focus_areas") or [],
                         "priority_actions": brief.get("priority_actions") or [],
@@ -2096,8 +2141,8 @@ async def create_ats(
                         "inference_provider": brief.get("provider"),
                         "inference_model": brief.get("model"),
                         "disclaimer": (
-                            "ATS scoring is an evidence-based decision aid, not a hiring prediction. "
-                            "Do not add false experience."
+                            "Score is keyword coverage only: each hit quotes an exact resume line. "
+                            "Not a hiring prediction. Never add experience that is not in the resume."
                         ),
                     },
                     "completed_at": utc_now(),
@@ -2173,6 +2218,22 @@ def list_interviews(
     user: CurrentUser = Depends(get_current_user), settings: Settings = Depends(get_settings)
 ):
     return owned_rows(client_for(settings, user), "interview_sessions", user, "created_at")
+
+
+@router.post("/interview-preparation")
+async def create_interview_preparation(
+    payload: InterviewPreparationCreate,
+    user: CurrentUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+):
+    """Return a non-persistent preparation plan from confirmed candidate evidence."""
+    return await generate_interview_preparation(
+        client_for(settings, user),
+        settings,
+        user,
+        resume_version_id=payload.resume_version_id,
+        job_description_id=payload.job_description_id,
+    )
 
 
 @router.post("/interviews", status_code=201)
@@ -2430,6 +2491,26 @@ def get_learning(
     return path
 
 
+@router.delete("/learning-paths/{path_id}", status_code=204)
+def delete_learning_path(
+    path_id: UUID,
+    user: CurrentUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+):
+    """Delete a candidate-owned learning path (items and resources cascade in DB)."""
+    client = client_for(settings, user)
+    owned_row(client, "learning_paths", path_id, user)
+    client.table("learning_paths").delete().eq("id", str(path_id)).eq("user_id", str(user.id)).execute()
+    write_activity(
+        client,
+        user,
+        "learning_path_deleted",
+        "Learning path deleted",
+        "learning_path",
+        str(path_id),
+    )
+
+
 @router.post("/learning-paths", status_code=201)
 def create_learning(
     payload: LearningPathCreate,
@@ -2443,6 +2524,167 @@ def create_learning(
         .execute()
         .data[0]
     )
+
+
+@router.post("/learning-paths/generate", status_code=201)
+async def generate_learning_path(
+    payload: LearningPathGenerate,
+    user: CurrentUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+):
+    """Create a YouTube-backed learning path from a completed ATS analysis only.
+
+    Crew (sequential, CrewAI-compatible):
+      1) ATS gap analyst (deterministic evidence extract)
+      2) YouTube curriculum planner (Groq LLM or deterministic) — queries only
+      3) Resource validator: YouTube Data API exact videos (no invented IDs)
+    """
+    client = client_for(settings, user)
+    analyses = (
+        client.table("ats_analyses")
+        .select("*")
+        .eq("user_id", str(user.id))
+        .eq("status", "completed")
+        .order("created_at", desc=True)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if payload.source_analysis_id:
+        analyses = (
+            client.table("ats_analyses")
+            .select("*")
+            .eq("id", str(payload.source_analysis_id))
+            .eq("user_id", str(user.id))
+            .eq("status", "completed")
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+    if not analyses:
+        raise ApiError(409, "completed_ats_required", "Complete an ATS analysis before generating a learning path.")
+    analysis = analyses[0]
+    version = owned_row(client, "resume_versions", analysis["resume_version_id"], user)
+    resume = owned_row(client, "resumes", version["resume_id"], user)
+    # Optional role context from linked JD (never invents a role)
+    role_title: str | None = None
+    jd_id = analysis.get("job_description_id")
+    if jd_id:
+        try:
+            jd = owned_row(client, "job_descriptions", jd_id, user)
+            role_title = str(jd.get("role_title") or jd.get("title") or "").strip() or None
+        except Exception:
+            role_title = None
+    evidence = (
+        client.table("ats_evidence")
+        .select("requirement_text,match_status,category,explanation")
+        .eq("analysis_id", analysis["id"])
+        .eq("user_id", str(user.id))
+        .order("created_at")
+        .execute()
+        .data
+        or []
+    )
+    generated = await generate_learning_path_from_ats(
+        settings,
+        evidence_rows=evidence,
+        source_analysis_id=str(analysis["id"]),
+        role_title=role_title,
+    )
+    items = list(generated.get("items") or [])
+    algorithm_version = str(generated.get("algorithm_version") or CAREER_MATCH_ALGORITHM_VERSION)
+    path = client.table("learning_paths").insert({
+        "user_id": str(user.id),
+        "title": f"YouTube learning path · {resume.get('title') or 'your resume'}",
+        "description": (
+            "Study plan from requirements not fully evidenced in your completed ATS analysis. "
+            "Each step recommends exact YouTube videos from the YouTube API (or a search page if the API is unavailable). "
+            "Open a video, learn, then mark the step complete — progress is saved to your account."
+        ),
+        "source_type": "ats_analysis",
+        "source_id": str(analysis["id"]),
+        "status": "active",
+        "progress_percentage": 0,
+    }).execute().data[0]
+    stored_items = []
+    for item in items:
+        resources = item.pop("resources", [])
+        # Ensure JSON-serializable metadata for SQLite layer
+        metadata = item.get("metadata")
+        if isinstance(metadata, dict):
+            item = {**item, "metadata": metadata}
+        stored = client.table("learning_items").insert({
+            **item,
+            "user_id": str(user.id),
+            "learning_path_id": path["id"],
+            "status": "pending",
+        }).execute().data[0]
+        for resource in resources:
+            client.table("learning_resources").insert({
+                **resource,
+                "user_id": str(user.id),
+                "learning_item_id": stored["id"],
+            }).execute()
+        stored["learning_resources"] = (
+            client.table("learning_resources")
+            .select("*")
+            .eq("learning_item_id", stored["id"])
+            .eq("user_id", str(user.id))
+            .execute()
+            .data
+            or []
+        )
+        stored_items.append(stored)
+    return {
+        **path,
+        "items": stored_items,
+        "algorithm_version": algorithm_version,
+        "crew": generated.get("crew"),
+        "grounding": {
+            "source": "completed_ats_analysis",
+            "analysis_id": str(analysis["id"]),
+            "policy": "youtube_search_or_allowlist_only_no_invented_video_ids",
+        },
+    }
+
+
+@router.patch("/learning-paths/{path_id}/items/{item_id}")
+def update_learning_item(
+    path_id: UUID,
+    item_id: UUID,
+    payload: LearningItemProgressPatch,
+    user: CurrentUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+):
+    client = client_for(settings, user)
+    owned_row(client, "learning_paths", path_id, user)
+    item = (
+        client.table("learning_items")
+        .select("*")
+        .eq("id", str(item_id))
+        .eq("learning_path_id", str(path_id))
+        .eq("user_id", str(user.id))
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if not item:
+        raise ApiError(404, "learning_item_not_found", "The learning item was not found.")
+    updated = client.table("learning_items").update({
+        "status": payload.status,
+        "completed_at": utc_now() if payload.status == "completed" else None,
+    }).eq("id", str(item_id)).eq("user_id", str(user.id)).execute().data[0]
+    all_items = client.table("learning_items").select("status").eq("learning_path_id", str(path_id)).eq("user_id", str(user.id)).execute().data or []
+    percentage = progress_percentage(all_items)
+    client.table("learning_paths").update({
+        "progress_percentage": percentage,
+        "status": "completed" if percentage == 100 and all_items else "active",
+        "updated_at": utc_now(),
+    }).eq("id", str(path_id)).eq("user_id", str(user.id)).execute()
+    return {**updated, "progress_percentage": percentage}
 
 
 @router.get("/jobs")
@@ -2483,7 +2725,54 @@ def get_job(
 def list_job_recommendations(
     user: CurrentUser = Depends(get_current_user), settings: Settings = Depends(get_settings)
 ):
-    return owned_rows(client_for(settings, user), "job_recommendations", user, "generated_at")
+    client = client_for(settings, user)
+    rows = owned_rows(client, "job_recommendations", user, "generated_at")
+    jobs = client.table("jobs").select("*").in_("id", [row["job_id"] for row in rows]).execute().data if rows else []
+    by_id = {str(job["id"]): job for job in jobs}
+    return [{**row, "job": by_id.get(str(row.get("job_id")))} for row in rows]
+
+
+@router.post("/job-recommendations/generate")
+def generate_job_recommendations(
+    payload: JobRecommendationGenerate,
+    user: CurrentUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+):
+    """Score active local job records against the candidate's confirmed resume evidence."""
+    client = client_for(settings, user)
+    if payload.resume_version_id:
+        version = owned_row(client, "resume_versions", payload.resume_version_id, user)
+    else:
+        active = client.table("resumes").select("id,title").eq("user_id", str(user.id)).eq("is_active", True).is_("deleted_at", "null").limit(1).execute().data or []
+        if not active:
+            raise ApiError(409, "active_resume_required", "Activate a confirmed resume before generating job recommendations.")
+        versions = client.table("resume_versions").select("*").eq("resume_id", active[0]["id"]).eq("user_id", str(user.id)).eq("extraction_status", "confirmed").order("created_at", desc=True).limit(1).execute().data or []
+        if not versions:
+            raise ApiError(409, "confirmed_resume_required", "Confirm the extracted resume before generating job recommendations.")
+        version = versions[0]
+    resume = owned_row(client, "resumes", version["resume_id"], user)
+    skills, evidence_text = candidate_skill_evidence(client, str(user.id), resume, version)
+    jobs = client.table("jobs").select("*").eq("is_active", True).order("published_at", desc=True).limit(200).execute().data or []
+    ranked = sorted((score_job(job, skills, evidence_text) for job in jobs), key=lambda row: row["match_score"], reverse=True)[:payload.limit]
+    client.table("job_recommendations").delete().eq("user_id", str(user.id)).eq("resume_version_id", str(version["id"])).execute()
+    recommendations = []
+    for row in ranked:
+        stored = client.table("job_recommendations").insert({
+            "user_id": str(user.id),
+            "job_id": row["job"]["id"],
+            "resume_version_id": str(version["id"]),
+            "match_score": row["match_score"],
+            "match_breakdown": row["match_breakdown"],
+            "evidence": row["evidence"],
+            "algorithm_version": CAREER_MATCH_ALGORITHM_VERSION,
+        }).execute().data[0]
+        recommendations.append({**stored, "job": row["job"]})
+    return {
+        "resume_version_id": version["id"],
+        "algorithm_version": CAREER_MATCH_ALGORITHM_VERSION,
+        "recommendations": recommendations,
+        "candidate_evidence": sorted(skills),
+    }
 
 
 @router.get("/saved-jobs")

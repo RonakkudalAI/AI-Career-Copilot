@@ -1,631 +1,506 @@
 # Career Copilot
 
-**Version:** 1.0.0  
-**Type:** Full-stack monorepo (Next.js frontend + FastAPI backend + local SQLite)
+**Version:** 1.0.0
+**Type:** Full-stack monorepo — Next.js UI + FastAPI API + local SQLite
 
-Career Copilot is a **private career workspace** that helps candidates build profiles, score resumes against job descriptions with **auditable evidence**, improve wording without inventing experience, practice mock interviews, and track jobs/learning — all with **local ownership** of data and **server-side AI only**.
+Career Copilot is a **private career workspace**. Candidates own their data locally, score resumes against job descriptions with **auditable evidence**, fill profiles from resumes, practice mock interviews, and generate learning/job recommendations from **owned evidence only**.
+
+> **Golden rule:** Do not invent the candidate’s career.
+> Only use what the user types, uploads, **confirms**, or explicitly accepts.
+> **SQLite + local filesystem storage** is the system of record.
 
 ---
 
 ## Table of contents
 
-1. [What we are doing](#1-what-we-are-doing)
-2. [Why we are doing it this way](#2-why-we-are-doing-it-this-way)
-3. [How we are doing it (architecture)](#3-how-we-are-doing-it-architecture)
-4. [Repository layout & key files](#4-repository-layout--key-files)
-5. [Complete tech stack](#5-complete-tech-stack)
-6. [AI models](#6-ai-models)
-7. [Agents (purpose, files, alternatives)](#7-agents-purpose-files-alternatives)
-8. [Features (what / why / how / files)](#8-features-what--why--how--files)
-9. [Data flow end-to-end](#9-data-flow-end-to-end)
+1. [What this project does](#1-what-this-project-does)
+2. [What is intentionally not shipped](#2-what-is-intentionally-not-shipped)
+3. [Architecture (how it works)](#3-architecture-how-it-works)
+4. [Repository layout](#4-repository-layout)
+5. [Tech stack](#5-tech-stack)
+6. [Models](#6-models)
+7. [Agents](#7-agents)
+8. [Feature-by-feature (what / why / how / files)](#8-feature-by-feature-what--why--how--files)
+9. [End-to-end user journeys](#9-end-to-end-user-journeys)
 10. [API map](#10-api-map)
-11. [Frontend routes & UI](#11-frontend-routes--ui)
+11. [Frontend routes](#11-frontend-routes)
 12. [Database & storage](#12-database--storage)
-13. [Environment & setup](#13-environment--setup)
+13. [Setup & environment](#13-setup--environment)
 14. [Scripts & verification](#14-scripts--verification)
-15. [Design decisions & alternatives](#15-design-decisions--alternatives)
-16. [Explicit non-goals](#16-explicit-non-goals)
-17. [Package identity](#17-package-identity)
+15. [Design choices & alternatives](#15-design-choices--alternatives)
+16. [Testing](#16-testing)
+17. [Folder ownership rules](#17-folder-ownership-rules)
 
 ---
 
-## 1. What we are doing
+## 1. What this project does
 
-### Product goals
-
-| Goal | Outcome for the user |
-|------|----------------------|
-| **Own career data** | Sign-up, profile, resumes, ATS runs, interviews live in **local SQLite + filesystem** |
-| **Honest ATS feedback** | Keyword coverage evidence + optional structured LLM score; not a black-box “hireability” number |
-| **Safe resume help** | AI may rewrite **existing** confirmed blocks; validators block invented employers/metrics |
-| **Interview practice** | Generate questions (Groq or templates); store answers; no grading AI shipped |
-| **Graceful degradation** | Core flows work **without** LLM keys (manual edit, deterministic ATS, template questions) |
-| **Server-only secrets** | NVIDIA/Groq keys never reach the browser |
-
-### Golden rule
-
-> **Do not invent the candidate’s career.**  
-> Work only from what the user types, uploads, confirms, or explicitly accepts.  
-> **SQLite + local storage** is the system of record — not browser localStorage for durable product truth.
-
-### Branding & UI
-
-- Product name is **text-only** (“Career Copilot”) — **no logo image assets**.
-- Site-wide premium classic type (`next/font`):
-  - **Source Sans 3** — body / UI / forms → `frontend/src/app/layout.tsx`, `globals.css`
-  - **Source Serif 4** — headings / brand
-  - **Source Code Pro** — scores, badges, mono labels
+| Capability | Available in UI | Notes |
+|------------|-----------------|--------|
+| Sign up / sign in (email + password, local JWT) | Yes | Auth stubs for email delivery |
+| Profile + completion checklist | Yes | Resume upload does **not** count toward % |
+| Career preferences (dropdown multi-selects) | Yes | Saved via `PUT /profile/preferences` |
+| Resume upload, parse, review, confirm | Yes | PDF/DOCX |
+| Job description paste/upload, confirm | Yes | Required for ATS |
+| ATS analysis (keywords + optional structured score + brief) | Yes | Report only; **no in-app resume editor** |
+| Re-upload revised resume and re-score | Yes | Primary way to improve after ATS |
+| Profile fill from resume (preview → apply) | Yes | Draft only until user applies |
+| Mock interview questions | Yes | Groq or templates; **no AI grading** |
+| Learning paths (list + generate from ATS gaps) | Yes | Evidence-grounded |
+| Jobs browse / save + recommendations | Yes | Local jobs + keyword match |
+| Account delete, privacy, notifications | Yes | Local wipe of owned data |
+| In-app post-ATS resume editor | **No** | Removed from product |
+| Resume AI improve UI | **No** | API/agents may still exist; **no UI** |
+| Embedding / cosine ATS | **No** | Not used |
 
 ---
 
-## 2. Why we are doing it this way
+## 2. What is intentionally not shipped
 
-| Decision | Why |
-|----------|-----|
-| **Local SQLite** | Zero DB server for dev/demo; simple file backup; full control |
-| **Application ownership filters** (not Postgres RLS) | SQLite has no RLS; every query scopes by `user_id` + JWT |
-| **Deterministic keyword ATS (always)** | Explainable matched/missing terms; same input → same evidence; works offline |
-| **Optional structured LLM ATS** | Domain gate + multi-parameter composite when CrewAI/provider available |
-| **No embeddings / cosine ATS** | Opaque for “keyword honesty”; wrong tool for auditable missing-term lists |
-| **NVIDIA for resume/profile** | Strong structured JSON for rewrites and extracts |
-| **Groq for interview questions only** | Fast generation; deliberately **not** a silent fallback for resume improve |
-| **Sequential crew (gap → improve → validate)** | Fixed contracts; less hallucination than free multi-agent chat |
-| **User confirm before ATS / improve** | Bad PDF extract must not auto-score as truth |
-| **Next.js proxy `/api/backend`** | Same-origin browser calls; simpler cookies/CORS |
-| **Feature-oriented folders** | Clear ownership of ATS, profile, resume, interview code |
-
-More layout detail: `docs/architecture.md`.
+| Non-goal | Reality in code |
+|----------|-----------------|
+| Brand logo image | Text brand only (“Career Copilot”) |
+| In-app edit resume after ATS | Removed; report CTAs point to re-upload / new analysis |
+| AI interview answer grading | Questions only |
+| Browser-side AI keys | Keys only in root `.env` / FastAPI |
+| Embeddings for ATS | Phrase/token rules + optional structured LLM score |
+| Hosted multi-tenant DB | Local SQLite file |
+| Working email verify/reset delivery | Local stubs return “not configured” |
+| Python 3.14 | `requires-python = ">=3.11,<3.14"` |
 
 ---
 
-## 3. How we are doing it (architecture)
+## 3. Architecture (how it works)
 
 ```text
-┌─────────────────────────────────────────────────────────────┐
-│  Browser (Next.js App Router)                               │
-│  frontend/src/app  +  frontend/src/features                 │
-│  Auth token: localStorage + cookie career_copilot_session   │
-└───────────────────────────┬─────────────────────────────────┘
-                            │  /api/backend/*  (proxy)
-                            │  /api/files/*    (file proxy)
-                            ▼
-┌─────────────────────────────────────────────────────────────┐
-│  FastAPI  backend/app/main.py                               │
-│  Prefix: /api/v1                                            │
-│  JWT (AUTH_SECRET, HS256) → CurrentUser                     │
-└───────┬─────────────────────┬───────────────────────────────┘
-        │                     │
-        ▼                     ▼
-  SQLite (.data/)      LOCAL_STORAGE_DIR buckets
-  database/client.py   documents / avatars / interview-media
+Browser (Next.js)
+  frontend/src/app + frontend/src/features
+  Token: localStorage career_copilot_access_token
+         + cookie career_copilot_session
         │
-        ▼ (optional, server-only)
-  NVIDIA Integrate API   |   Groq OpenAI-compatible API
-  deepseek-3.2           |   llama-3.3-70b-versatile
+        │  Browser → /api/backend/*  (Next proxy)
+        │  Files   → /api/files/*    (Next proxy)
+        ▼
+FastAPI  backend/app/main.py
+  Public prefix: /api/v1
+  JWT HS256 (AUTH_SECRET) → CurrentUser
+        │
+        ├─► SQLite   DATABASE_PATH (default ./.data/career-copilot.sqlite)
+        │     backend/app/database/client.py
+        ├─► Files    LOCAL_STORAGE_DIR (documents / avatars / interview-media)
+        └─► Optional LLMs (server-only)
+              NVIDIA  → deepseek-3.2
+              Groq    → llama-3.3-70b-versatile
 ```
 
-### Request path (typical authenticated call)
+### Typical authenticated request
 
-1. UI → `frontend/src/shared/api/client.ts` → `fetch("/api/backend/...")` + `Authorization: Bearer …`
-2. `frontend/src/app/api/backend/[...path]/route.ts` forwards to FastAPI
-3. `backend/app/features/auth/service.py` + `get_current_user` validate JWT
-4. `backend/app/database/client.py` runs user-scoped queries
-5. Feature code may call agents under `backend/app/agents` / `backend/app/features/*/agent*`
-6. JSON response; stable errors via `backend/app/core/errors.py` (`ApiError`)
+1. UI: `frontend/src/shared/api/client.ts` → `fetch("/api/backend/...")` + `Authorization: Bearer …`
+2. Proxy: `frontend/src/app/api/backend/[...path]/route.ts` → FastAPI
+3. Auth: `backend/app/features/auth/service.py` validates JWT, loads user from `users`
+4. Data: handlers in `backend/app/api/router.py` (+ feature routers) use `client_for` / ownership filters
+5. Optional AI: providers under `backend/app/agents/providers/`
+6. Errors: `backend/app/core/errors.py` (`ApiError` with stable codes)
 
 ---
 
-## 4. Repository layout & key files
+## 4. Repository layout
 
 ```text
 career-copilot_v1/
-├── README.md                          ← this file
-├── package.json                       ← root orchestration scripts only
-├── .env / .env.example                ← single env for frontend + API
-├── db/schema.sql                      ← SQLite schema (idempotent)
-├── docs/architecture.md               ← feature-oriented layout notes
-├── scripts/
-│   ├── setup/project.mjs              ← npm run setup
-│   ├── setup/backend.mjs              ← Python venv + package install
-│   ├── setup/local-db.mjs / migrate-local-db.py
-│   ├── dev/preflight.mjs, run.mjs, frontend.mjs, backend.mjs
-│   ├── diagnostics/verify-environment.mjs, check-secrets.mjs
-│   └── verify-boundaries.mjs
-├── frontend/                          ← Next.js application
+├── README.md                    # single project documentation entry
+├── package.json                 # root orchestration scripts only
+├── .env / .env.example
+├── db/schema.sql                # SQLite schema (do not delete)
+├── scripts/                     # setup, dev, diagnostics
+├── frontend/                    # Next.js app
 │   ├── package.json
-│   ├── public/jobs/                   ← textures (no brand logo)
+│   ├── e2e/                     # Playwright landing checks
+│   ├── public/jobs/             # globe texture (no brand logo)
 │   └── src/
-│       ├── app/                       ← routes, layouts, proxies, globals.css
-│       ├── features/                  ← domain UI
-│       └── shared/                    ← api client, routes, primitives
-├── backend/                           ← Python package career-copilot-api
-│   ├── pyproject.toml
-│   ├── tests/
-│   └── app/
-│       ├── main.py                    ← FastAPI app + middleware
-│       ├── core/config.py, errors.py
-│       ├── api/router.py, schemas.py  ← primary HTTP surface
-│       ├── database/                  ← SQLite client, repository, activity
-│       ├── agents/                    ← registry, prompts, providers
-│       └── features/                  ← auth, profile, resume, ats, …
-└── .data/                             ← runtime DB + storage (gitignored)
+│       ├── app/                 # routes, layouts, proxies, globals.css
+│       ├── features/            # domain UI modules
+│       └── shared/              # api client, config, theme, primitives
+└── backend/                     # career-copilot-api
+    ├── pyproject.toml
+    ├── tests/                   # pytest (ATS, interview, avatars, …)
+    └── app/
+        ├── main.py
+        ├── core/                # config, constants, errors
+        ├── api/                 # router.py, schemas.py (compat composition)
+        ├── database/            # SQLite client, repository, activity
+        ├── agents/              # registry, prompts, providers
+        └── features/
+            ├── auth/
+            ├── profile/
+            ├── document_parsing/
+            ├── resume_management/
+            ├── resume_improvement/   # API/agents only; no edit UI
+            ├── ats/
+            ├── interview/            # interview agent + preparation
+            └── career_matching.py    # learning path + job recs
 ```
 
-### Backend module map
+---
 
-| Concern | Path |
-|---------|------|
-| App entry | `backend/app/main.py` |
-| Settings | `backend/app/core/config.py` |
-| Errors | `backend/app/core/errors.py` |
-| HTTP routes (most features) | `backend/app/api/router.py` |
-| Schemas | `backend/app/api/schemas.py` |
-| SQLite client | `backend/app/database/client.py` |
-| Ownership / completion / activity | `backend/app/database/repository.py`, `activity.py` |
-| Agent inventory | `backend/app/agents/registry.py` |
-| LLM clients | `backend/app/agents/providers/nvidia_client.py`, `groq_client.py`, `common.py` |
-| Prompts | `backend/app/agents/prompts/*.txt` |
-| Auth | `backend/app/features/auth/` |
-| Profile + fill | `backend/app/features/profile/` |
-| Document parse | `backend/app/features/document_parsing/` |
-| Resume evidence / export / validation | `backend/app/features/resume_management/` |
-| Resume improve crew + routes | `backend/app/features/resume_improvement/` |
-| ATS | `backend/app/features/ats/` |
-| Interview questions | `backend/app/features/mock_interview/agent/` |
+## 5. Tech stack
 
-### Frontend module map
-
-| Concern | Path |
-|---------|------|
-| Fonts + root shell | `frontend/src/app/layout.tsx`, `globals.css` |
-| Marketing | `frontend/src/features/marketing/components/landing.tsx` |
-| Auth UI | `frontend/src/features/auth/` |
-| Workspace chrome | `frontend/src/features/workspace/components/workspace-shell.tsx` |
-| Dashboard | `frontend/src/features/dashboard/` |
-| Resume / ATS UI | `frontend/src/features/resume/` |
-| Interview UI | `frontend/src/features/interview/` |
-| Jobs / globe | `frontend/src/features/jobs/` |
-| Learning | `frontend/src/features/learning/` |
-| Settings / preferences | `frontend/src/features/settings/components/settings.tsx` |
-| Profile toast | `frontend/src/features/profile/` |
-| API client | `frontend/src/shared/api/client.ts` |
-| Backend proxy | `frontend/src/app/api/backend/[...path]/route.ts` |
-| File proxy | `frontend/src/app/api/files/[bucket]/[...path]/route.ts` |
+| Layer | Technology | Where |
+|-------|------------|--------|
+| UI | Next.js App Router, React, TypeScript | `frontend/` |
+| Styling | Tailwind CSS, `globals.css` | `frontend/src/app/globals.css` |
+| Icons / motion | Lucide, Motion | frontend deps |
+| Globe | Three.js, React Three Fiber, Drei | `features/jobs/components/career-globe.tsx` |
+| Fonts | Source Sans 3, Source Serif 4, Source Code Pro (`next/font`) | `frontend/src/app/layout.tsx` |
+| API | FastAPI, Uvicorn | `backend/app/main.py` |
+| Validation | Pydantic v2, pydantic-settings | `core/config.py`, `api/schemas.py` |
+| HTTP to LLMs | httpx | `agents/providers/*` |
+| Auth | PyJWT HS256 | `features/auth/service.py` |
+| Parse/export | pypdf, python-docx, reportlab | `features/document_parsing/`, `resume_management/exports.py` |
+| ATS structured LLM | langchain-openai + optional crewai | `features/ats/agent/` |
+| DB | SQLite via custom fluent client | `database/client.py` |
+| Schema | `db/schema.sql` | applied by setup/preflight |
 
 ---
 
-## 5. Complete tech stack
+## 6. Models
 
-### Languages & runtimes
+| Model id | Provider | Env keys | Used for |
+|----------|----------|----------|----------|
+| **`deepseek-3.2`** | NVIDIA Integrate `https://integrate.api.nvidia.com/v1` | `NVIDIA_API_KEY`, `NVIDIA_MODEL`, `NVIDIA_BASE_URL` | Resume-improvement API, profile-fill AI, preferred ATS brief; ATS structured scoring if `LLM_PROVIDER=nvidia` |
+| **`llama-3.3-70b-versatile`** | Groq `https://api.groq.com/openai/v1` | `GROQ_API_KEY`, `GROQ_MODEL`, `GROQ_BASE_URL` | Interview questions; ATS brief if NVIDIA off; default structured ATS when `LLM_PROVIDER=groq` |
 
-| Tech | Role | Alternatives (if redesigning) |
-|------|------|-------------------------------|
-| **TypeScript / Node** | Frontend + scripts | JS only (worse DX) |
-| **Python 3.11–3.13** (prefer 3.12) | API; **not 3.14+** | Go/Rust rewrite (out of scope) |
+**Clients:**
+- `backend/app/agents/providers/nvidia_client.py`
+- `backend/app/agents/providers/groq_client.py`
+- Shared JSON helpers: `agents/providers/common.py`
+- JSON repair prompt: `agents/prompts/repair_structured_output_v1.txt`
 
-### Frontend
+**Provider rules (as coded):**
 
-| Tech | Role | Alternatives |
-|------|------|--------------|
-| **Next.js App Router** | Pages, layouts, route handlers | Remix, plain React SPA |
-| **React** | UI | Vue, Svelte |
-| **Tailwind CSS** | Styling | CSS Modules only |
-| **Lucide React** | Icons | Heroicons |
-| **Motion** | Light animation | Framer Motion legacy, CSS |
-| **Three.js / R3F / Drei** | Career globe | 2D map only |
-| **Source Sans 3 / Serif 4 / Code Pro** | Typography via `next/font` | Inter, Geist, Satoshi, commercial faces |
-
-### Backend
-
-| Tech | Role | Alternatives |
-|------|------|--------------|
-| **FastAPI + Uvicorn** | HTTP API | Django, Flask, NestJS |
-| **Pydantic v2 / pydantic-settings** | Validation + `.env` | attrs, dataclasses |
-| **httpx** | Async LLM HTTP | aiohttp, requests |
-| **PyJWT** | HS256 sessions | session cookies server-side only, Auth0 |
-| **pypdf / python-docx / reportlab** | Parse + export | Docling, LibreOffice |
-| **langchain-openai** | Chat client for ATS structured scoring | Direct OpenAI SDK, litellm |
-| **crewai** (optional) | Official multi-agent package | LangGraph, AutoGen, pure custom |
-
-### Data
-
-| Tech | Role | Alternatives |
-|------|------|--------------|
-| **SQLite** (`sqlite3`) | Durable app data | PostgreSQL, Supabase |
-| **Local filesystem** | Documents/avatars/media | S3, MinIO |
-| **Custom fluent client** | `table().select().eq()…` | SQLAlchemy, Prisma, Drizzle |
-
-### AI providers
-
-| Provider | Default model | Used for |
-|----------|---------------|----------|
-| **NVIDIA Integrate** | `deepseek-3.2` | Resume improve, profile fill AI, preferred ATS brief; ATS scoring if `LLM_PROVIDER=nvidia` |
-| **Groq** | `llama-3.3-70b-versatile` | Interview questions; ATS brief if NVIDIA off; default ATS structured scorer |
-
----
-
-## 6. AI models
-
-### Models in use (exact identifiers from config)
-
-| Model id | Provider | Config keys | Primary use | Why this project uses it |
-|----------|----------|-------------|-------------|---------------------------|
-| **`deepseek-3.2`** | NVIDIA Integrate (`https://integrate.api.nvidia.com/v1`) | `NVIDIA_API_KEY`, `NVIDIA_MODEL`, `NVIDIA_BASE_URL` | Structured JSON: resume rewrites, profile extract, ATS brief (preferred), optional ATS scoring | OpenAI-compatible chat + JSON mode; strong structured output for evidence-bound tasks |
-| **`llama-3.3-70b-versatile`** | Groq (`https://api.groq.com/openai/v1`) | `GROQ_API_KEY`, `GROQ_MODEL`, `GROQ_BASE_URL` | Interview questions; ATS brief fallback; default structured ATS via `LLM_PROVIDER=groq` | Fast JSON generation; low latency for interactive interview start |
-
-### Call policy (both clients)
-
-| Behavior | Where |
-|----------|--------|
-| `POST {base}/chat/completions` | `nvidia_client.py`, `groq_client.py` |
-| `response_format: json_object` | same |
-| Retries on 408/429/5xx | same |
-| One **repair pass** | `repair_structured_output_v1.txt` |
-| Low temperature | NVIDIA ~0.2, Groq ~0.4 (config) |
-
-### Provider selection rules
-
-| Feature | Provider rule |
-|---------|----------------|
-| Resume improve | **NVIDIA only** (no Groq fallback) |
-| Profile fill AI | **NVIDIA only** (+ deterministic always) |
-| Interview questions | **Groq only** (+ templates) |
-| ATS improvement brief | NVIDIA → else Groq → else deterministic paragraph |
-| Structured ATS crew LLM | `LLM_PROVIDER` = `groq` or `nvidia` (default **groq**) |
-
-### Model alternatives (if you swap)
-
-| Current | Possible alternatives | Trade-off |
-|---------|----------------------|-----------|
-| `deepseek-3.2` on NVIDIA | Other NVIDIA catalog models; OpenAI `gpt-4o`; Anthropic Claude | Cost, latency, prompt retuning |
-| `llama-3.3-70b-versatile` on Groq | Other Groq models; same OpenAI-compat endpoint | Quality vs speed |
-| Dual providers | Single provider for everything | Simpler ops; less isolation of interview vs rewrite |
+| Task | Provider |
+|------|----------|
+| Resume improve (API) | NVIDIA only |
+| Profile fill AI | NVIDIA only (+ deterministic always) |
+| Interview questions | Groq only (+ templates) |
+| ATS brief | NVIDIA → Groq → deterministic text |
+| Structured ATS crew LLM | `LLM_PROVIDER` = `groq` \| `nvidia` (default **groq**) |
 
 **Not used:** embedding models, vector DBs, cosine similarity for ATS.
 
 ---
 
-## 7. Agents (purpose, files, alternatives)
+## 7. Agents
 
-### Product agents (registry)
-
-**Inventory file:** `backend/app/agents/registry.py`  
+**Inventory:** `backend/app/agents/registry.py`
 **Live status:** `GET /api/v1/agents/status`
 
-| # | Agent id | Recognizable name | Purpose | Provider | Prompt file | Key implementation files | Fallback | Alternatives |
-|---|----------|-------------------|---------|----------|-------------|--------------------------|----------|--------------|
-| 1 | `resume_improvement` | **Rewrite** | Suggest rewrites of confirmed resume blocks | NVIDIA | `agents/prompts/improve_resume_v1.txt` | `agents/providers/nvidia_client.py`, `features/resume_management/improvements.py` | Manual edit + export | Single-shot LLM without crew; human editor only |
-| 2 | `resume_improvement_crew` | **Coach** | Sequential pipeline: gaps → rewrite → validate | NVIDIA + tools | improve prompt + tools | `features/resume_improvement/agents/crew/orchestrator.py`, `tools.py` | Compatible orchestrator if CrewAI missing | LangGraph pipeline; pure function pipeline |
-| 3 | `profile_fill` | **Profiler** | Draft profile fields from resume | NVIDIA + rules | `fill_profile_from_resume_v1.txt` | `features/profile/agent/pipeline.py`, `deterministic.py` | Deterministic extract only | Rules-only forever; form-only profile |
-| 4 | `interview_questions` | **Interviewer** | Generate mock questions | **Groq** | `interview_questions_v1.txt` | `features/mock_interview/agent/question_generator.py` | Local templates | Static banks; NVIDIA (not wired by design) |
-| 5 | `ats_improvement_brief` | **Advisor** | Explain missing keywords / next steps | NVIDIA or Groq | `ats_improvement_v1.txt` | `features/ats/agents/improvement_brief.py` | Deterministic paragraph | Fully structured UI without prose |
+### Product agents (5)
 
-### Coach sub-roles (resume improve crew)
+| id | Purpose | Provider | Prompt | Implementation | Product UI |
+|----|---------|----------|--------|----------------|------------|
+| `resume_improvement` | Evidence-checked rewrite suggestions | NVIDIA | `improve_resume_v1.txt` | `resume_management/improvements.py`, NVIDIA client | **No UI** (API only) |
+| `resume_improvement_crew` | Sequential gap → improve → validate | NVIDIA + tools | improve + tools | `resume_improvement/agents/crew/*` | **No UI** (API only) |
+| `profile_fill` | Profile draft from resume | NVIDIA + rules | `fill_profile_from_resume_v1.txt` | `profile/agent/pipeline.py` | Yes (settings preview/apply) |
+| `interview_questions` | Mock interview questions | Groq | `interview_questions_v1.txt` | `features/interview/agent/question_generator.py` | Yes |
+| `ats_improvement_brief` | Prose brief from ATS evidence | NVIDIA or Groq | `ats_improvement_v1.txt` | `ats/agents/improvement_brief.py` | Yes (on ATS report) |
+
+### Resume improvement crew roles (API path only)
 
 **File:** `backend/app/features/resume_improvement/agents/crew/orchestrator.py`
 
-| Sub-role | Nickname | Tool | File | Purpose |
-|----------|----------|------|------|---------|
-| ATS Gap Analyst | **Scout** | `analyze_ats_gaps` | `crew/tools.py` | Missing keywords from ATS evidence only (no LLM invent) |
-| Resume Improvement Specialist | **Editor** | `generate_resume_suggestions` | calls NVIDIA | Propose rewrites of real blocks |
-| Evidence Validator | **Guardian** | `validate_suggestions` | + `resume_management/validation.py` | Drop unsafe suggestions |
+| Role | Tool | Behavior |
+|------|------|----------|
+| ATS Gap Analyst | `analyze_ats_gaps` | Deterministic from supplied ATS evidence |
+| Resume Improvement Specialist | `generate_resume_suggestions` | NVIDIA only |
+| Evidence Validator | `validate_suggestions` | Server-side `validation.py` |
 
-Process: **sequential**. Runtime: `official_crewai` if installed, else `compatible_orchestrator` (`crew/compat.py`).
+### ATS structured scoring crew
 
-### ATS structured scoring crew (not in the 5 product agents)
+**Files:** `features/ats/agent/agents.py`, `crew.py`, `scoring/service.py`
 
-**Files:** `backend/app/features/ats/agent/agents.py`, `crew.py`, `prompts.py`, `scoring/service.py`
+| Role | Job |
+|------|-----|
+| Resume Parsing Agent | → `ResumeParsed` |
+| Job Description Parsing Agent | → `JDParsed` |
+| Domain Gate Agent | ALLOW / REJECT |
+| Resume Scoring Agent | Parameter scores + composite |
 
-| Role | Nickname | Purpose |
-|------|----------|---------|
-| Resume Parsing Agent | **Parser** | Resume → `ResumeParsed` JSON |
-| Job Description Parsing Agent | **JD Reader** | JD → `JDParsed` |
-| Domain Gate Agent | **Gatekeeper** | ALLOW/REJECT before scoring (rules can force REJECT) |
-| Resume Scoring Agent | **Scorer** | Parameter scores → composite |
-
-Requires **CrewAI + langchain-openai**. On failure, product ATS **keeps** deterministic keyword score.
-
-**Composite formula:**
+**Composite (structured path):**
 
 ```text
-composite = 0.40*hard_skill_match
-          + 0.25*experience_relevance
-          + 0.15*education_match
-          + 0.10*certifications_match
-          + 0.10*seniority_alignment
+0.40*hard_skill_match + 0.25*experience_relevance
++ 0.15*education_match + 0.10*certifications_match
++ 0.10*seniority_alignment
 ```
 
-Persisted product algorithm label often: `structured-llm-gated-v1` (see `api/router.py`).
+Product analyses store algorithm version label: **`structured-llm-gated-v1`** (`api/router.py`).
+If this crew fails, ATS still completes with deterministic phrase coverage.
 
-### Hallucination controls (how agents stay safe)
+### Safety / anti-hallucination (what the code actually does)
 
-| Control | Where |
-|---------|--------|
-| Evidence-bound prompts | `agents/prompts/*.txt` |
-| JSON schema validation | Pydantic models in `api/schemas.py` / feature schemas |
-| Repair pass | `repair_structured_output_v1.txt` |
-| Server validator (entities, numbers, contact, meaning shift) | `features/resume_management/validation.py` |
-| Profile evidence filter (value must appear in resume text) | `features/profile/agent/pipeline.py` |
-| ATS brief constrained to missing keywords | `features/ats/agents/improvement_brief.py` |
-| User confirm on extracts | resume/JD confirm endpoints in `api/router.py` |
+| Mechanism | Location |
+|-----------|----------|
+| Confirm resume/JD before ATS | `POST .../confirm`; ATS checks `extraction_status` |
+| Deterministic phrase/alias matching | `ats/deterministic.py` (`deterministic-phrase-coverage-v2`) |
+| Brief constrained to scored gaps | `ats/agents/improvement_brief.py` + prompt |
+| Profile AI filtered against resume text | `profile/agent/pipeline.py` |
+| Resume suggestion validators | `resume_management/validation.py` |
+| Learning/job recs from owned evidence + known URLs | `features/career_matching.py` |
+| No invented jobs in matcher | Scores only rows in local `jobs` table |
 
 ---
 
-## 8. Features (what / why / how / files)
+## 8. Feature-by-feature (what / why / how / files)
 
-### 8.1 Authentication & session
+### 8.1 Authentication
 
 | | |
 |--|--|
-| **What** | Email/password sign-up and sign-in; JWT session |
-| **Why** | Local multi-user without hosted Auth SaaS |
-| **How** | Hash password → store `users` → issue HS256 JWT (`sub` = user id) → browser stores token + cookie |
-| **Backend** | `features/auth/service.py`, routes in `api/router.py` (`/auth/*`) |
+| **What** | Register, sign in, session, sign out, password update |
+| **Why** | Multi-user local ownership without external Auth SaaS |
+| **How** | Password hash on `users`; JWT with `sub` = user id; browser stores token + cookie |
+| **Backend** | `features/auth/service.py`; routes `/auth/*` in `api/router.py` |
 | **Frontend** | `features/auth/components/auth-screen.tsx`, `features/auth/api/client.ts` |
-| **Notes** | Resend/reset email are **stubs** for local dev; OAuth stubbed |
-| **Alternatives** | Supabase Auth, Clerk, Auth0, session cookies only |
+| **Limits** | `/auth/resend`, `/auth/reset-password` return not-configured messages; OAuth stubbed |
 
 ### 8.2 Profile & completion
 
 | | |
 |--|--|
-| **What** | Profile fields, skills, experience, education, links, preferences; 0–100 completion |
-| **Why** | Clear “what’s missing”; resume upload does **not** count toward % |
-| **How** | Checklist weights in pure functions; recalculate on mutations; toast in workspace |
-| **Backend** | `features/profile/completion.py`, `database/repository.py`, profile routes in `api/router.py` |
+| **What** | Profile fields, skills, experience, education, links; 0–100 completion |
+| **Why** | Show what is still empty without requiring a resume |
+| **How** | Checklist in `features/profile/completion.py`; recalculated via repository helpers |
 | **Frontend** | `features/settings/components/settings.tsx`, `features/profile/*` |
-| **Checklist** | Name 10, location 8, current role 10, target roles 8, experience/0 years 22, skills 17, education 10, work modes 5, locations 5, link 5 |
-| **Alternatives** | Client-only %, LinkedIn import as sole source |
+| **Weights** | name 10, location 8, role 10, target roles 8, experience/0 yrs 22, skills 17, education 10, work modes 5, preferred locations 5, link 5 |
 
-### 8.3 Career preferences UI
+### 8.3 Career preferences
 
 | | |
 |--|--|
 | **What** | Target roles, industries, locations, work modes, employment types, salary, etc. |
-| **Why** | Persist job-search prefs; feed completion |
-| **How** | Multi-select **dropdowns + removable tags** (not crowded checkbox grids); `PUT /profile/preferences` |
-| **Frontend** | `features/settings/components/settings.tsx` (`MultiOptionGroup`, `SelectWithOther`) |
-| **Alternatives** | Free-text only; multi-select combobox library |
+| **How** | Multi-select **dropdowns + removable tags** (`MultiOptionGroup` in settings); `PUT /profile/preferences` |
+| **Frontend** | `settings.tsx` |
 
-### 8.4 Document upload & parsing
+### 8.4 Resume upload, parse, confirm
 
 | | |
 |--|--|
-| **What** | PDF/DOCX → plain text → sections → user review → confirm |
-| **Why** | Scoring/improve must use **confirmed** structure |
-| **How** | `pypdf` / `python-docx` (+ optional Docling); section heuristics; storage under user path |
-| **Backend** | `features/document_parsing/parsing/text_extract.py`, `sections.py`, `service.py` |
+| **What** | Upload PDF/DOCX → extract text/sections → user review → confirm |
+| **Why** | ATS must use confirmed text, not a raw unreviewed parse |
+| **How** | Extract (`document_parsing/parsing/text_extract.py`), sections (`sections.py`), store under document bucket; `extraction_status` until confirm |
 | **Frontend** | `features/resume/components/resume-flow.tsx` |
-| **Alternatives** | Always-on Docling; cloud OCR; LLM-only parse with grounding |
+| **API** | `/resumes`, `/resumes/{id}/versions`, `/resume-versions/{id}/extraction`, `/confirm` |
 
 ### 8.5 Job descriptions
 
 | | |
 |--|--|
-| **What** | Paste or upload JD → extract → confirm |
-| **Why** | ATS needs a stable JD text source |
-| **How** | Same parse/confirm pattern as resumes |
-| **Backend** | JD routes in `api/router.py` |
-| **Frontend** | Resume analysis “new” flow |
+| **What** | Paste or upload JD → review → confirm |
+| **API** | `/job-descriptions`, upload, extraction patch, confirm |
+| **Frontend** | Resume analysis “new” flow in `resume-flow.tsx` |
 
 ### 8.6 ATS analysis
 
 | | |
 |--|--|
-| **What** | Score resume vs JD; missing keywords; optional structured composite; improvement inference |
-| **Why** | Actionable, honest gap list for edits and AI improve |
-| **How** | 1) Always `score_resume` deterministic keywords 2) Try structured `score_resume_jd` 3) Persist analysis + evidence 4) Generate brief |
-| **Deterministic** | `features/ats/deterministic.py` — token match, top keywords, evidence lines |
-| **Structured** | `features/ats/agent/*`, `features/ats/scoring/*` |
-| **Brief** | `features/ats/agents/improvement_brief.py` |
-| **Routes** | `POST /ats-analyses`, `GET .../evidence`, `POST /ats/score` |
-| **Frontend** | `features/resume/components/resume-flow.tsx` |
-| **Why deterministic keywords?** | Auditable, offline-safe, stable; real ATS filters often keyword-like |
-| **Why not embeddings?** | Cosine ≠ “this JD token is on the resume”; harder to explain/audit |
-| **Alternatives** | Phrase/synonym matcher (future); pure LLM score; third-party ATS APIs |
+| **What** | Score confirmed resume vs confirmed JD; show gaps, optional structured breakdown, improvement inference |
+| **Why** | Honest, auditable feedback without claiming hiring outcomes |
+| **How** | 1) Always `score_resume` in `ats/deterministic.py` (**`deterministic-phrase-coverage-v2`**: phrases, aliases, required/preferred, section-aware evidence) 2) Try structured `score_resume_jd` 3) Persist `ats_analyses` + `ats_evidence` 4) `generate_ats_improvement_brief` |
+| **API** | `POST /ats-analyses`, evidence, suggestions list; also `POST /ats/score` |
+| **Frontend** | Report page via `resume-flow.tsx` — **view only** (no edit page) |
+| **After ATS** | User re-uploads a revised resume and runs a new analysis |
 
-### 8.7 In-place resume edit & AI improve
+### 8.7 Resume improvement (API only — no product editor)
 
 | | |
 |--|--|
-| **What** | Edit the **same** resume version after ATS; optional AI suggestions |
-| **Why** | Avoid “empty new resume” UX; ground rewrites in evidence |
-| **How** | Manual: `POST .../manual-edit` (`in_place` default). AI: Coach crew → suggestions → user accept → apply. Export PDF/DOCX. |
-| **Backend** | `resume_management/improvements.py`, `validation.py`, `evidence.py`, `exports.py`; routes `resume_improvement/routes.py` |
-| **Frontend** | `resume-edit.tsx`, report edit pages under `app/(workspace)/resume-analysis/` |
-| **Alternatives** | Always new version; unvalidated free rewrite |
+| **What** | Backend can still run improve crew and export routes |
+| **UI** | **Removed.** No `/resume-analysis/report/.../edit`, no `resume-edit.tsx` |
+| **API** | `features/resume_improvement/routes.py`: capabilities, create run, suggestions, apply, exports |
+| **Manual edit** | `POST .../manual-edit` **removed**; `manual_editing_available: false` |
 
 ### 8.8 Profile fill from resume
 
 | | |
 |--|--|
-| **What** | Preview draft profile from resume; user applies selected fields |
-| **Why** | Faster onboarding without auto-overwriting truth |
-| **How** | Deterministic draft + optional NVIDIA extract + evidence filter → preview → apply |
-| **Backend** | `features/profile/agent/*` |
-| **Frontend** | Settings profile section |
-| **Alternatives** | Auto-save; LinkedIn OAuth import |
+| **What** | Preview draft fields from a resume; apply selected pieces |
+| **How** | Deterministic extract + optional NVIDIA + evidence filter; never auto-writes without apply |
+| **Backend** | `profile/agent/*` |
+| **API** | `/profile/from-resume/preview`, `preview-upload`, `apply` |
 
 ### 8.9 Mock interview
 
 | | |
 |--|--|
-| **What** | Create session → start → answer → complete/delete |
-| **Why** | Practice without live human interviewer |
-| **How** | Groq structured questions or templates; store Q&A |
-| **Backend** | Interview routes in `api/router.py`; `mock_interview/agent/question_generator.py` |
+| **What** | Create session → start (generate questions) → answer → complete/delete |
+| **How** | `generate_interview_questions` (Groq structured JSON or local templates) |
+| **Backend** | Routes in `api/router.py`; agent `features/interview/agent/`; prompt `interview_questions_v1.txt` |
 | **Frontend** | `features/interview/components/interview-flow.tsx` |
-| **Not shipped** | AI answer grading / evaluation agent |
-| **Alternatives** | Fixed question banks only; voice agents |
+| **Not included** | AI scoring of answers |
 
-### 8.10 Jobs & learning
-
-| | |
-|--|--|
-| **What** | Browse/save jobs; learning paths/topics |
-| **Why** | Workspace completeness; data-backed lists |
-| **How** | CRUD-style endpoints; UI lists; globe visualization for jobs |
-| **Backend** | Handlers in `api/router.py` |
-| **Frontend** | `features/jobs/`, `features/learning/` |
-| **Note** | No product AI job recommender agent in registry |
-| **Alternatives** | External job APIs; embedding rank (optional future search) |
-
-### 8.11 Settings, privacy, account deletion
+### 8.10 Learning paths
 
 | | |
 |--|--|
-| **What** | Notifications, privacy prefs, delete account |
-| **Why** | Control retention and wipe local data |
-| **How** | Pref rows; deletion collects owned files + rows |
-| **Backend** | Settings routes; `features/auth/account_deletion.py` |
-| **Frontend** | `settings.tsx` account/privacy tabs |
+| **What** | List paths; generate path from completed ATS missing requirements; track item progress |
+| **How** | `POST /learning-paths/generate` uses ATS evidence + `build_learning_items` in `career_matching.py` (known doc URLs only — does not invent random links) |
+| **Frontend** | `features/learning/` |
 
-### 8.12 Dashboard & workspace shell
+### 8.11 Jobs & recommendations
 
 | | |
 |--|--|
-| **What** | Home metrics, activity, profile completion toast, sidebar |
-| **Why** | Orientation after login |
-| **How** | `GET /me/bootstrap`, activity feed; shell listens for profile update events |
-| **Backend** | `api/router.py` bootstrap/activity |
-| **Frontend** | `workspace-shell.tsx`, `dashboard.tsx`, profile toast |
+| **What** | Browse jobs, save jobs, generate recommendations vs resume/ATS evidence |
+| **How** | `score_job` / `candidate_skill_evidence` in `career_matching.py` (`evidence-keyword-match-v1`); only scores existing `jobs` rows |
+| **API** | `/jobs`, `/saved-jobs`, `/job-recommendations`, `POST /job-recommendations/generate` |
+| **Frontend** | `features/jobs/` (+ globe) |
+
+### 8.12 Dashboard, workspace, settings, account
+
+| | |
+|--|--|
+| **Bootstrap** | `GET /me/bootstrap` — shell, completion, activity hooks |
+| **Shell** | `features/workspace/components/workspace-shell.tsx` |
+| **Dashboard** | `features/dashboard/` |
+| **Settings** | profile / account / preferences / privacy |
+| **Delete account** | `DELETE /account` → `features/auth/account_deletion.py` |
 
 ---
 
-## 9. Data flow end-to-end
+## 9. End-to-end user journeys
 
-### Typical ATS + improve journey
+### A) First run
 
 ```text
-User signs up
-  → auth (service.py + router)
-  → profile rows created
-
-User uploads resume PDF
-  → document_parsing (text + sections)
-  → resume_versions (review_required)
-  → user confirms
-
-User adds JD
-  → confirm JD
-
-User runs ATS
-  → deterministic.score_resume (always)
-  → score_resume_jd structured crew (try)
-  → ats_analyses + ats_evidence
-  → improvement_brief (Advisor)
-  → UI report
-
-User edits / AI improves
-  → Scout gaps from evidence
-  → Editor NVIDIA rewrites
-  → Guardian validation
-  → apply in place
-  → optional export + re-score
+Sign up  →  JWT stored
+  → Settings / onboarding fill profile
+  → Completion % updates (no resume required)
+  → Optional: profile from resume (preview → apply selected fields)
 ```
 
-### What is **not** in the flow
+### B) ATS (primary analysis loop)
 
-- No chunking → embeddings → cosine for ATS  
-- No browser-side AI keys  
-- No auto-invented career history  
+```text
+Upload resume PDF/DOCX
+  → parse + section extract
+  → review extraction
+  → confirm version
+
+Add job description (text or file)
+  → confirm JD
+
+POST /ats-analyses
+  → deterministic phrase coverage (always)
+  → optional structured LLM score (try)
+  → evidence rows + improvement brief
+  → UI report (score, gaps, inference)
+
+To improve coverage:
+  revise resume offline → re-upload → re-confirm → run new analysis
+```
+
+### C) Interview practice
+
+```text
+Create session → start
+  → Groq questions or templates
+  → typed answers → complete or delete
+```
+
+### D) Learning from ATS gaps
+
+```text
+Complete ATS analysis
+  → POST /learning-paths/generate
+  → items + resources from known gap terms
+  → mark items complete in UI
+```
+
+### E) Jobs
+
+```text
+Browse /jobs (DB)
+  → optional generate recommendations from evidence
+  → save / update saved status
+```
 
 ---
 
 ## 10. API map
 
-**Base:** `{API origin}/api/v1`  
-**Composition:** `backend/app/main.py` includes `api/router.py` + ATS scoring router  
+**Base:** `{origin}/api/v1`
+**App entry:** `backend/app/main.py`
+**Main router:** `backend/app/api/router.py`
+**ATS score router:** `backend/app/features/ats/routes.py` (`POST /ats/score`)
+**Improve router (API only):** `backend/app/features/resume_improvement/routes.py`
 **Docs:** `http://127.0.0.1:8000/docs` when `APP_ENV != production`
 
-| Area | Examples |
-|------|----------|
-| Health | `GET /health`, `GET /health/database`, `GET /agents/status` |
-| Auth | `POST /auth/sign-up`, `/sign-in`, `/session`, `/sign-out`, … |
-| Workspace | `GET /me/bootstrap`, `GET /me/activity` |
-| Profile | `GET/PATCH /profile`, avatar, preferences, CRUD resources, from-resume |
+| Area | Paths |
+|------|--------|
+| Health | `GET /health`, `/health/database`, `/agents/status` |
+| Auth | `/auth/sign-up`, `/sign-in`, `/session`, `/sign-out`, … |
+| Me | `/me/bootstrap`, `/me/activity` |
+| Profile | `/profile`, avatar, preferences, resources, from-resume |
 | Resumes | `/resumes`, versions, confirm, preview, activate |
-| Improvements | `/resume-improvements`, suggestions, apply, manual-edit, exports |
-| JD / ATS | `/job-descriptions`, `/ats-analyses`, evidence, `POST /ats/score` |
+| JD / ATS | `/job-descriptions`, `/ats-analyses`, evidence |
+| Improve API | `/resume-improvements/*`, exports (no edit UI) |
 | Interviews | `/interviews`, start, responses, complete |
-| Jobs / learning | `/jobs`, `/saved-jobs`, `/learning-paths` |
-| Settings / account | `/settings/*`, `DELETE /account` |
+| Learning | `/learning-paths`, generate, item patch |
+| Jobs | `/jobs`, `/saved-jobs`, `/job-recommendations` |
+| Settings | `/settings/*`, `DELETE /account` |
 | Files | `GET /files/{bucket}/{path}` |
 
 ---
 
-## 11. Frontend routes & UI
+## 11. Frontend routes
 
-| Area | Routes | Feature code |
-|------|--------|--------------|
-| Marketing | `/` | `features/marketing` |
-| Auth | `/sign-in`, `/sign-up`, `/forgot-password`, … | `features/auth` |
-| Onboarding | `/onboarding` | `features/onboarding` |
-| Dashboard | `/dashboard` | `features/dashboard` |
-| Resume / ATS | `/resume-analysis/*` | `features/resume` |
-| Interview | `/mock-interview/*` | `features/interview` |
-| Jobs | `/jobs/*` | `features/jobs` |
-| Learning | `/learning/*` | `features/learning` |
-| Settings | `/settings/*` | `features/settings` |
+| Route area | Feature module |
+|------------|----------------|
+| `/` | `features/marketing` |
+| `/sign-in`, `/sign-up`, … | `features/auth` |
+| `/onboarding` | `features/onboarding` |
+| `/dashboard` | `features/dashboard` |
+| `/resume-analysis`, `/new`, `/review`, `/report/[id]` | `features/resume` (**no `/edit`**) |
+| `/mock-interview/*` | `features/interview` |
+| `/learning/*` | `features/learning` |
+| `/jobs/*` | `features/jobs` |
+| `/settings/*` | `features/settings` |
 
-**Shared UI:** `frontend/src/shared/ui/primitives.tsx`  
-**Global styles / type:** `frontend/src/app/globals.css`
+**Shared:** `shared/api/client.ts`, `shared/ui/primitives.tsx`, `shared/routes.ts`
+**Typography:** Source Sans 3 (UI), Source Serif 4 (headings/brand), Source Code Pro (mono) in `app/layout.tsx` + `globals.css`.
 
 ---
 
 ## 12. Database & storage
 
-### Schema
+| Item | Detail |
+|------|--------|
+| Schema | `db/schema.sql` |
+| Engine | SQLite (`database/client.py`) |
+| Default DB path | `./.data/career-copilot.sqlite` |
+| Files | `LOCAL_STORAGE_DIR` + bucket names from env |
+| Isolation | Application `user_id` filters + JWT (not Postgres RLS) |
 
-- **File:** `db/schema.sql`  
-- **Apply:** `scripts/setup/migrate-local-db.py` (via `npm run setup` / preflight)
-
-### Major tables (conceptual)
-
-| Group | Tables |
-|-------|--------|
-| Identity | `users`, `profiles` |
-| Profile data | skills, experiences, education, projects, certifications, languages, links, preferences |
-| Resume / JD / ATS | `resumes`, `resume_versions`, `job_descriptions`, `ats_analyses`, `ats_evidence` |
-| Improve | `resume_improvement_runs`, `resume_suggestions`, `resume_exports` |
-| Interview | sessions, questions, responses, reports |
-| Jobs / learning | `jobs`, `saved_jobs`, learning_* |
-| Ops | activity_events, notification/privacy prefs |
-
-### Storage buckets (env)
-
-| Bucket env | Typical contents |
-|------------|------------------|
-| `DOCUMENT_BUCKET` | Resumes, JDs, exports |
-| `AVATAR_BUCKET` | Profile pictures (≤ 3 MB default) |
-| `INTERVIEW_BUCKET` | Interview media |
-
-Paths are user-prefixed (`{user_id}/...`) and served only with auth.
-
-### Database alternatives
-
-| Current | Alternatives | Why we stay SQLite |
-|---------|--------------|--------------------|
-| SQLite file | Postgres + SQLAlchemy | Simpler local install; single file |
-| Fluent client | ORM | Less migration surface for this app size |
+Main table groups: `users`/`profiles`, candidate_* profile tables, `resumes`/`resume_versions`, `job_descriptions`, `ats_analyses`/`ats_evidence`, improvement tables, interview_*, learning_*, `jobs`/`saved_jobs`/`job_recommendations`, activity & prefs.
 
 ---
 
-## 13. Environment & setup
+## 13. Setup & environment
 
 ### Prerequisites
 
-1. **Node.js** (LTS) + npm  
-2. **Python 3.11–3.13** (3.12 preferred; **not 3.14+**)  
-3. No separate database server  
-4. Optional: `NVIDIA_API_KEY`, `GROQ_API_KEY`
+- Node.js (LTS) + npm
+- Python **3.11–3.13** (prefer 3.12; **not 3.14+**)
+- No separate database server
+- Optional NVIDIA and/or Groq API keys
 
-### Install & run
+### Run
 
 ```powershell
 cd "D:\CDAC PROJECT\career-copilot_v1"
 copy .env.example .env
-# Edit AUTH_SECRET and optional API keys
+# Set AUTH_SECRET; add API keys if you want AI paths
 
 npm run setup
 npm run dev
@@ -637,29 +512,23 @@ npm run dev
 | API | http://127.0.0.1:8000 |
 | OpenAPI | http://127.0.0.1:8000/docs |
 
-Separate services: `npm run dev:frontend`, `npm run dev:backend`.
-
-Python override:
-
 ```powershell
-$env:CAREER_COPILOT_PYTHON = "C:\Path\To\Python312\python.exe"
-$env:CAREER_COPILOT_RECREATE_VENV = "1"
-npm run setup
+npm run dev:frontend
+npm run dev:backend
+npm run db:setup
 ```
 
-### Complete `.env.example` (annotated)
+### `.env.example` (all keys used)
 
 ```env
-# Frontend / API
-NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000   # Browser / proxy target
-PUBLIC_API_BASE_URL=http://127.0.0.1:8000        # Server-side Next → API
+NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
+PUBLIC_API_BASE_URL=http://127.0.0.1:8000
 FRONTEND_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
 APP_NAME=Career Copilot API
-APP_ENV=development                              # production disables /docs
+APP_ENV=development
 API_V1_PREFIX=/api/v1
 LOG_LEVEL=INFO
 
-# Local persistence
 DATABASE_PATH=./.data/career-copilot.sqlite
 LOCAL_STORAGE_DIR=./.data/storage
 AUTH_SECRET=replace-with-a-long-random-local-secret
@@ -667,16 +536,13 @@ DOCUMENT_BUCKET=candidate-documents
 AVATAR_BUCKET=candidate-avatars
 INTERVIEW_BUCKET=interview-media
 
-# Limits
 DOCUMENT_MAX_BYTES=10485760
 AVATAR_MAX_BYTES=3145728
 INTERVIEW_MEDIA_MAX_BYTES=262144000
 EXPORT_SIGNED_URL_SECONDS=300
 
-# ATS structured scoring provider: groq | nvidia
 LLM_PROVIDER=groq
 
-# NVIDIA (server-only)
 NVIDIA_API_KEY=
 NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1
 NVIDIA_MODEL=deepseek-3.2
@@ -686,7 +552,6 @@ NVIDIA_MAX_OUTPUT_TOKENS=4096
 NVIDIA_TEMPERATURE=0.2
 NVIDIA_PROMPT_VERSION=resume-improvement-v1
 
-# Groq (server-only)
 GROQ_API_KEY=
 GROQ_BASE_URL=https://api.groq.com/openai/v1
 GROQ_MODEL=llama-3.3-70b-versatile
@@ -695,12 +560,10 @@ GROQ_MAX_RETRIES=2
 GROQ_MAX_OUTPUT_TOKENS=2048
 GROQ_TEMPERATURE=0.4
 
-# Resume improvement caps
 IMPROVEMENT_MAX_SECTIONS=4
 IMPROVEMENT_MAX_SOURCE_CHARS=30000
 IMPROVEMENT_MAX_JD_CHARS=12000
 
-# Installer / audit
 # CAREER_COPILOT_PYTHON=C:\Path\To\Python312\python.exe
 CAREER_COPILOT_RECREATE_VENV=0
 CAREER_COPILOT_AUDIT_BASE=http://127.0.0.1:18004
@@ -708,29 +571,7 @@ CAREER_COPILOT_AUDIT_BASE=http://127.0.0.1:18004
 
 Loaded by `backend/app/core/config.py` and `scripts/shared/load-env.mjs`.
 
----
-
-## 14. Scripts & verification
-
-| Command | Purpose | Entry |
-|---------|---------|--------|
-| `npm run setup` | Frontend ci + backend venv + DB | `scripts/setup/project.mjs` |
-| `npm run dev` | Preflight + API + Next | `scripts/dev/*` |
-| `npm run db:setup` | Schema + DB check | preflight |
-| `npm run check:env` | Env presence | `diagnostics/verify-environment.mjs` |
-| `npm run check:secrets` | Secret scan | `diagnostics/check-secrets.mjs` |
-| `npm run check:boundaries` | Import boundaries | `scripts/verify-boundaries.mjs` |
-| `npm run lint` / `typecheck` / `build:frontend` | Frontend quality | `scripts/run-frontend.mjs` |
-| `npm run test:backend` | pytest | `backend/tests` |
-
-**Agent readiness at runtime:**
-
-```text
-GET /api/v1/health
-GET /api/v1/agents/status
-```
-
-Optional backend extras:
+Optional:
 
 ```powershell
 cd backend
@@ -741,61 +582,97 @@ pip install -e ".[crewai]"
 
 ---
 
-## 15. Design decisions & alternatives
+## 14. Scripts & verification
 
-| Area | We use | Why | Credible alternatives |
-|------|--------|-----|------------------------|
-| Auth | Local JWT + password hash | Offline, simple | Auth0, Clerk, Supabase Auth |
-| DB | SQLite + custom client | Zero ops | Postgres + SQLAlchemy/Prisma |
-| ATS core | Deterministic keywords | Explainable evidence | Phrase/synonym rules; commercial ATS API |
-| ATS optional | Structured CrewAI score | Multi-parameter + gate | Pure LLM JSON without CrewAI |
-| Semantic ATS | **Not used** | Honesty / audit | Embeddings + cosine (search use cases only) |
-| Resume AI | Sequential crew + validator | Less hallucination | Single prompt; human-only |
-| Profile fill | Rules + NVIDIA merge | Always a draft | Forms only |
-| Interview | Groq or templates | Fast + offline | Static banks only |
-| Fonts | Source Sans/Serif/Code | Classic premium UI | Inter, Geist, commercial brands |
-| Branding | Text name | No logo asset | SVG mark if product needs it |
-| State | Server DB | Truthful multi-device path | localStorage as sole store (**rejected**) |
+| Command | Purpose |
+|---------|---------|
+| `npm run setup` | Frontend install + backend venv + schema |
+| `npm run dev` | Preflight + API + Next |
+| `npm run check:env` | Env presence |
+| `npm run check:secrets` | Secret scan |
+| `npm run check:boundaries` | Import boundaries |
+| `npm run lint` / `typecheck` / `build:frontend` | Frontend quality |
+| `npm run check:frontend` | lint + typecheck + vitest + production build |
+| `npm run test:backend` | `backend/tests` (pytest) |
+| `npm --prefix frontend test` | Vitest unit tests (jsdom) |
+| `npm --prefix frontend run e2e` | Playwright E2E (requires server or webServer) |
+| `npm --prefix frontend run validate:landing` | Chromium smoke for landing acceptance |
 
-### Improving ATS further (recommended direction, not all implemented)
+Runtime checks:
 
-1. Multi-word phrases + synonym map (still deterministic)  
-2. Section-aware evidence on every hit  
-3. Richer brief context + post-validate LLM prose  
-4. Required vs preferred weighting  
-5. Stronger parsing (Docling + headers)  
-
-See product discussions: precision without switching the core score to embeddings.
+```text
+GET /api/v1/health
+GET /api/v1/agents/status
+GET /api/v1/health/database
+```
 
 ---
 
-## 16. Explicit non-goals
+## 15. Design choices & alternatives
 
-| Not a goal | Reality |
-|------------|---------|
-| Logo image brand kit | Text-only brand |
-| Embedding / cosine ATS | Keyword + optional structured score |
-| AI interview grading | Questions only |
-| Invented resume experience | Validators + confirm gates |
-| Browser AI keys | Server-only |
-| Hosted multi-tenant cloud DB | Local SQLite |
-| Email delivery in local auth | Stubs |
-| Profile points for resume upload | Checklist is profile fields only |
-| Python 3.14 support | Pin `>=3.11,<3.14` |
+| Choice | Why | Alternative if redesigning |
+|--------|-----|----------------------------|
+| Local SQLite | Zero DB ops for local/demo | Postgres + ORM |
+| JWT local auth | Offline multi-user | Clerk / Auth0 / Supabase Auth |
+| Phrase coverage ATS | Explainable, alias-aware, offline | Pure LLM score only; embeddings (not for audit keyword truth) |
+| Dual ATS (rules + optional structured) | Works when CrewAI/LLM fails | Single path only |
+| No in-app resume editor | Product scope reduced; re-upload loop | Restore edit UI + manual-edit API |
+| NVIDIA vs Groq split | Task isolation | Single provider |
+| Evidence-only learning/jobs | No invented resources/jobs | Free-form LLM recommendations |
+| Text brand + classic fonts | Clear, professional UI | Logo asset + other typefaces |
 
 ---
 
-## 17. Package identity
+## 16. Testing
+
+| Suite | Command | Scope |
+|-------|---------|--------|
+| Backend unit | `npm run test:backend` | ATS scoring, interview prep, avatar storage (`backend/tests/`) |
+| Frontend unit | `npm --prefix frontend test` | Theme, globe lifecycle, ticker, parallax, landing a11y, globe fallbacks |
+| Frontend quality gate | `npm run check:frontend` | ESLint + `tsc` + Vitest + `next build` |
+| Landing E2E | `npm --prefix frontend run e2e:landing` | Multi-viewport, theme, labels, mobile nav |
+| Env / secrets / boundaries | `npm run check:env`, `check:secrets`, `check:boundaries` | Config integrity |
+
+**Notes**
+
+- Vitest only collects `frontend/src/**/*.{test,spec}.{ts,tsx}` (Playwright lives under `frontend/e2e/`).
+- Demo mode is a **client cookie** path (`career_copilot_demo=1`) with offline fixtures in `frontend/src/features/auth/demo-session.ts` — not production data.
+- Local SQLite + uploads under `.data/` are **gitignored** and must not be committed.
+
+---
+
+## 17. Folder ownership rules
+
+Restructuring keeps public URLs, FastAPI paths, contracts, auth, and storage configuration stable.
+
+| Area | Owns | Must not own |
+|------|------|--------------|
+| `frontend/src/app` | Routes, layouts, proxies, global CSS | Domain business UI (prefer `features/`) |
+| `frontend/src/features/*` | Domain UI modules (auth, resume, jobs, …) | Direct server secrets |
+| `frontend/src/shared` | API client, config/theme, routes, primitives | Feature-specific screens |
+| `backend/app/api` | Shared schemas + large compatibility router | Feature-private persistence details (prefer features) |
+| `backend/app/features/*` | Feature logic, agents, validation | Cross-cutting config (use `core/`) |
+| `backend/app/agents` | Providers, prompt files, registry | Feature product UI |
+| `backend/app/database` | SQLite client, ownership helpers, activity | Provider HTTP |
+| `scripts/` | Setup, dev orchestration, diagnostics | Application runtime imports |
+| Root `.env` | Deploy/runtime secrets & ports | Committed secrets (use `.env.example` only) |
+
+**Adding a feature:** smallest package under `backend/app/features` + UI under `frontend/src/features`; register routes without changing public paths; add focused tests first.
+**Limitation:** `backend/app/api/router.py` remains the large cross-feature composition surface; future splits should be feature-by-feature with route-manifest comparison.
+
+---
+
+## Package identity
 
 | Package | Version | Role |
 |---------|---------|------|
 | `career-copilot` (root npm) | 1.0.0 | Orchestration scripts |
-| `career-copilot` (`frontend/` npm) | 1.0.0 | Next.js UI |
-| `career-copilot-api` (Python) | 1.0.0 | FastAPI under `backend/app` |
+| `career-copilot` (`frontend/`) | 1.0.0 | Next.js UI |
+| `career-copilot-api` (Python) | 1.0.0 | FastAPI backend |
 
 ---
 
-## Quick start (minimal)
+## Quick start
 
 ```powershell
 copy .env.example .env
@@ -803,10 +680,15 @@ npm run setup
 npm run dev
 ```
 
-Open http://localhost:3000 → sign up → complete profile → upload resume → confirm → add JD → run ATS → edit/improve → practice interview.
+1. Open http://localhost:3000 and sign up
+2. Complete profile (optional: fill from resume)
+3. Upload & confirm resume + JD
+4. Run ATS and read the report
+5. Re-upload if you change the resume; re-score
+6. Practice interview; generate learning path; browse jobs
 
-**Live agent inventory:** `GET http://127.0.0.1:8000/api/v1/agents/status`
+**Agents live inventory:** `GET http://127.0.0.1:8000/api/v1/agents/status`
 
 ---
 
-*This README is aligned with the current monorepo: feature packages under `backend/app/features`, providers under `backend/app/agents`, Next app under `frontend/`, local SQLite, NVIDIA `deepseek-3.2`, Groq `llama-3.3-70b-versatile`, Source Sans/Serif/Code typography, and no brand logo assets. Additional architecture notes: `docs/architecture.md`.*
+*This README is written from the current codebase only: feature packages under `backend/app/features`, no in-app resume editor, ATS phrase coverage v2 + structured LLM gate, career matching for learning/jobs, NVIDIA `deepseek-3.2`, Groq `llama-3.3-70b-versatile`, Source Sans/Serif/Code typography. Prefer `/agents/status` and `/health` at runtime over assumptions about API keys.*

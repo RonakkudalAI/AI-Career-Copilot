@@ -1,5 +1,7 @@
 /* Demo data mirrors loosely typed API payloads without changing production contracts. */
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import { isDemoCookiePresent } from "@/shared/config";
+
 type DemoRecord = Record<string, any>;
 
 type DemoState = {
@@ -106,7 +108,7 @@ function initialState(): DemoState {
 let state = initialState();
 
 export function isDemoSession() {
-  return typeof document !== "undefined" && document.cookie.split("; ").includes("career_copilot_demo=1");
+  return isDemoCookiePresent();
 }
 
 function jsonBody(init: RequestInit) {
@@ -293,20 +295,31 @@ export async function demoApiRequest<T>(path: string, init: RequestInit = {}): P
     state.analyses = state.analyses.filter((item) => item.id !== parts[1]);
     return undefined as T;
   }
-  if (parts[0] === "resume-improvements" && parts[1] === "capabilities") {
-    return { enabled: false, provider: null, message: "Demo preview uses local resume editing only." } as T;
+
+  if (path === "/interview-preparation" && method === "POST") {
+    const resume = state.resumeVersions.find((item) => item.id === body.resume_version_id);
+    const job = state.jobDescriptions.find((item) => item.id === body.job_description_id);
+    if (!resume || !job || resume.extraction_status !== "confirmed" || job.extraction_status !== "confirmed") {
+      throw new Error("Confirm both the demo resume and job description before preparing for an interview.");
+    }
+    const matched = ["Python", "TypeScript"];
+    const missing = ["Docker"];
+    return {
+      resume_version_id: resume.id,
+      job_description_id: job.id,
+      target_role: job.role_title || job.title || "Software Engineer",
+      resume_questions: [{ question: "Explain a documented technical decision from your resume.", skill: "Python", difficulty: "medium", source: "candidate_context" }],
+      project_questions: [],
+      technical_questions: [{ question: "How would you design and test a reliable API boundary?", skill: "TypeScript", difficulty: "medium", source: "question_bank" }],
+      jd_questions: [{ question: "How would you use Docker to package and run this service?", skill: "Docker", difficulty: "medium", source: "question_bank" }],
+      missing_skill_questions: [{ question: "Describe how you would build a small Docker image and validate it locally.", skill: "Docker", difficulty: "easy", source: "question_bank" }],
+      coding_questions: [{ question: "Write a small Python solution and explain its edge cases and complexity.", skill: "Python", difficulty: "easy", source: "candidate_context" }],
+      hr_questions: [{ question: "Tell me about yourself and connect your documented experience to this role.", skill: null, difficulty: "easy", source: "candidate_context" }],
+      study_topics: [{ topic: "Docker", priority: "high", reason: "Demo focus area: not found in the demo resume evidence." }],
+      interview_readiness: { score: 78, ats_score: 78, matched_skills: matched, missing_skills: missing, summary: "Demo preparation uses the demo ATS evidence.", source_analysis_id: state.analyses[0]?.id || null },
+    } as T;
   }
-  if (parts[0] === "resume-versions" && parts[2] === "manual-edit" && method === "POST") {
-    const version = state.resumeVersions.find((item) => item.id === parts[1]);
-    if (version) version.structured_content = body.structured_content || version.structured_content;
-    return { ...(version || {}), resume_version: version } as T;
-  }
-  if (parts[0] === "resume-versions" && parts[2] === "exports" && method === "POST") {
-    return { id: id("demo-export") } as T;
-  }
-  if (parts[0] === "resume-exports" && parts[2] === "download" && method === "GET") {
-    return { download_url: "data:text/html;charset=utf-8,%3Ch1%3EDemo%20resume%20preview%3C%2Fh1%3E%3Cp%3EThis%20preview%20is%20local%20only.%3C%2Fp%3E" } as T;
-  }
+
   if (path === "/interviews" && method === "GET") return state.interviews as T;
   if (path === "/interviews" && method === "POST") {
     const session = { ...body, id: id("demo-interview"), user_id: DEMO_USER_ID, status: "draft", created_at: now() };
@@ -345,7 +358,70 @@ export async function demoApiRequest<T>(path: string, init: RequestInit = {}): P
     return state.savedJobs.find((item) => item.job_id === parts[1]) as T;
   }
   if (path === "/learning-paths" && method === "GET") return state.learningPaths as T;
-  if (parts[0] === "learning-paths" && parts.length === 2 && method === "GET") return state.learningPaths.find((item) => item.id === parts[1]) as T;
+  if (path === "/learning-paths/generate" && method === "POST") {
+    const pathId = id("demo-path");
+    const itemId = id("demo-item");
+    const resourceId = id("demo-resource");
+    const path = {
+      id: pathId,
+      user_id: DEMO_USER_ID,
+      title: "YouTube learning path · Demo ATS gaps",
+      description:
+        "Demo path grounded in illustrative ATS gaps with free YouTube search links (no invented video IDs).",
+      source_type: "ats_analysis",
+      status: "active",
+      progress_percentage: 0,
+      created_at: now(),
+      items: [
+        {
+          id: itemId,
+          title: "Learn Docker with guided YouTube practice",
+          objective: "Study Docker using free YouTube tutorials, then practise a small container workflow.",
+          status: "pending",
+          estimated_minutes: 60,
+          difficulty: "foundational",
+          learning_resources: [
+            {
+              id: resourceId,
+              title: "Docker Tutorial for Beginners — Demo",
+              resource_type: "youtube_video",
+              provider: "freeCodeCamp.org",
+              url: "https://www.youtube.com/watch?v=fqMOX6JJhGo",
+              reason_recommended: "Demo exact YouTube video for an illustrative ATS gap (not live API).",
+              metadata: {
+                video_id: "fqMOX6JJhGo",
+                channel_title: "freeCodeCamp.org",
+                source: "demo",
+                video_id_policy: "demo_known_public_video",
+              },
+            },
+          ],
+        },
+      ],
+      algorithm_version: "ats-youtube-api-v1",
+    };
+    state.learningPaths.unshift(path);
+    return path as T;
+  }
+  if (parts[0] === "learning-paths" && parts.length === 2 && method === "GET") {
+    const path = state.learningPaths.find((item) => item.id === parts[1]);
+    return path as T;
+  }
+  if (parts[0] === "learning-paths" && parts.length === 2 && method === "DELETE") {
+    state.learningPaths = state.learningPaths.filter((item) => item.id !== parts[1]);
+    return undefined as T;
+  }
+  if (parts[0] === "learning-paths" && parts[2] === "items" && method === "PATCH") {
+    const path = state.learningPaths.find((item) => item.id === parts[1]);
+    const item = path?.items?.find((row: DemoRecord) => row.id === parts[3]);
+    if (item) {
+      item.status = body.status || item.status;
+      const items = path?.items || [];
+      const done = items.filter((row: DemoRecord) => row.status === "completed").length;
+      if (path) path.progress_percentage = items.length ? Math.round((done / items.length) * 100) : 0;
+      return { ...item, progress_percentage: path?.progress_percentage ?? 0 } as T;
+    }
+  }
   if (parts[0] === "account" && method === "DELETE") {
     state = initialState();
     return undefined as T;

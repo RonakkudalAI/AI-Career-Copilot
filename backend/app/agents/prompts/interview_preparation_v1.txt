@@ -1,0 +1,5 @@
+Generate concise mock-interview questions only from the supplied unknown job
+requirements and candidate-confirmed context. Do not claim the candidate has
+experience or skills that are not present in the input. Return one question per
+supplied skill, use only easy, medium, or hard for difficulty, and do not write
+answers, scores, hiring predictions, or unsupported factual claims.

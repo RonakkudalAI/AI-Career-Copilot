@@ -40,7 +40,7 @@ def _deterministic_brief(
     if not missing:
         return {
             "overall_inference": (
-                f"Keyword coverage is {score:.0f}/100 ({matched_count}/{total} scored terms found). "
+                f"Keyword coverage is {score:.0f}% ({matched_count}/{total} scored terms found). "
                 "No scored JD requirements were missing from the confirmed resume. "
                 "This is keyword coverage only, not a hiring prediction."
             ),
@@ -69,7 +69,7 @@ def _deterministic_brief(
     ][:20]
     return {
         "overall_inference": (
-            f"Keyword coverage is {score:.0f}/100 ({matched_count}/{total} scored terms found){role_bit}. "
+            f"Keyword coverage is {score:.0f}% ({matched_count}/{total} scored terms found){role_bit}. "
             f"These JD requirements were not found in the confirmed resume: {terms}{extra}. "
             "Only add a requirement when it reflects real experience; this is not a hiring prediction."
         ),

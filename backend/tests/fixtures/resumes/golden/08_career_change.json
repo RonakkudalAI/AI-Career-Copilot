@@ -1,0 +1,286 @@
+{
+  "fixture_meta": {
+    "fixture_id": 8,
+    "fixture_slug": "08_career_change",
+    "filename": "08_career_change.pdf",
+    "expected_status": "SUCCESS"
+  },
+  "contact": {
+    "full_name": {
+      "value": "Jordan Lee",
+      "evidence_block_ids": [
+        "page-1-block-01"
+      ],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "email": {
+      "value": "jordan.lee@email.com",
+      "evidence_block_ids": [
+        "page-1-block-02"
+      ],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "phone": {
+      "value": null,
+      "evidence_block_ids": [],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "location": {
+      "value": "New York, NY",
+      "evidence_block_ids": [
+        "page-1-block-02"
+      ],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "linkedin": {
+      "value": null,
+      "evidence_block_ids": [],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "github": {
+      "value": null,
+      "evidence_block_ids": [],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "portfolio": {
+      "value": null,
+      "evidence_block_ids": [],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "other_links": []
+  },
+  "professional_summary": {
+    "value": "Former Financial Analyst transitioning into Software Engineering.",
+    "evidence_block_ids": [
+      "page-1-block-05"
+    ],
+    "confidence": "HIGH",
+    "warning": null
+  },
+  "target_role": {
+    "value": "Full Stack Developer",
+    "evidence_block_ids": [
+      "page-1-block-02"
+    ],
+    "confidence": "HIGH",
+    "warning": null
+  },
+  "skills": [
+    {
+      "name": {
+        "value": "Python",
+        "evidence_block_ids": [
+          "page-1-block-07"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "category": {
+        "value": null,
+        "evidence_block_ids": [],
+        "confidence": "HIGH",
+        "warning": null
+      }
+    }
+  ],
+  "experience": [
+    {
+      "employer": {
+        "value": "WallStreet Capital",
+        "evidence_block_ids": [
+          "page-1-block-13"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "role": {
+        "value": "Senior Financial Analyst",
+        "evidence_block_ids": [
+          "page-1-block-13"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "location": {
+        "value": null,
+        "evidence_block_ids": [],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "start_date": {
+        "value": "2018",
+        "evidence_block_ids": [
+          "page-1-block-13"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "end_date": {
+        "value": "2023",
+        "evidence_block_ids": [
+          "page-1-block-13"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "is_current": {
+        "value": false,
+        "evidence_block_ids": [
+          "page-1-block-13"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "responsibilities": [
+        {
+          "value": "Built automated Python financial reporting scripts, cutting monthly close time by 40 hours.",
+          "evidence_block_ids": [
+            "page-1-block-14"
+          ],
+          "confidence": "HIGH",
+          "warning": null
+        }
+      ],
+      "technologies": [
+        {
+          "value": "Python",
+          "evidence_block_ids": [
+            "page-1-block-14"
+          ],
+          "confidence": "HIGH",
+          "warning": null
+        }
+      ]
+    }
+  ],
+  "projects": [
+    {
+      "name": {
+        "value": "Portfolio Analytics Dashboard",
+        "evidence_block_ids": [
+          "page-1-block-10"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "project_type": {
+        "value": null,
+        "evidence_block_ids": [],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "description": {
+        "value": "Built React frontend with Recharts visualization and Python FastAPI backend.",
+        "evidence_block_ids": [
+          "page-1-block-11"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "role": {
+        "value": null,
+        "evidence_block_ids": [],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "technologies": [
+        {
+          "value": "React",
+          "evidence_block_ids": [
+            "page-1-block-11"
+          ],
+          "confidence": "HIGH",
+          "warning": null
+        },
+        {
+          "value": "FastAPI",
+          "evidence_block_ids": [
+            "page-1-block-11"
+          ],
+          "confidence": "HIGH",
+          "warning": null
+        }
+      ],
+      "responsibilities": [],
+      "outcomes": [],
+      "links": [],
+      "evidence_block_ids": [
+        "page-1-block-11"
+      ]
+    }
+  ],
+  "education": [
+    {
+      "institution": {
+        "value": "NYU Stern School of Business",
+        "evidence_block_ids": [
+          "page-1-block-17"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "degree": {
+        "value": "B.S. in Finance",
+        "evidence_block_ids": [
+          "page-1-block-17"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "field_of_study": {
+        "value": "Finance",
+        "evidence_block_ids": [
+          "page-1-block-17"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "start_date": {
+        "value": "2014",
+        "evidence_block_ids": [
+          "page-1-block-17"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "end_date": {
+        "value": "2018",
+        "evidence_block_ids": [
+          "page-1-block-17"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "grade": {
+        "value": null,
+        "evidence_block_ids": [],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "location": {
+        "value": null,
+        "evidence_block_ids": [],
+        "confidence": "HIGH",
+        "warning": null
+      }
+    }
+  ],
+  "certifications": [],
+  "licences": [],
+  "achievements": [],
+  "publications": [],
+  "languages": [],
+  "volunteer_experience": [],
+  "training": [],
+  "links": [],
+  "additional_sections": [],
+  "warnings": [],
+  "unclassified_blocks": []
+}

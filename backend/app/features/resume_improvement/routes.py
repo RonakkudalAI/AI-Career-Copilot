@@ -12,13 +12,11 @@ from app.features.resume_management.improvements import (
     apply_suggestions,
     capabilities,
     compare_versions,
-    create_manual_version,
     decide_suggestion,
     generate_improvements,
 )
 from app.api.schemas import (
     ApplyImprovementBody,
-    ManualResumeVersionCreate,
     ResumeExportCreate,
     ResumeImprovementCreate,
     ResumeSuggestionDecision,
@@ -95,23 +93,6 @@ def compare_resume_versions(
     settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
     return compare_versions(client_for(settings, user), user, str(source_version_id), str(target_version_id))
-
-
-@router.post("/resume-versions/{version_id}/manual-edit", status_code=201)
-def create_candidate_edited_version(
-    version_id: UUID,
-    payload: ManualResumeVersionCreate,
-    user: CurrentUser = Depends(get_current_user),
-    settings: Settings = Depends(get_settings),
-) -> dict[str, Any]:
-    return create_manual_version(
-        client_for(settings, user),
-        settings,
-        user,
-        str(version_id),
-        payload.structured_content,
-        apply_mode=payload.apply_mode,
-    )
 
 
 @router.post("/resume-versions/{version_id}/exports", status_code=201)

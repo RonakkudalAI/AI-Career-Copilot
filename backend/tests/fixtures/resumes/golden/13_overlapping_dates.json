@@ -1,0 +1,205 @@
+{
+  "fixture_meta": {
+    "fixture_id": 13,
+    "fixture_slug": "13_overlapping_dates",
+    "filename": "13_overlapping_dates.pdf",
+    "expected_status": "SUCCESS"
+  },
+  "contact": {
+    "full_name": {
+      "value": "Taylor Morgan",
+      "evidence_block_ids": [
+        "page-1-block-01"
+      ],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "email": {
+      "value": "taylor.morgan@email.com",
+      "evidence_block_ids": [
+        "page-1-block-02"
+      ],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "phone": {
+      "value": null,
+      "evidence_block_ids": [],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "location": {
+      "value": "Denver, CO",
+      "evidence_block_ids": [
+        "page-1-block-02"
+      ],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "linkedin": {
+      "value": null,
+      "evidence_block_ids": [],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "github": {
+      "value": null,
+      "evidence_block_ids": [],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "portfolio": {
+      "value": null,
+      "evidence_block_ids": [],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "other_links": []
+  },
+  "professional_summary": {
+    "value": null,
+    "evidence_block_ids": [],
+    "confidence": "HIGH",
+    "warning": null
+  },
+  "target_role": {
+    "value": "Full Stack Engineer & Tech Advisor",
+    "evidence_block_ids": [
+      "page-1-block-02"
+    ],
+    "confidence": "HIGH",
+    "warning": null
+  },
+  "skills": [],
+  "experience": [
+    {
+      "employer": {
+        "value": "Apex Innovations",
+        "evidence_block_ids": [
+          "page-1-block-05"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "role": {
+        "value": "Full Stack Lead Engineer",
+        "evidence_block_ids": [
+          "page-1-block-05"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "location": {
+        "value": null,
+        "evidence_block_ids": [],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "start_date": {
+        "value": "2021-01",
+        "evidence_block_ids": [
+          "page-1-block-05"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "end_date": {
+        "value": null,
+        "evidence_block_ids": [],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "is_current": {
+        "value": true,
+        "evidence_block_ids": [
+          "page-1-block-05"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "responsibilities": [
+        {
+          "value": "Leading full stack development team building SaaS platform.",
+          "evidence_block_ids": [
+            "page-1-block-06"
+          ],
+          "confidence": "HIGH",
+          "warning": null
+        }
+      ],
+      "technologies": []
+    },
+    {
+      "employer": {
+        "value": "Startup Accelerator Project",
+        "evidence_block_ids": [
+          "page-1-block-07"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "role": {
+        "value": "Technical Co-Founder & Advisor",
+        "evidence_block_ids": [
+          "page-1-block-07"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "location": {
+        "value": null,
+        "evidence_block_ids": [],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "start_date": {
+        "value": "2021-03",
+        "evidence_block_ids": [
+          "page-1-block-07"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "end_date": {
+        "value": "2022-12",
+        "evidence_block_ids": [
+          "page-1-block-07"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "is_current": {
+        "value": false,
+        "evidence_block_ids": [
+          "page-1-block-07"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "responsibilities": [
+        {
+          "value": "Concurrent co-founder role building MVP web app.",
+          "evidence_block_ids": [
+            "page-1-block-08"
+          ],
+          "confidence": "HIGH",
+          "warning": null
+        }
+      ],
+      "technologies": []
+    }
+  ],
+  "projects": [],
+  "education": [],
+  "certifications": [],
+  "licences": [],
+  "achievements": [],
+  "publications": [],
+  "languages": [],
+  "volunteer_experience": [],
+  "training": [],
+  "links": [],
+  "additional_sections": [],
+  "warnings": [],
+  "unclassified_blocks": []
+}

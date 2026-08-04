@@ -1,0 +1,205 @@
+{
+  "fixture_meta": {
+    "fixture_id": 5,
+    "fixture_slug": "05_long_multipage",
+    "filename": "05_long_multipage.pdf",
+    "expected_status": "SUCCESS"
+  },
+  "contact": {
+    "full_name": {
+      "value": "Dr. Arthur Pendelton",
+      "evidence_block_ids": [
+        "page-1-block-01"
+      ],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "email": {
+      "value": "arthur.pendelton@executive.org",
+      "evidence_block_ids": [
+        "page-1-block-02"
+      ],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "phone": {
+      "value": "(555) 999-0001",
+      "evidence_block_ids": [
+        "page-1-block-02"
+      ],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "location": {
+      "value": "New York, NY",
+      "evidence_block_ids": [
+        "page-1-block-02"
+      ],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "linkedin": {
+      "value": null,
+      "evidence_block_ids": [],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "github": {
+      "value": null,
+      "evidence_block_ids": [],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "portfolio": {
+      "value": null,
+      "evidence_block_ids": [],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "other_links": []
+  },
+  "professional_summary": {
+    "value": "Global Engineering Executive with 20+ years of leadership scaling engineering organizations.",
+    "evidence_block_ids": [
+      "page-1-block-05"
+    ],
+    "confidence": "HIGH",
+    "warning": null
+  },
+  "target_role": {
+    "value": "Vice President of Engineering",
+    "evidence_block_ids": [
+      "page-1-block-02"
+    ],
+    "confidence": "HIGH",
+    "warning": null
+  },
+  "skills": [],
+  "experience": [
+    {
+      "employer": {
+        "value": "Global Tech Enterprises",
+        "evidence_block_ids": [
+          "page-1-block-07"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "role": {
+        "value": "VP of Engineering",
+        "evidence_block_ids": [
+          "page-1-block-07"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "location": {
+        "value": null,
+        "evidence_block_ids": [],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "start_date": {
+        "value": "2020",
+        "evidence_block_ids": [
+          "page-1-block-07"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "end_date": {
+        "value": null,
+        "evidence_block_ids": [],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "is_current": {
+        "value": true,
+        "evidence_block_ids": [
+          "page-1-block-07"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "responsibilities": [
+        {
+          "value": "Oversaw $80M annual engineering budget and managed 450+ headcount.",
+          "evidence_block_ids": [
+            "page-1-block-08"
+          ],
+          "confidence": "HIGH",
+          "warning": null
+        }
+      ],
+      "technologies": []
+    }
+  ],
+  "projects": [],
+  "education": [
+    {
+      "institution": {
+        "value": "Stanford University",
+        "evidence_block_ids": [
+          "page-3-block-03"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "degree": {
+        "value": "Ph.D. in Computer Engineering",
+        "evidence_block_ids": [
+          "page-3-block-03"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "field_of_study": {
+        "value": "Computer Engineering",
+        "evidence_block_ids": [
+          "page-3-block-03"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "start_date": {
+        "value": "2001",
+        "evidence_block_ids": [
+          "page-3-block-03"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "end_date": {
+        "value": "2005",
+        "evidence_block_ids": [
+          "page-3-block-03"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "grade": {
+        "value": null,
+        "evidence_block_ids": [],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "location": {
+        "value": null,
+        "evidence_block_ids": [],
+        "confidence": "HIGH",
+        "warning": null
+      }
+    }
+  ],
+  "certifications": [],
+  "licences": [],
+  "achievements": [],
+  "publications": [],
+  "languages": [],
+  "volunteer_experience": [],
+  "training": [],
+  "links": [],
+  "additional_sections": [],
+  "warnings": [],
+  "unclassified_blocks": []
+}

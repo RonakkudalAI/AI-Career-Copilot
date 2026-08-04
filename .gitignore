@@ -16,13 +16,15 @@ build/
 coverage/
 frontend/coverage/
 *.tsbuildinfo
+frontend/tsconfig.tsbuildinfo
 
-# Test / tooling artifacts (if reintroduced)
+# Test / tooling artifacts
 test-results/
 frontend/test-results/
 playwright-report/
 frontend/playwright-report/
 .pytest_cache/
+backend/.pytest_cache/
 .ruff_cache/
 .mypy_cache/
 .turbo/
@@ -40,6 +42,8 @@ __pycache__/
 *.egg-info/
 .eggs/
 *.egg
+backend/*.egg-info/
+backend/career_copilot_api.egg-info/
 
 # Env / secrets (never commit)
 .env
@@ -51,13 +55,19 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
-# Local database files and uploaded objects
+# Local database files and uploaded objects (user data)
 .data/
 backend/.data/
 *.sqlite-shm
 *.sqlite-wal
 
+# Local agent/tooling scratch (not product source)
+.agents/
+.codex/
+.grok/
+
 # Editor
 .idea/
 .vscode/
 *.swp
+*~

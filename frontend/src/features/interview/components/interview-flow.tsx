@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Button, Card, PageHeader, Textarea } from "@/shared/ui/primitives";
 import { apiRequest } from "@/shared/api/client";
 
@@ -72,9 +72,14 @@ export function InterviewHome() {
         title="Interview sessions"
         description="Sessions and questions are stored in your account. Practice questions are generated when AI is available."
         action={
-          <Link className="button button-primary" href="/mock-interview/setup">
-            Create session
-          </Link>
+          <div className="cluster">
+            <Link className="button button-secondary" href="/mock-interview/preparation">
+              Prepare first
+            </Link>
+            <Link className="button button-primary" href="/mock-interview/setup">
+              Create session
+            </Link>
+          </div>
         }
       />
       {error && (
@@ -119,8 +124,11 @@ export function InterviewHome() {
 
 export function InterviewSetup() {
   const router = useRouter();
-  const [mode, setMode] = useState("behavioural");
-  const [targetRole, setTargetRole] = useState("");
+  const searchParams = useSearchParams();
+  const resumeVersionId = searchParams.get("resume_version_id") || "";
+  const jobDescriptionId = searchParams.get("job_description_id") || "";
+  const [mode, setMode] = useState(resumeVersionId && jobDescriptionId ? "resume_and_jd" : "behavioural");
+  const [targetRole, setTargetRole] = useState(searchParams.get("target_role") || "");
   const [questionCount, setQuestionCount] = useState(3);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -133,6 +141,8 @@ export function InterviewSetup() {
         method: "POST",
         body: JSON.stringify({
           mode,
+          resume_version_id: resumeVersionId || null,
+          job_description_id: jobDescriptionId || null,
           target_role: targetRole.trim() || null,
           difficulty: "balanced",
           duration_minutes: 15,
@@ -159,6 +169,7 @@ export function InterviewSetup() {
         description="Choose a mode and role. We will generate practice questions for this session and save them to your account."
       />
       <Card className="stack">
+        {resumeVersionId && jobDescriptionId ? <p role="status" className="muted" style={{ margin: 0 }}>This session will use the confirmed resume and job description selected in preparation.</p> : null}
         <label className="field-label">
           Mode
           <select className="field" value={mode} onChange={(e) => setMode(e.target.value)}>

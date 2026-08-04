@@ -10,6 +10,7 @@ import {
   resolveCompletion,
   type ProfileMissingItem,
 } from "@/features/profile/model/profile-completion";
+import { isDemoSession } from "@/features/auth/demo-session";
 
 type Activity = {
   id: string;
@@ -79,7 +80,7 @@ function formatWhen(value?: string | null) {
 }
 
 function readDemoMode() {
-  return typeof document !== "undefined" && document.cookie.split("; ").includes("career_copilot_demo=1");
+  return isDemoSession();
 }
 
 function subscribeDemoMode() {
@@ -210,7 +211,7 @@ export function Dashboard() {
           <p>
             {data?.latest_ats_analysis?.overall_score == null
               ? "Ready for confirmed evidence"
-              : `${data.latest_ats_analysis.overall_score}/100 latest score`}
+              : `${Math.round(Number(data.latest_ats_analysis.overall_score))}% latest score`}
           </p>
         </Card>
         <Card>
@@ -283,7 +284,7 @@ export function Dashboard() {
               <Link href={`/resume-analysis/report/${data.latest_ats_analysis.id}`}>
                 Open latest ATS report
                 {data.latest_ats_analysis.overall_score != null
-                  ? ` (${data.latest_ats_analysis.overall_score}/100)`
+                  ? ` (${Math.round(Number(data.latest_ats_analysis.overall_score))}%)`
                   : ""}
               </Link>
             </p>

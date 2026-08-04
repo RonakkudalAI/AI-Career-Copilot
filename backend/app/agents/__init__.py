@@ -11,7 +11,7 @@ Layout:
 Public entry points:
 from app.agents.providers import NvidiaClient, GroqClient
   from app.features.profile.agent import build_profile_draft_enriched
-  from app.features.mock_interview.agent.interview import generate_interview_questions
+  from app.features.interview.agent import generate_interview_questions
   from app.agents.registry import agents_status
   from app.features.resume_improvement.agents.crew import run_resume_improvement_crew, crew_capability
 """
@@ -47,7 +47,7 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
         "generate_ats_improvement_brief",
     ),
     "generate_interview_questions": (
-        "app.features.mock_interview.agent",
+        "app.features.interview.agent",
         "generate_interview_questions",
     ),
     "list_agents": ("app.agents.registry", "list_agents"),

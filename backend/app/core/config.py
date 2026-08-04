@@ -46,11 +46,24 @@ class Settings(BaseSettings):
     groq_max_retries: int = Field(default=2, ge=0, le=2)
     groq_max_output_tokens: int = Field(default=2048, ge=256, le=8192)
     groq_temperature: float = Field(default=0.4, ge=0, le=1)
+    # Groq Resume Parser Configuration
+    groq_resume_parser_enabled: bool = True
+    groq_resume_parser_model: str = "openai/gpt-oss-120b"
+    groq_resume_parser_fallback_model: str = "llama-3.3-70b-versatile"
+    groq_resume_parser_timeout_seconds: float = Field(default=60.0, gt=0, le=180)
+    groq_resume_parser_max_retries: int = Field(default=2, ge=0, le=5)
+    groq_resume_parser_max_input_tokens: int = Field(default=110000, ge=1000, le=200000)
+    groq_resume_parser_temperature: float = Field(default=0.0, ge=0.0, le=1.0)
     llm_provider: str
     improvement_max_sections: int = Field(default=4, ge=1, le=8)
     improvement_max_source_chars: int = Field(default=30_000, ge=1_000, le=100_000)
     improvement_max_jd_chars: int = Field(default=12_000, ge=1_000, le=50_000)
     export_signed_url_seconds: int = Field(default=300, ge=30, le=3600)
+    # YouTube Data API v3 — exact video recommendations for learning paths (server-only).
+    youtube_api_key: str = ""
+    youtube_api_base_url: str = "https://www.googleapis.com/youtube/v3"
+    youtube_search_max_results: int = Field(default=3, ge=1, le=5)
+    youtube_timeout_seconds: float = Field(default=20.0, gt=0, le=60)
 
     @field_validator("frontend_origins", mode="before")
     @classmethod
@@ -93,6 +106,11 @@ class Settings(BaseSettings):
             raise ValueError("NVIDIA_MODEL is required when NVIDIA_API_KEY is configured")
         if self.groq_api_key and not self.groq_model:
             raise ValueError("GROQ_MODEL is required when GROQ_API_KEY is configured")
+        if self.groq_resume_parser_enabled and self.groq_api_key:
+            if not self.groq_resume_parser_model:
+                raise ValueError("GROQ_RESUME_PARSER_MODEL is required when Groq resume parser is enabled")
+            if not self.groq_resume_parser_fallback_model:
+                raise ValueError("GROQ_RESUME_PARSER_FALLBACK_MODEL is required when Groq resume parser is enabled")
         return self
 
     @property
@@ -106,6 +124,20 @@ class Settings(BaseSettings):
     @property
     def groq_configured(self) -> bool:
         return bool(self.groq_api_key and self.groq_model and self.groq_base_url)
+
+    @property
+    def groq_resume_parser_configured(self) -> bool:
+        return bool(
+            self.groq_api_key
+            and self.groq_resume_parser_enabled
+            and self.groq_resume_parser_model
+            and self.groq_base_url
+        )
+
+    @property
+    def youtube_configured(self) -> bool:
+        return bool(self.youtube_api_key and self.youtube_api_base_url)
+
 
 
 @lru_cache

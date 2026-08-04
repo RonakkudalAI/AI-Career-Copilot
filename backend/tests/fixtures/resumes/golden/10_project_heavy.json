@@ -1,0 +1,154 @@
+{
+  "fixture_meta": {
+    "fixture_id": 10,
+    "fixture_slug": "10_project_heavy",
+    "filename": "10_project_heavy.pdf",
+    "expected_status": "SUCCESS"
+  },
+  "contact": {
+    "full_name": {
+      "value": "David Kim",
+      "evidence_block_ids": [
+        "page-1-block-01"
+      ],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "email": {
+      "value": "david.kim@dev.io",
+      "evidence_block_ids": [
+        "page-1-block-02"
+      ],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "phone": {
+      "value": null,
+      "evidence_block_ids": [],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "location": {
+      "value": null,
+      "evidence_block_ids": [],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "github": {
+      "value": "github.com/dkim-dev",
+      "evidence_block_ids": [
+        "page-1-block-02"
+      ],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "linkedin": {
+      "value": null,
+      "evidence_block_ids": [],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "portfolio": {
+      "value": null,
+      "evidence_block_ids": [],
+      "confidence": "HIGH",
+      "warning": null
+    },
+    "other_links": []
+  },
+  "professional_summary": {
+    "value": null,
+    "evidence_block_ids": [],
+    "confidence": "HIGH",
+    "warning": null
+  },
+  "target_role": {
+    "value": "Open Source Contributor & Software Developer",
+    "evidence_block_ids": [
+      "page-1-block-02"
+    ],
+    "confidence": "HIGH",
+    "warning": null
+  },
+  "skills": [
+    {
+      "name": {
+        "value": "Rust",
+        "evidence_block_ids": [
+          "page-1-block-05"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "category": {
+        "value": null,
+        "evidence_block_ids": [],
+        "confidence": "HIGH",
+        "warning": null
+      }
+    }
+  ],
+  "experience": [],
+  "projects": [
+    {
+      "name": {
+        "value": "FastGraphDB",
+        "evidence_block_ids": [
+          "page-1-block-08"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "project_type": {
+        "value": "Graph Database Engine",
+        "evidence_block_ids": [
+          "page-1-block-08"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "description": {
+        "value": "Rust-based graph storage engine supporting Cypher queries.",
+        "evidence_block_ids": [
+          "page-1-block-09"
+        ],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "role": {
+        "value": null,
+        "evidence_block_ids": [],
+        "confidence": "HIGH",
+        "warning": null
+      },
+      "technologies": [
+        {
+          "value": "Rust",
+          "evidence_block_ids": [
+            "page-1-block-10"
+          ],
+          "confidence": "HIGH",
+          "warning": null
+        }
+      ],
+      "responsibilities": [],
+      "outcomes": [],
+      "links": [],
+      "evidence_block_ids": [
+        "page-1-block-09"
+      ]
+    }
+  ],
+  "education": [],
+  "certifications": [],
+  "licences": [],
+  "achievements": [],
+  "publications": [],
+  "languages": [],
+  "volunteer_experience": [],
+  "training": [],
+  "links": [],
+  "additional_sections": [],
+  "warnings": [],
+  "unclassified_blocks": []
+}
