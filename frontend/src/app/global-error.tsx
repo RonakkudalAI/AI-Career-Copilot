@@ -13,7 +13,7 @@ export default function GlobalError({ reset }: { error: Error & { digest?: strin
         style={{
           margin: 0,
           minHeight: "100vh",
-          fontFamily: '"Source Sans 3", "Segoe UI", system-ui, sans-serif',
+          fontFamily: '"Inter", system-ui, sans-serif',
           background: "#f5faff",
           color: "#102a43",
         }}
@@ -45,7 +45,7 @@ export default function GlobalError({ reset }: { error: Error & { digest?: strin
                 letterSpacing: "0.06em",
                 textTransform: "uppercase",
                 color: "#526b80",
-                fontFamily: '"Source Code Pro", ui-monospace, monospace',
+                fontFamily: '"Inter", system-ui, sans-serif',
               }}
             >
               Application error
@@ -55,7 +55,7 @@ export default function GlobalError({ reset }: { error: Error & { digest?: strin
                 margin: "0 0 12px",
                 fontSize: "1.5rem",
                 lineHeight: 1.2,
-                fontFamily: '"Source Serif 4", Georgia, "Times New Roman", serif',
+                fontFamily: '"Inter", system-ui, sans-serif',
                 fontWeight: 600,
               }}
             >

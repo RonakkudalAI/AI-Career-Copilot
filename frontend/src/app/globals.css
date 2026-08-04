@@ -52,10 +52,11 @@
   --text-page: clamp(1.75rem, 2.6vw, 2.25rem);
   --text-section: clamp(1.25rem, 1.8vw, 1.5rem);
   --text-metric: clamp(1.5rem, 2.4vw, 2rem);
-  /* Premium classic type stack using local system fonts. */
-  --font-ui: "Segoe UI", system-ui, sans-serif;
-  --font-heading: Georgia, "Times New Roman", serif;
-  --font-code: "Cascadia Mono", Consolas, ui-monospace, monospace;
+  /* One consistent premium typeface across the entire product. */
+  --font-family: "Inter", system-ui, sans-serif;
+  --font-ui: var(--font-family);
+  --font-heading: var(--font-family);
+  --font-code: var(--font-family);
 }
 
 * { box-sizing: border-box; }
