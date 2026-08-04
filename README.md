@@ -2,7 +2,7 @@
 
 **Version:** 1.0.0  
 **Type:** Full-stack monorepo — Next.js frontend + FastAPI backend + local SQLite  
-**Repo:** private career workspace for candidates
+**Purpose:** Private local career workspace for candidates
 
 Career Copilot helps candidates manage profiles, parse resumes, score them against job descriptions with **auditable keyword evidence**, prepare for interviews, generate **YouTube learning paths** from ATS gaps, and browse **job recommendations** grounded in confirmed resume evidence.
 
@@ -17,46 +17,44 @@ Career Copilot helps candidates manage profiles, parse resumes, score them again
 1. [What this project does](#1-what-this-project-does)
 2. [What is intentionally not shipped](#2-what-is-intentionally-not-shipped)
 3. [Architecture](#3-architecture)
-4. [Repository layout](#4-repository-layout)
-5. [Tech stack](#5-tech-stack)
-6. [Models & providers](#6-models--providers)
-7. [Agents](#7-agents)
-8. [Feature-by-feature](#8-feature-by-feature)
-9. [ATS scoring (how it works)](#9-ats-scoring-how-it-works)
-10. [Document parsing](#10-document-parsing)
-11. [Learning paths & YouTube](#11-learning-paths--youtube)
-12. [End-to-end user journeys](#12-end-to-end-user-journeys)
-13. [API map](#13-api-map)
-14. [Frontend routes](#14-frontend-routes)
-15. [Database & storage](#15-database--storage)
-16. [Setup & environment](#16-setup--environment)
-17. [Scripts & verification](#17-scripts--verification)
-18. [Testing](#18-testing)
-19. [Design principles](#19-design-principles)
+4. [Authentication (end-to-end)](#4-authentication-end-to-end)
+5. [Repository layout](#5-repository-layout)
+6. [Tech stack](#6-tech-stack)
+7. [Configuration & environment](#7-configuration--environment)
+8. [Models, providers & agents](#8-models-providers--agents)
+9. [Formulas & scoring (all algorithms)](#9-formulas--scoring-all-algorithms)
+10. [Document parsing pipeline](#10-document-parsing-pipeline)
+11. [Feature flows (end-to-end)](#11-feature-flows-end-to-end)
+12. [API map](#12-api-map)
+13. [Frontend routes & request path](#13-frontend-routes--request-path)
+14. [Database & file storage](#14-database--file-storage)
+15. [Setup, run & scripts](#15-setup-run--scripts)
+16. [Testing](#16-testing)
+17. [Design principles](#17-design-principles)
+18. [Quick reference](#18-quick-reference)
 
 ---
 
 ## 1. What this project does
 
-| Capability | UI | Notes |
-|------------|----|--------|
-| Sign up / sign in (email + password) | Yes | Local JWT auth (`AUTH_SECRET`) |
-| Profile, avatar, completion checklist | Yes | Resume upload does **not** inflate completion % |
-| Career preferences | Yes | Roles, locations, work modes, etc. |
-| Resume upload, parse, review, confirm | Yes | PDF (Docling) / DOCX |
-| Job description paste or upload + confirm | Yes | Required for ATS |
-| **ATS keyword coverage score (0–100%)** | Yes | Single scoring module; exact resume quotes as evidence |
-| ATS improvement brief | Yes | From missing keywords; no invented experience |
+| Capability | UI | How it works (summary) |
+|------------|----|------------------------|
+| Sign up / sign in (email + password) | Yes | Local JWT (`AUTH_SECRET`), scrypt password hashes |
+| Profile, avatar, completion checklist | Yes | Deterministic 0–100 checklist; resume upload does **not** raise completion % |
+| Career preferences | Yes | Roles, locations, work modes, employment types, salary, etc. |
+| Resume upload, parse, review, confirm | Yes | PDF via **Docling**; DOCX via python-docx/Docling; section segregation |
+| Job description paste or upload + confirm | Yes | Required before ATS |
+| **ATS keyword coverage score (0–100%)** | Yes | Single product scorer: `ats_score.py` (`evidence-keyword-coverage-v3`) |
+| ATS improvement brief | Yes | LLM or deterministic brief from missing keywords only |
 | Re-upload revised resume and re-score | Yes | Primary improvement loop after ATS |
-| Profile fill from resume (preview → apply) | Yes | Draft until user applies |
-| Mock interview sessions + questions | Yes | Groq or templates; **no AI grading** |
+| Profile fill from resume (preview → apply) | Yes | Draft until user applies; NVIDIA + deterministic merge |
+| Mock interview sessions + questions | Yes | Groq or local templates; **no AI grading of answers** |
 | Interview preparation from resume + JD | Yes | Evidence-grounded question packs |
-| Learning paths from ATS gaps | Yes | Exact YouTube videos via Data API |
-| Delete learning paths | Yes | Frontend + backend cascade delete |
-| Jobs browse / save + recommendations | Yes | Local jobs + keyword match to resume |
-| Account delete, privacy, notifications | Yes | Local wipe of owned data |
-| Demo session (frontend offline demo) | Yes | `demo-session.ts` mocks key APIs |
-| In-app post-ATS resume editor | **No** | Removed |
+| Learning paths from ATS gaps | Yes | Gaps → planner → YouTube Data API exact videos |
+| Delete learning paths / interviews / ATS / account | Yes | Owned data cascade + storage purge on account delete |
+| Jobs browse / save + recommendations | Yes | Local jobs scored against confirmed resume evidence |
+| Demo session (offline frontend mock) | Yes | Cookie `career_copilot_demo=1`; mocks key APIs in browser |
+| In-app post-ATS resume editor | **No** | Removed; re-upload instead |
 | Browser-side AI / YouTube keys | **No** | Server `.env` only |
 
 ---
@@ -65,13 +63,14 @@ Career Copilot helps candidates manage profiles, parse resumes, score them again
 
 | Non-goal | Reality |
 |----------|---------|
-| Invented resume facts or skills | Blocked by design (evidence grounding) |
-| Invented YouTube video IDs | Only YouTube Data API results or search-page fallback |
-| In-app full resume editor after ATS | Removed; re-upload instead |
+| Invented resume facts or skills | Blocked by evidence grounding |
+| Invented YouTube video IDs | Only YouTube Data API results, or a search-page URL fallback |
+| In-app full resume editor after ATS | Removed; re-upload a revised file |
 | AI interview scoring / hiring prediction | Questions + practice only |
-| Embedding / cosine ATS | Not used |
+| Embedding / cosine similarity ATS | Not used in the product path |
 | Hosted multi-tenant cloud DB | Local SQLite file |
-| Working email verify/reset delivery | Stubs return “not configured” for local dev |
+| Working email verify / password-reset delivery | Stubs return “not configured” for local dev |
+| Social OAuth sign-in | Explicitly not configured |
 | Python 3.14+ as primary | `requires-python = ">=3.11,<3.14"` |
 
 ---
@@ -80,66 +79,187 @@ Career Copilot helps candidates manage profiles, parse resumes, score them again
 
 ```text
 Browser (Next.js App Router)
-  frontend/src/app + frontend/src/features
-  Token: localStorage career_copilot_access_token
-         + cookie career_copilot_session
+  frontend/src/app  +  frontend/src/features
+  Token: localStorage key career_copilot_access_token
+         + cookie     career_copilot_session  (same JWT value)
+  Guard: frontend/src/proxy.ts → features/auth/server/proxy.ts
         │
-        ├─► /api/backend/*     Next.js proxy → FastAPI
-        └─► /api/files/*       Next.js proxy → FastAPI file download
+        ├─► /api/backend/*     Next.js BFF proxy → FastAPI /api/v1/*
+        └─► /api/files/*       Next.js BFF proxy → FastAPI file download
                 │
                 ▼
 FastAPI  backend/app/main.py
-  Prefix: /api/v1  (API_V1_PREFIX)
-  Auth: JWT HS256 (AUTH_SECRET) → CurrentUser
+  Prefix: API_V1_PREFIX (default /api/v1)
+  Auth:   JWT HS256 (AUTH_SECRET) → CurrentUser
+  CORS:   FRONTEND_ORIGINS + credentials
         │
         ├─► SQLite     DATABASE_PATH (default ./.data/career-copilot.sqlite)
-        │     backend/app/database/client.py  (Supabase-like query API over SQLite)
+        │     backend/app/database/client.py  (table/select/eq/insert API over SQLite)
         ├─► Files      LOCAL_STORAGE_DIR
         │     buckets: candidate-documents, candidate-avatars, interview-media
-        └─► Optional services (server-only keys)
+        └─► Optional server-only services
               NVIDIA Integrate API  → structured LLM tasks
-              Groq                  → interviews, learning planner, optional parse
+              Groq                  → interviews, learning planner, ATS brief fallback, section extract
               YouTube Data API v3   → exact learning-path videos
-              Docling               → accurate PDF text extraction
+              Docling               → layout-aware PDF text extraction
 ```
 
-### Authenticated request path
+### Request path (authenticated API call)
 
-1. UI: `frontend/src/shared/api/client.ts` → `fetch` + `Authorization: Bearer …`
-2. Proxy: `frontend/src/app/api/backend/[...path]/route.ts` → FastAPI origin
-3. Auth: `backend/app/features/auth/service.py` validates JWT, loads `users` row
-4. Handlers: `backend/app/api/router.py` (+ feature routers) enforce ownership
-5. Optional AI / YouTube: `backend/app/agents/providers/`, `features/learning/youtube_api.py`
-6. Errors: `backend/app/core/errors.py` (`ApiError` with stable codes)
+1. UI calls `apiRequest()` in `frontend/src/shared/api/client.ts`.
+2. Browser base is always `/api/backend` (same-origin BFF; avoids CORS from the page).
+3. Next.js route `frontend/src/app/api/backend/[...path]/route.ts` forwards to  
+   `{PUBLIC_API_BASE_URL|NEXT_PUBLIC_API_BASE_URL}{API_V1_PREFIX}/{path}`.
+4. Request includes `Authorization: Bearer <JWT>` (and cookies via `credentials: "include"`).
+5. FastAPI dependency `get_current_user` validates JWT (header preferred, else session cookie).
+6. Handlers in `backend/app/api/router.py` (and feature routers) enforce **user ownership** of rows.
+7. Errors use `ApiError` (`backend/app/core/errors.py`) with stable codes and `X-Request-ID`.
+
+### Demo mode
+
+If cookie `career_copilot_demo=1` is set, `apiRequest` routes to `demo-session.ts` and never hits FastAPI. Demo data is in-memory only.
 
 ---
 
-## 4. Repository layout
+## 4. Authentication (end-to-end)
+
+**Code:**  
+- Backend: `backend/app/features/auth/service.py`, account wipe in `account_deletion.py`, routes in `api/router.py`  
+- Frontend: `frontend/src/features/auth/api/client.ts`, `auth-screen.tsx`, `server/proxy.ts`
+
+### 4.1 Password storage
+
+| Item | Value |
+|------|--------|
+| Algorithm | **scrypt** |
+| Parameters | `n=2**14`, `r=8`, `p=1` |
+| Salt | 16 random bytes per password |
+| Stored format | `scrypt${salt_hex}${digest_hex}` |
+| Verify | recompute scrypt + `hmac.compare_digest` |
+| Min password length | **6** (`MIN_PASSWORD_LENGTH` in `core/constants.py`) |
+
+### 4.2 JWT access token
+
+| Item | Value |
+|------|--------|
+| Library | PyJWT |
+| Algorithm | **HS256** (`JWT_ALGORITHM`) |
+| Secret | `AUTH_SECRET` (required) |
+| Claims | `sub` = user UUID string, `email` = user email |
+| Expiry | **No exp claim** (local-dev style long-lived token; invalid if user deleted or secret changes) |
 
 ```text
-career-copilot_v1/
-├── README.md                 # this file — project documentation
+create_access_token(user_id, email, settings)
+  → jwt.encode({"sub": str(user_id), "email": email}, AUTH_SECRET, algorithm="HS256")
+```
+
+### 4.3 Sign-up flow
+
+```text
+UI POST /api/backend/auth/sign-up
+  body: { email, password, full_name? }
+        │
+        ▼
+FastAPI POST /api/v1/auth/sign-up
+  1. Normalize email (lower/strip); validate email + password length
+  2. Reject 409 if email already exists
+  3. Insert users row (scrypt hash)
+  4. Insert profiles row (id = user_id)
+  5. Insert default rows: candidate_preferences, notification_preferences, privacy_preferences
+  6. Return { access_token, token_type: "bearer", user: { id, email, full_name } }
+        │
+        ▼
+Frontend saveToken(access_token):
+  - localStorage["career_copilot_access_token"] = token
+  - document.cookie career_copilot_session=<token>; Path=/; SameSite=Lax
+```
+
+### 4.4 Sign-in flow
+
+```text
+UI POST /auth/sign-in { email, password }
+  → lookup users by email
+  → _password_matches (scrypt)
+  → same token payload + saveToken as sign-up
+  → 401 invalid_credentials on failure (no user enumeration beyond generic message)
+```
+
+### 4.5 Session resolution (every protected API call)
+
+```text
+get_current_user:
+  1. If Authorization header present → parse "Bearer <token>"
+  2. Else use cookie career_copilot_session
+  3. jwt.decode(token, AUTH_SECRET, algorithms=["HS256"])
+  4. Load users row by payload.sub
+  5. Return CurrentUser(id, email, access_token, full_name)
+  Failures → 401 authentication_required | invalid_authorization | invalid_access_token | invalid_user_identity
+```
+
+### 4.6 Sign-out
+
+1. Frontend clears `localStorage` token and sets session cookie `Max-Age=0`.
+2. Calls `POST /auth/sign-out` (204); backend also deletes the session cookie on the response.
+
+### 4.7 Password update / email stubs
+
+| Endpoint | Behavior |
+|----------|----------|
+| `POST /auth/update-password` | Authenticated; re-hash with scrypt; min length 6 |
+| `POST /auth/session` | Authenticated; returns current user |
+| `POST /auth/resend` | Stub: email delivery not configured |
+| `POST /auth/reset-password` | Stub: reset email not configured |
+| OAuth | Frontend returns “Social sign-in is not configured” |
+
+### 4.8 Route protection (Next.js)
+
+`frontend/src/features/auth/server/proxy.ts` (wired via `proxy.ts`):
+
+| Condition | Action |
+|-----------|--------|
+| Path under `/dashboard`, `/resume-analysis`, `/mock-interview`, `/learning`, `/jobs`, `/settings`, `/onboarding` **and** no session cookie | Redirect to `/sign-in?next=…` |
+| Logged in on `/sign-in` or `/sign-up` | Redirect to `/dashboard` |
+
+API ownership is still enforced server-side; the proxy only protects pages.
+
+### 4.9 Account deletion
+
+```text
+DELETE /api/v1/account
+  body: { confirmation_phrase, email? }
+  confirmation_phrase must be exactly: DELETE MY ACCOUNT
+  optional email must match account when provided
+  → collect storage paths (resumes, exports, JDs, avatars, interview media)
+  → purge files under LOCAL_STORAGE_DIR
+  → delete users row (cascade removes owned tables per schema)
+```
+
+---
+
+## 5. Repository layout
+
+```text
+career-copilot/
+├── README.md
 ├── package.json              # root scripts (setup, dev, checks)
 ├── .env / .env.example       # single env file for UI + API
-├── db/schema.sql             # SQLite schema (source of truth for tables)
+├── db/schema.sql             # SQLite schema (source of truth)
 ├── scripts/
 │   ├── setup/                # project, backend, local DB migrate
 │   ├── dev/                  # preflight, frontend, backend, run
 │   ├── diagnostics/          # env, secrets, e2e-smoke, DB checks
 │   └── shared/               # load-env, ports
 ├── frontend/                 # Next.js app
-│   ├── package.json
-│   ├── e2e/                  # Playwright (landing)
-│   ├── vitest.config.mts
-│   ├── public/
-│   └── src/
-│       ├── app/              # routes, layouts, proxies, globals.css
-│       ├── features/         # domain UI (auth, resume, interview, …)
-│       ├── components/       # shared UI pieces (e.g. marketing globe)
-│       └── shared/           # api client, config, theme, primitives
+│   ├── e2e/                  # Playwright
+│   ├── src/
+│   │   ├── app/              # routes, layouts, BFF proxies
+│   │   ├── features/         # domain UI
+│   │   ├── components/       # shared visual pieces
+│   │   └── shared/           # api client, config, theme, primitives
+│   └── package.json
 └── backend/                  # career-copilot-api (FastAPI)
     ├── pyproject.toml
-    ├── tests/                # pytest (ATS, parsing, interview, learning, …)
+    ├── tests/
     └── app/
         ├── main.py
         ├── core/             # config, constants, errors
@@ -149,368 +269,704 @@ career-copilot_v1/
         └── features/
             ├── auth/
             ├── profile/
-            ├── document_parsing/   # Docling + section segregation
+            ├── document_parsing/
             ├── resume_management/
-            ├── resume_improvement/ # API/agents (no editor UI)
-            ├── ats/                # ats_score.py = single scoring file
+            ├── resume_improvement/   # API/agents (no editor UI)
+            ├── ats/                  # product scorer + optional LLM crew library
             ├── interview/
-            ├── learning/           # YouTube crew + Data API
-            └── career_matching.py  # job recommendation scoring helpers
+            ├── learning/
+            └── career_matching.py
 ```
 
 ---
 
-## 5. Tech stack
+## 6. Tech stack
 
 | Layer | Technology | Location |
 |-------|------------|----------|
-| UI | Next.js (App Router), React, TypeScript | `frontend/` |
+| UI | Next.js App Router, React, TypeScript | `frontend/` |
 | Styling | CSS variables + Tailwind postcss | `frontend/src/app/globals.css` |
-| Motion / 3D (marketing & jobs) | motion, three, @react-three/*, cobe | landing, globe |
-| Icons | lucide-react | UI |
+| Motion / 3D | motion, three, @react-three/*, cobe | marketing, jobs globe |
 | API | FastAPI, Uvicorn, Pydantic v2 | `backend/` |
-| Auth | PyJWT (HS256), local password hash | `features/auth` |
-| DB | SQLite (custom query client) | `database/client.py` |
-| Docs | pypdf, python-docx, **Docling** (PDF accuracy) | `document_parsing` |
+| Auth | PyJWT HS256, scrypt passwords | `features/auth`, `api/router` |
+| DB | SQLite + custom query client | `database/client.py` |
+| Docs | **Docling** (PDF), python-docx, pypdf available | `document_parsing` |
 | Export | reportlab, python-docx | resume exports |
-| HTTP / LLM | httpx, OpenAI-compatible chat clients | NVIDIA, Groq |
+| HTTP / LLM | httpx, OpenAI-compatible clients | NVIDIA, Groq |
 | YouTube | YouTube Data API v3 | `learning/youtube_api.py` |
-| Tests | pytest (backend), Vitest + Playwright (frontend) | `backend/tests`, `frontend` |
+| Optional multi-agent | CrewAI package or built-in compatible orchestrator | improvement + learning crews |
+| Tests | pytest, Vitest, Playwright | `backend/tests`, `frontend` |
 
 ---
 
-## 6. Models & providers
+## 7. Configuration & environment
 
-Configured in root `.env` (see `.env.example`).
+One root `.env` (copy from `.env.example`). **Never** put secrets under `NEXT_PUBLIC_*`.
 
-| Provider | Typical model | Used for |
-|----------|---------------|----------|
-| **NVIDIA** Integrate API | `deepseek-3.2` (configurable) | Resume improvement, profile fill, section extract (primary), ATS brief |
-| **Groq** | `llama-3.3-70b-versatile` | Interview questions, learning planner, ATS brief fallback, section extract on NVIDIA 429 |
-| **Groq resume parser** | `openai/gpt-oss-120b` (+ fallback model) | Optional structured resume parsing settings |
-| **YouTube Data API v3** | N/A (search) | Exact video IDs for learning paths |
-| **Docling** | local library | PDF (and optional DOCX) text extraction |
+### 7.1 Core app
 
-`LLM_PROVIDER` selects default preference where applicable; individual agents may pin NVIDIA or Groq.
+| Variable | Purpose | Default / notes |
+|----------|---------|-----------------|
+| `NEXT_PUBLIC_API_BASE_URL` / `PUBLIC_API_BASE_URL` | Upstream FastAPI origin | `http://127.0.0.1:8000` |
+| `FRONTEND_ORIGINS` | CORS allow-list (comma-separated) | localhost + 127.0.0.1:3000 |
+| `APP_NAME` | API title in health | Career Copilot API |
+| `APP_ENV` | `development` disables OpenAPI docs when `production` | development |
+| `API_V1_PREFIX` | Versioned API prefix | `/api/v1` |
+| `LOG_LEVEL` | Logging | INFO |
+| `DATABASE_PATH` | SQLite file | `./.data/career-copilot.sqlite` |
+| `LOCAL_STORAGE_DIR` | File buckets root | `./.data/storage` |
+| `AUTH_SECRET` | JWT signing secret | **required** (set a long random value) |
+| `DOCUMENT_BUCKET` / `AVATAR_BUCKET` / `INTERVIEW_BUCKET` | Storage bucket names | candidate-* |
+| `DOCUMENT_MAX_BYTES` | Max resume/JD upload | 10 MiB |
+| `AVATAR_MAX_BYTES` | Max avatar | 3 MiB |
+| `INTERVIEW_MEDIA_MAX_BYTES` | Max media | 250 MiB |
+| `EXPORT_SIGNED_URL_SECONDS` | Export link lifetime | 300 |
 
-**Never** put secrets under `NEXT_PUBLIC_*`.
+### 7.2 LLM providers
+
+| Variable | Purpose |
+|----------|---------|
+| `LLM_PROVIDER` | Preference hint (`groq` or `nvidia`) where agents allow choice |
+| `NVIDIA_API_KEY`, `NVIDIA_BASE_URL`, `NVIDIA_MODEL` | NVIDIA Integrate API |
+| `NVIDIA_TIMEOUT_SECONDS`, `NVIDIA_MAX_RETRIES`, `NVIDIA_MAX_OUTPUT_TOKENS`, `NVIDIA_TEMPERATURE` | NVIDIA client knobs |
+| `NVIDIA_PROMPT_VERSION` | Label for prompt versioning |
+| `GROQ_API_KEY`, `GROQ_BASE_URL`, `GROQ_MODEL` | Groq chat API |
+| `GROQ_TIMEOUT_SECONDS`, `GROQ_MAX_RETRIES`, `GROQ_MAX_OUTPUT_TOKENS`, `GROQ_TEMPERATURE` | Groq client knobs |
+| `GROQ_RESUME_PARSER_*` | Optional structured resume parser model + limits |
+
+Defaults (from `.env.example`): NVIDIA model `deepseek-3.2`; Groq model `llama-3.3-70b-versatile`.
+
+### 7.3 YouTube
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `YOUTUBE_API_KEY` | Data API v3 key (server-only) | empty |
+| `YOUTUBE_API_BASE_URL` | API host | `https://www.googleapis.com/youtube/v3` |
+| `YOUTUBE_SEARCH_MAX_RESULTS` | Videos per gap search | 3 (clamped 1–5) |
+| `YOUTUBE_TIMEOUT_SECONDS` | HTTP timeout | 20 |
+
+### 7.4 Resume improvement limits
+
+| Variable | Default | Role |
+|----------|---------|------|
+| `IMPROVEMENT_MAX_SECTIONS` | 4 | Cap sections improved per run |
+| `IMPROVEMENT_MAX_SOURCE_CHARS` | 30000 | Cap resume source text |
+| `IMPROVEMENT_MAX_JD_CHARS` | 12000 | Cap JD text for improvement |
+
+### 7.5 Fixed protocol constants (not env)
+
+From `backend/app/core/constants.py`:
+
+| Constant | Value | Used for |
+|----------|-------|----------|
+| `JWT_ALGORITHM` | `HS256` | Auth |
+| `MIN_PASSWORD_LENGTH` | `6` | Auth |
+| `SQLITE_CONNECT_TIMEOUT_SECONDS` | `10` | DB |
+| `SQLITE_BUSY_TIMEOUT_MS` | `10000` | DB |
+| `DOMAIN_GATE_MIN_SKILL_OVERLAP` | `0.15` | Optional structured ATS library |
+| `ATS_COMPOSITE_WEIGHTS` | see [§9.2](#92-optional-library-structured-llm-ats-composite) | Optional structured ATS library |
 
 ---
 
-## 7. Agents
+## 8. Models, providers & agents
 
 Registry: `backend/app/agents/registry.py`  
-Status endpoint: `GET /api/v1/agents/status`
+Live status: `GET /api/v1/agents/status` and fields on `GET /api/v1/health`.
 
-| ID | Name | Provider | Prompt | Fallback |
-|----|------|----------|--------|----------|
-| `resume_improvement` | Resume improvement | NVIDIA | `improve_resume_v1.txt` | Manual/export when not configured |
-| `resume_improvement_crew` | Crew: gap → improve → validate | NVIDIA | improve + tools | Compatible orchestrator if CrewAI package missing |
+| Agent ID | Name | Provider | Prompt | Fallback when LLM off |
+|----------|------|----------|--------|------------------------|
+| `resume_improvement` | Resume improvement | NVIDIA | `improve_resume_v1.txt` | Manual/export |
+| `resume_improvement_crew` | Gap → improve → validate | NVIDIA + tools | improve + crew tools | Compatible orchestrator if CrewAI package missing |
 | `profile_fill` | Profile from resume | NVIDIA | `fill_profile_from_resume_v1.txt` | Deterministic mapping |
 | `interview_questions` | Mock interview questions | Groq | `interview_questions_v1.txt` | Local templates |
 | `ats_improvement_brief` | ATS brief | NVIDIA or Groq | `ats_improvement_v1.txt` | Deterministic missing-keyword brief |
-| `learning_youtube_crew` | Learning path YouTube crew | Groq + YouTube API | `learning_youtube_path_v1.txt` | Deterministic plan; search URL if API down |
-| `document_section_extract` | Section segregation | NVIDIA or Groq | `document_section_extract_v1.txt` | Structural layout parser |
+| `learning_youtube_crew` | Learning YouTube crew | Groq + YouTube API | `learning_youtube_path_v1.txt` | Deterministic plan + search URLs |
+| `document_section_extract` | Section segregation | NVIDIA first, Groq on 429 | `document_section_extract_v1.txt` | Structural layout parser |
 
-Prompts live in `backend/app/agents/prompts/`.
+Prompts: `backend/app/agents/prompts/`.
 
----
-
-## 8. Feature-by-feature
-
-### Auth
-- **What:** Email/password sign-up, sign-in, session, sign-out; password update when signed in.
-- **How:** JWT in `localStorage` + session cookie; FastAPI dependency `get_current_user`.
-- **Files:** `features/auth/*`, `frontend/src/features/auth/*`, auth app routes.
-
-### Profile & settings
-- **What:** Profile fields, avatar, skills/experience/education/… CRUD, preferences, notifications, privacy, account delete.
-- **How:** Tables under `candidate_*`, `profiles`, preference tables; completion recalculated from real rows.
-- **Files:** `features/profile/*`, `frontend/src/features/settings/*`, `profile/*`.
-
-### Document parsing (resumes & JDs)
-- **What:** Extract text and segregate into **sections** for review/confirm.
-- **How:** See [§10 Document parsing](#10-document-parsing).
-- **UI:** Simple section list only (no source-block / “source evidence” clutter).
-
-### Resume library & ATS analysis
-- **What:** Upload resume versions, confirm extraction, create JD, run ATS, view report, delete analyses.
-- **How:** Confirmed resume + JD → `score_resume` in `ats_score.py` → persist analysis + evidence rows.
-- **Files:** `features/resume/components/resume-flow.tsx`, `features/ats/ats_score.py`, router ATS endpoints.
-
-### Interview
-- **What:** Create sessions, start (generate questions), answer, complete, delete; preparation pack from resume+JD.
-- **How:** Groq structured questions or templates; preparation uses question bank + optional Groq.
-- **Files:** `features/interview/*`, `frontend/src/features/interview/*`.
-
-### Learning paths
-- **What:** Generate path from **completed ATS** gaps; open exact YouTube videos; track progress; **delete path**.
-- **How:** See [§11 Learning paths & YouTube](#11-learning-paths--youtube).
-- **Files:** `features/learning/*`, `frontend/src/features/learning/components/learning.tsx`.
-
-### Jobs
-- **What:** List/save jobs; generate recommendations vs confirmed active resume evidence.
-- **How:** `career_matching.score_job` / `candidate_skill_evidence`; stored in `job_recommendations`.
-- **Files:** `features/career_matching.py`, `frontend/src/features/jobs/*`.
-
-### Dashboard & workspace
-- **What:** Bootstrap counts, latest ATS, recent activity, navigation shell.
-- **Files:** `features/dashboard/*`, `features/workspace/*`.
-
-### Marketing landing
-- **What:** Product story, globe/illustrative roles, journey sections, a11y-minded nav.
-- **Files:** `features/marketing/*`, Playwright e2e under `frontend/e2e/`.
+**Product ATS score itself is not an LLM agent.** It is deterministic keyword coverage in `ats_score.py`. An optional CrewAI structured scorer also exists in the library for experiments/tests (see §9.2); it is **not** what `POST /ats-analyses` persists today.
 
 ---
 
-## 9. ATS scoring (how it works)
+## 9. Formulas & scoring (all algorithms)
 
-**Single file to read and explain:**  
-`backend/app/features/ats/ats_score.py`
+This section is the full math for every score the product computes.
 
-(`deterministic.py` only re-exports this module for compatibility.)
+### 9.1 Product ATS score — keyword coverage (primary)
 
-### One-sentence explanation
+**File:** `backend/app/features/ats/ats_score.py`  
+**Algorithm version:** `evidence-keyword-coverage-v3`  
+**Endpoints:** `POST /api/v1/ats-analyses`, `POST /api/v1/ats/score`  
+**Comment in router:** single scoring path — deterministic keyword coverage only.
 
-We extract requirement phrases from the JD, look for each phrase (or a known alias) as a **whole word** in the resume text, quote the **exact resume line** when found, and score weighted coverage as a **percentage 0–100**.
+#### Inputs
 
-### Algorithm
+| Input | Source |
+|-------|--------|
+| Resume text | Confirmed `resume_versions.plain_text` |
+| Structured sections (preferred) | `resume_versions.structured_content.sections` |
+| Job description text | Confirmed `job_descriptions.raw_text` |
 
-| Step | Function | Behavior |
-|------|----------|----------|
-| 1 | `_candidate_terms` | JD → list of (term, required\|preferred); required weight 2, preferred weight 1 |
-| 2 | `_resume_lines` | Resume plain text and/or confirmed `structured_content.sections` → lines |
-| 3 | `_find_match` | Whole-word match of term/aliases; strength strong / partial / missing |
-| 4 | `score_resume` | strong = full credit, partial = half, missing = 0 → `%` of total weight |
+Both resume version and JD must have `extraction_status = confirmed`. Re-running the same resume version + JD + algorithm version returns the existing completed analysis.
 
-### Evidence rules
+#### Step 1 — Extract JD terms (`_candidate_terms`)
 
-- **Matched:** `resume_evidence_text` is an exact quote from the resume.  
-- **Missing:** evidence is `null` — never invented.  
-- Aliases (e.g. JS → JavaScript) only expand **search**; stored quote is still resume text.  
-- Algorithm version: `evidence-keyword-coverage-v3`.
+- Walk JD lines that look like **requirements / skills / bullets** (markers such as required, qualifications, skills, preferred, nice to have, etc.).
+- Classify each segment as:
+  - **required** (default when required markers appear or inherit prior type)
+  - **preferred** (preferred / nice to have / bonus / desired)
+- Keep source-backed phrases only: known tech terms, short requirement list items, technical-shaped tokens. Cap **80** terms.
+- Canonicalize aliases for search only (examples):
 
-### What it is not
+| Canonical | Aliases used when matching |
+|-----------|----------------------------|
+| javascript | javascript, js |
+| typescript | typescript, ts |
+| kubernetes | kubernetes, k8s |
+| postgresql | postgresql, postgres, postgre sql |
+| machine learning | machine learning, ml |
+| … | see `ALIAS_GROUPS` in `ats_score.py` |
 
-Not a hiring prediction, not an LLM composite score, not cross-candidate ranking.
+Weights used later:
 
-### API usage
+| Requirement type | Weight \(w\) |
+|------------------|--------------|
+| required | **2.0** |
+| preferred | **1.0** |
 
-`POST /api/v1/ats-analyses` requires confirmed resume version + confirmed JD, runs `score_resume`, stores `ats_analyses` + `ats_evidence`, optional improvement brief.
+#### Step 2 — Resume lines (`_resume_lines`)
+
+Prefer confirmed structured sections → list of `(exact_line, section)`.  
+Else split plain text by layout headings (never invent body text).
+
+#### Step 3 — Match (`_find_match`)
+
+For each JD term, scan resume lines with whole-word match of the term or aliases (normalized).
+
+| Match strength | Meaning | Credit multiplier \(c\) |
+|----------------|---------|-------------------------|
+| **strong** | Exact primary phrase in skills-like section, or exact multi-word primary match | **1.0** |
+| **partial** | Found via alias or outside skills-like section | **0.5** |
+| **missing** | Not found | **0.0** |
+
+- Matched evidence quote = **exact resume line** (never rewritten).  
+- Missing evidence = `null` (never invented).  
+- DB `match_status`: `strong_match` | `partial_match` | `not_found`.
+
+#### Step 4 — Score formula
+
+Let requirements be \((t_i, type_i)\) with weights \(w_i \in \{2,1\}\).
+
+\[
+W = \sum_i w_i
+\]
+
+\[
+\text{contribution}_i = 100 \times \frac{w_i \cdot c_i}{W}
+\quad\text{(rounded to 4 decimals)}
+\]
+
+\[
+\text{overall\_score} = \mathrm{round}\Bigl(\sum_i \text{contribution}_i,\; 2\Bigr)
+\in [0, 100]
+\]
+
+Sub-scores (for UI breakdown):
+
+\[
+\text{required\_score} = 100 \times \frac{\sum_{\text{required}} w_i c_i}{\sum_{\text{required}} w_i}
+\]
+
+\[
+\text{preferred\_score} = 100 \times \frac{\sum_{\text{preferred}} w_i c_i}{\sum_{\text{preferred}} w_i}
+\]
+
+#### Worked example
+
+JD terms after extraction: `python` (required), `docker` (required), `aws` (preferred).  
+Resume has strong match for python, partial for docker, missing aws.
+
+| Term | \(w\) | \(c\) | contribution |
+|------|-------|-------|--------------|
+| python | 2 | 1.0 | \(100 \times 2/5 = 40\) |
+| docker | 2 | 0.5 | \(100 \times 1/5 = 20\) |
+| aws | 1 | 0.0 | 0 |
+| **Total** | \(W=5\) | | **overall_score = 60** |
+
+required_score = \(100 \times (2+1)/4 = 75\); preferred_score = 0.
+
+#### Persisted fields
+
+| Field | Content |
+|-------|---------|
+| `ats_analyses.overall_score` | Keyword coverage % |
+| `ats_analyses.score_breakdown` | method, counts, term lists, required/preferred scores, section_summary |
+| `ats_analyses.summary` | Counts, missing lists, optional LLM brief (`overall_inference`, focus areas, …) |
+| `ats_evidence` rows | One per JD term + quote, contribution, explanation, rule_id `exact_resume_quote_match_v3` |
+
+Optional **ATS improvement brief** (`generate_ats_improvement_brief`) runs after scoring: uses missing/matched lists only; never invents experience. Provider NVIDIA or Groq; deterministic brief if neither is configured.
+
+#### What product ATS is not
+
+- Not a hiring prediction  
+- Not an LLM composite score  
+- Not cross-candidate ranking  
+- Not embedding similarity  
 
 ---
 
-## 10. Document parsing
+### 9.2 Optional library: structured LLM ATS (composite)
 
-**Goal:** Accurate text + clean **sections** for review (no source-block UI).
+**Status:** Implemented under `backend/app/features/ats/agent/` + `scoring/service.py` and covered by unit tests. **Not** the path used by `POST /ats-analyses` today (that path forces deterministic keyword coverage and passes `structured_parameter_scores=None`).
 
-### Pipeline
+Constants in `core/constants.py`:
 
-1. **Text extract** — `document_parsing/parsing/text_extract.py`  
-   - **PDF:** **Docling only** (layout-aware). Install:  
-     `backend\.venv\Scripts\python.exe -m pip install "docling>=2.0,<3"`  
-     or `pip install -e "backend/.[docling]"`  
-   - **DOCX:** Docling preferred; native `python-docx` if Docling missing/fails.  
-2. **Section segregation** — `parse_document_bytes` in `document_parsing/pipeline.py`  
-   - LLM line-number assignment when NVIDIA/Groq configured (`document_section_extract_v1.txt`)  
-   - Structural layout fallback when no LLM  
-3. **Stored payload** (simple):  
-   `{ schema_version, sections, warnings, extraction_method }`  
-   No `source_blocks` / evidence-block maps in the product payload.
+| Parameter key | Weight |
+|---------------|--------|
+| `hard_skill_match` | **0.40** |
+| `experience_relevance` | **0.25** |
+| `education_match` | **0.15** |
+| `certifications_match` | **0.10** |
+| `seniority_alignment` | **0.10** |
+| **Sum** | **1.00** |
 
-### Confirm flow
+Pipeline (`run_pipeline`):
 
-User reviews sections → `POST .../confirm` on resume version or JD → extraction_status `confirmed` → eligible for ATS.
+1. LLM parse resume → `ResumeParsed` (skills, experience, education, certifications, years).  
+2. LLM parse JD → `JDParsed` (domain, role_family, required/preferred skills, min years, mandatory criteria).  
+3. **Domain gate** (rule + model):  
+   - Skill overlap = \(|resume\_skills \cap required\_skills| / |required\_skills|\).  
+   - If domain family mismatches **and** overlap \(< 0.15\) (`DOMAIN_GATE_MIN_SKILL_OVERLAP`) → **REJECT**.  
+   - Also REJECT if no experience entry matches role family / industry.  
+   - REJECT → all parameter scores 0, `composite_score = 0`.  
+4. On **ALLOW**, scorer outputs each parameter in \([0,100]\).  
+5. Composite (always recomputed in code, not trusted from model alone):
 
----
+\[
+\text{composite\_score} = \mathrm{round}\Bigl(
+  0.40\,H + 0.25\,E + 0.15\,Ed + 0.10\,C + 0.10\,S,\; 2\Bigr)
+\]
 
-## 11. Learning paths & YouTube
-
-### Generation
-
-`POST /api/v1/learning-paths/generate`
-
-1. Load latest (or selected) **completed** ATS analysis + evidence  
-2. **Gap analyst:** `not_found` / `partial_match` requirements only  
-3. **Planner:** one study step per gap (Groq or deterministic) — search queries only, no video IDs  
-4. **Validator + YouTube API:**  
-   - `YOUTUBE_API_KEY` → YouTube Data API v3 search  
-   - Store **exact** `https://www.youtube.com/watch?v=…` from API results  
-   - If API unavailable: **search results URL only** (never fake watch IDs)  
-
-### Delete
-
-`DELETE /api/v1/learning-paths/{path_id}`  
-UI: Delete on list cards and path detail page. Cascades items + resources in SQLite.
-
-### Frontend
-
-`/learning`, `/learning/[pathId]` — open videos, mark progress, delete path.
+Treat this as a **library / research path**, not the persisted product score unless you re-wire the router.
 
 ---
 
-## 12. End-to-end user journeys
+### 9.3 Profile completion (0–100)
 
-### A. ATS loop
+**File:** `backend/app/features/profile/completion.py`  
+Recalculated on profile mutations via `recalculate_completion` — **not** on page load bootstrap.
 
-1. Sign up → onboarding / profile  
-2. Upload resume → review sections → confirm  
-3. Paste/upload JD → confirm  
-4. Run ATS → view % score + matches  
-5. Re-upload improved resume → re-confirm → re-run ATS  
+Checklist weights (sum = **100**). Resume upload/confirm is **not** included.
+
+| Key | Label | Points |
+|-----|-------|--------|
+| `full_name` | Full name | 10 |
+| `location` | Location | 8 |
+| `current_role` | Current role | 10 |
+| `target_roles` | Target roles (preferences list) | 8 |
+| `experience` | Work experience rows **or** years_experience = 0 (fresher) | 22 |
+| `skills` | At least one skill | 17 |
+| `education` | At least one education row | 10 |
+| `work_modes` | Preferred work modes | 5 |
+| `preferred_locations` | Preferred job locations | 5 |
+| `links` | Professional link | 5 |
+
+\[
+\text{profile\_completion} = \sum \text{points of completed items}
+\quad\in [0,100]
+\]
+
+---
+
+### 9.4 Job recommendation match score
+
+**File:** `backend/app/features/career_matching.py`  
+**Algorithm version:** `evidence-keyword-match-v1`  
+**Endpoint:** `POST /api/v1/job-recommendations/generate`
+
+Evidence:
+
+- Candidate skills from `candidate_skills` + skills-like resume sections + resume plain text.  
+- Job `requirements` list from local `jobs` table.
+
+Matching:
+
+- Requirement is **matched** if normalized name is in skill set **or** phrase appears in evidence text.  
+- Title terms (3+ letter tokens from job title) that appear in evidence add **role hits**.
+
+Formula:
+
+\[
+\text{if requirements exist:}\quad
+\text{match\_score} = \mathrm{round}\Bigl(
+  \frac{|\text{matched}|}{|\text{requirements}|}\times 80
+  + \min(\text{role\_hits}, 4)\times 5,\; 1\Bigr)
+\]
+
+\[
+\text{if no requirements:}\quad
+\text{match\_score} = \mathrm{round}\bigl(\min(\text{role\_hits}\times 12,\; 40),\; 1\bigr)
+\]
+
+So requirements drive up to **80** points; title/role evidence up to **20** more (4 × 5). Results are ranked and top `limit` stored in `job_recommendations`.
+
+---
+
+### 9.5 Learning path progress
+
+\[
+\text{progress\_percentage} = \mathrm{round}\Bigl(
+  \frac{\#\{\text{items with status completed}\}}{\#\text{items}}\times 100\Bigr)
+\]
+
+(0 if no items.)
+
+---
+
+### 9.6 Learning path generation (not a numeric “score”, but the pipeline)
+
+**Algorithm version:** `ats-youtube-api-v1`  
+**Endpoint:** `POST /api/v1/learning-paths/generate`  
+**Requires:** at least one **completed** ATS analysis (optional `source_analysis_id`).
+
+Sequential crew (`learning/agents/crew/`):
+
+1. **Gap analyst (deterministic)** — unique requirements with `match_status` in `{not_found, partial_match}` from `ats_evidence`.  
+2. **YouTube planner (Groq or deterministic)** — one study step per gap with **search queries only** (no video IDs).  
+3. **Validator + materializer** — for each step:
+   - If `YOUTUBE_API_KEY` configured → YouTube Data API v3 `search` (`type=video`, `safeSearch=strict`, `videoEmbeddable=true`, max results from settings).  
+   - Store exact `https://www.youtube.com/watch?v=<api_id>` only.  
+   - If API unavailable → **search results page URL only** (never invent watch IDs).
+
+Items/resources are written to `learning_paths` → `learning_items` → `learning_resources`.
+
+---
+
+## 10. Document parsing pipeline
+
+**Goal:** Accurate plain text + clean **sections** for review/confirm (no source-block UI in product payload).
+
+**Entry:** `parse_document_bytes` in `document_parsing/pipeline.py`.
+
+### 10.1 Text extraction
+
+| Format | Engine | Notes |
+|--------|--------|-------|
+| PDF | **Docling only** | Layout-aware; missing Docling → HTTP 503 `docling_not_installed` |
+| DOCX | python-docx (native); Docling optional | |
+
+`DOCLING_INFERENCE_COMPILE_TORCH_MODELS=false` is set for portable Windows CPU installs.
+
+### 10.2 Section segregation
+
+`extract_sections_enriched` (`parsing/llm_sections.py`):
+
+1. Split plain text into numbered lines (cap ~400).  
+2. If LLM available: model assigns **line numbers + section kinds only**; content is reconstructed from source lines (never model-written body).  
+   - NVIDIA first (rate-limit throttle ~1.6s interval); Groq only on NVIDIA 429.  
+3. Else: structural layout heuristics (headings, bullets, contact detection).  
+
+### 10.3 Stored structured payload
+
+```json
+{
+  "schema_version": "resume-extraction-v1",
+  "sections": { "skills": ["…"], "experience": ["…"] },
+  "warnings": [],
+  "extraction_method": "…"
+}
+```
+
+No `source_blocks` in the product payload.
+
+### 10.4 Confirm flow
+
+User reviews sections → may patch extraction → `POST .../confirm` on resume version or JD → `extraction_status = confirmed` → eligible for ATS / job recommendations / preparation.
+
+---
+
+## 11. Feature flows (end-to-end)
+
+### A. ATS loop (primary product journey)
+
+```text
+1. Sign up / sign in  →  JWT + cookie
+2. Onboarding / profile (optional completion checklist)
+3. POST /resumes (multipart)  →  Docling + sections  →  review_required
+4. User reviews sections → POST /resume-versions/{id}/confirm
+5. POST /job-descriptions (text) or /job-descriptions/upload
+6. Confirm JD → POST /job-descriptions/{id}/confirm
+7. POST /ats-analyses { resume_version_id, job_description_id }
+     → score_resume() keyword formula
+     → insert ats_analyses + ats_evidence
+     → optional improvement brief into summary
+8. UI report: overall_score %, evidence table, missing keywords, brief
+9. Improve offline → re-upload new resume version → confirm → re-run ATS
+```
+
+UI: `/resume-analysis`, `/resume-analysis/new`, `/review`, `/report/[id]`.
 
 ### B. Learning loop
 
-1. Complete at least one ATS analysis  
-2. Learning → Generate YouTube path from ATS  
-3. Open path → watch exact videos → mark complete  
-4. Delete path when no longer needed  
+```text
+1. Complete ≥1 ATS analysis
+2. POST /learning-paths/generate  (optional source_analysis_id)
+3. Open /learning/[pathId] → watch exact YouTube URLs
+4. PATCH item status → progress_percentage recalculated
+5. DELETE /learning-paths/{id} cascades items + resources
+```
 
 ### C. Interview loop
 
-1. Optional preparation (resume + JD)  
-2. Create mock session → start → answer → complete  
-3. Delete session if desired  
+```text
+1. Optional POST /interview-preparation (resume + JD evidence → question pack)
+2. POST /interviews  → create session (mode, role, difficulty, counts, media flags)
+3. POST /interviews/{id}/start  → Groq structured questions or local templates
+4. POST .../responses  → store typed/transcript/media paths
+5. POST .../complete  → session completed (no AI grading of answers)
+6. DELETE session if desired
+```
+
+UI: `/mock-interview`, `/setup`, `/preparation`, `/session/[id]`, `/report/[id]`.
 
 ### D. Jobs loop
 
-1. Confirm resume  
-2. Generate job recommendations  
-3. Save / unsave jobs  
+```text
+1. Confirmed active resume
+2. POST /job-recommendations/generate  → score_job formula vs local jobs
+3. Browse GET /jobs, save POST /saved-jobs/{job_id}
+```
+
+### E. Profile fill from resume
+
+```text
+POST /profile/from-resume/preview  (or preview-upload)
+  → NVIDIA + deterministic draft (skills, experience, education, …)
+User reviews → POST /profile/from-resume/apply
+  → insert validated rows; recalculate profile completion
+```
+
+### F. Resume improvement (API only; no full editor UI)
+
+```text
+GET  /resume-improvements/capabilities
+POST /resume-improvements
+GET  /resume-improvements/{run_id}/suggestions
+PATCH /resume-suggestions/{id}  (accept/reject/edit)
+POST /resume-improvements/{run_id}/apply
+POST /resume-versions/{id}/exports + download
+```
+
+Evidence validation uses source text hashes so suggestions cannot invent content detached from the resume.
 
 ---
 
-## 13. API map
+## 12. API map
 
-Base: **`/api/v1`** (unless `API_V1_PREFIX` overrides).
+Base: **`/api/v1`** (override with `API_V1_PREFIX`).  
+Browser calls go through **`/api/backend/...`** which maps 1:1 onto that prefix.
 
 ### Auth & health
-| Method | Path |
-|--------|------|
-| POST | `/auth/sign-up`, `/auth/sign-in`, `/auth/session`, `/auth/sign-out` |
-| POST | `/auth/resend`, `/auth/reset-password`, `/auth/update-password` |
-| GET | `/health`, `/health/database`, `/agents/status` |
-| GET | `/files/{bucket}/{path}` |
+
+| Method | Path | Auth |
+|--------|------|------|
+| POST | `/auth/sign-up` | No |
+| POST | `/auth/sign-in` | No |
+| POST | `/auth/session` | Yes |
+| POST | `/auth/sign-out` | No (clears cookie) |
+| POST | `/auth/resend`, `/auth/reset-password` | No (stubs) |
+| POST | `/auth/update-password` | Yes |
+| GET | `/health`, `/health/database`, `/agents/status` | No |
+| GET | `/files/{bucket}/{path}` | Yes (path must start with `{user_id}/`) |
 
 ### Me / profile
+
 | Method | Path |
 |--------|------|
 | GET | `/me/bootstrap`, `/me/activity` |
 | GET/PATCH | `/profile` |
 | POST/DELETE | `/profile/avatar` |
 | PUT | `/profile/preferences` |
-| POST | `/profile/skills/from-resume`, `/profile/from-resume/preview`, `/preview-upload`, `/apply` |
+| POST | `/profile/skills/from-resume` |
+| POST | `/profile/from-resume/preview`, `/preview-upload`, `/apply` |
 | GET/POST/PATCH/DELETE | `/profile/{resource}` … |
 
+Profile resources include skills, experiences, projects, education, certifications, languages, links (via `CANDIDATE_TABLES`).
+
 ### Resumes & JDs
+
 | Method | Path |
 |--------|------|
-| CRUD-ish | `/resumes`, `/resumes/{id}`, versions, confirm, activate, preview |
-| CRUD-ish | `/job-descriptions`, upload, metadata, extraction, confirm |
+| GET/POST | `/resumes` |
+| GET/PATCH/DELETE | `/resumes/{id}` |
+| GET | `/resumes/{id}/preview` |
+| POST | `/resumes/{id}/activate`, `/resumes/{id}/versions` |
+| GET | `/resume-versions/{id}` |
+| PATCH | `/resume-versions/{id}/extraction` |
+| POST | `/resume-versions/{id}/confirm` |
+| GET/POST | `/job-descriptions` |
+| POST | `/job-descriptions/upload` |
+| GET | `/job-descriptions/{id}` |
+| PATCH | `/job-descriptions/{id}/metadata`, `/extraction` |
+| POST | `/job-descriptions/{id}/confirm` |
 
 ### ATS
+
+| Method | Path | Notes |
+|--------|------|-------|
+| GET | `/ats-analyses` | List owned analyses |
+| POST | `/ats-analyses` | Product scorer + persistence |
+| GET/DELETE | `/ats-analyses/{id}` | |
+| GET | `/ats-analyses/{id}/evidence`, `/suggestions` | |
+| POST | `/ats/score` | Same deterministic scorer, **no** DB write |
+
+### Resume improvement
+
 | Method | Path |
 |--------|------|
-| GET/POST/DELETE | `/ats-analyses` … |
-| GET | `/ats-analyses/{id}/evidence`, `/suggestions` |
+| GET | `/resume-improvements/capabilities` |
+| POST | `/resume-improvements` |
+| GET | `/resume-improvements/{run_id}`, `.../suggestions` |
+| PATCH | `/resume-suggestions/{id}` |
+| POST | `/resume-improvements/{run_id}/apply` |
+| GET | `/resume-comparisons` |
+| POST | `/resume-versions/{id}/exports` |
+| GET | `/resume-exports/{id}/download` |
 
 ### Interview
+
 | Method | Path |
 |--------|------|
 | POST | `/interview-preparation` |
-| GET/POST/DELETE | `/interviews` … |
-| POST | `.../start`, `.../responses`, `.../complete` |
+| GET/POST | `/interviews` |
+| GET/DELETE | `/interviews/{id}` |
+| POST | `/interviews/{id}/start`, `/responses`, `/complete` |
 
 ### Learning
+
 | Method | Path |
 |--------|------|
-| GET/POST/DELETE | `/learning-paths` … |
+| GET/POST | `/learning-paths` |
 | POST | `/learning-paths/generate` |
+| GET/DELETE | `/learning-paths/{id}` |
 | PATCH | `/learning-paths/{id}/items/{item_id}` |
 
 ### Jobs & settings
+
 | Method | Path |
 |--------|------|
 | GET | `/jobs`, `/jobs/{id}` |
 | GET/POST | `/job-recommendations`, `/job-recommendations/generate` |
 | GET/POST/PATCH/DELETE | `/saved-jobs` … |
-| GET/PUT | `/settings`, notifications, privacy |
+| GET | `/settings` |
+| PUT | `/settings/notifications`, `/settings/privacy` |
 | DELETE | `/account` |
-
-Resume improvement routes are mounted under the same API router (`resume_improvement/routes.py`) for capabilities, runs, suggestions, apply, export.
 
 ---
 
-## 14. Frontend routes
+## 13. Frontend routes & request path
 
 | Route | Purpose |
 |-------|---------|
 | `/` | Marketing landing |
-| `/sign-in`, `/sign-up`, `/forgot-password`, `/reset-password`, `/verify-email` | Auth |
+| `/sign-in`, `/sign-up`, `/forgot-password`, `/reset-password`, `/verify-email` | Auth UI (email delivery stubs) |
 | `/onboarding` | First-time profile |
-| `/dashboard` | Workspace home |
-| `/resume-analysis`, `/new`, `/review`, `/report/[id]` | Resume + ATS (no `/edit`) |
+| `/dashboard` | Workspace home (bootstrap counts, latest ATS, activity) |
+| `/resume-analysis`, `/new`, `/review`, `/report/[id]` | Resume + ATS |
 | `/mock-interview`, `/setup`, `/preparation`, `/session/[id]`, `/report/[id]` | Interviews |
-| `/learning`, `/learning/[pathId]` | Learning paths |
+| `/learning`, `/learning/[pathId]`, `/learning/topic/[topicId]` | Learning paths |
 | `/jobs`, `/jobs/saved`, `/jobs/[jobId]` | Jobs |
 | `/settings/profile`, `/account`, `/preferences`, `/privacy` | Settings |
-| `/api/backend/[...path]`, `/api/files/...` | Proxies |
+| `/api/backend/[...path]` | BFF → FastAPI |
+| `/api/files/[bucket]/[...path]` | BFF → file download |
 
-Shared route constants: `frontend/src/shared/routes.ts`.
+Shared route helpers: `frontend/src/shared/routes.ts`.  
+Config constants: `frontend/src/shared/config.ts`  
+(`ACCESS_TOKEN_STORAGE_KEY`, `SESSION_COOKIE_NAME`, `BROWSER_API_PROXY_PREFIX`, demo cookie).
+
+### Browser vs server API base
+
+| Context | Base |
+|---------|------|
+| Browser | `/api/backend` (always) |
+| Server components / Node | `{PUBLIC_API_BASE_URL|NEXT_PUBLIC_API_BASE_URL}{API_V1_PREFIX}` |
+
+In-flight GET dedupe lives in memory only (no client data cache).
 
 ---
 
-## 15. Database & storage
+## 14. Database & file storage
 
-- **Schema:** `db/schema.sql`  
-- **Engine:** SQLite file at `DATABASE_PATH`  
-- **Client:** `backend/app/database/client.py` — table/select/eq/insert/update/delete style API, JSON columns, nested attach for selected joins  
+- **Schema source of truth:** `db/schema.sql`  
+- **Engine:** SQLite at `DATABASE_PATH`  
+- **Client:** `backend/app/database/client.py` — Supabase-like chainable query API, JSON columns, ownership helpers in `repository.py`
 
 ### Main table groups
 
 | Group | Tables |
 |-------|--------|
 | Identity | `users`, `profiles` |
-| Profile content | `candidate_preferences`, `candidate_skills`, `candidate_experiences`, `candidate_projects`, `candidate_education`, … |
+| Profile content | `candidate_preferences`, `candidate_skills`, `candidate_experiences`, `candidate_projects`, `candidate_education`, `candidate_certifications`, `candidate_languages`, `candidate_links` |
 | Documents | `resumes`, `resume_versions`, `job_descriptions` |
 | ATS | `ats_analyses`, `ats_evidence` |
-| Improvements | `resume_improvement_runs`, `resume_suggestions`, `resume_exports` |
+| Improvements | `resume_suggestions`, `resume_exports` (+ improvement runs as implemented in app layer) |
 | Interview | `interview_sessions`, `interview_questions`, `interview_responses`, `interview_reports` |
 | Learning | `learning_paths`, `learning_items`, `learning_resources` |
 | Jobs | `jobs`, `job_recommendations`, `saved_jobs` |
-| Settings / activity | `notification_preferences`, `privacy_preferences`, `activity_events`, … |
+| Settings / activity | `notification_preferences`, `privacy_preferences`, `activity_events` |
 
-**Files:** under `LOCAL_STORAGE_DIR` buckets (`DOCUMENT_BUCKET`, `AVATAR_BUCKET`, `INTERVIEW_BUCKET`).
+### Extraction statuses
+
+`pending` → `processing` → `review_required` → **`confirmed`** (or `failed`).
+
+### Files
+
+Under `LOCAL_STORAGE_DIR/{bucket}/{user_id}/...`:
+
+| Bucket env | Typical use |
+|------------|-------------|
+| `DOCUMENT_BUCKET` | Resume/JD binaries, exports |
+| `AVATAR_BUCKET` | Profile pictures |
+| `INTERVIEW_BUCKET` | Audio/video responses |
+
+Access: `GET /api/v1/files/{bucket}/{path}` only if path is under the authenticated user id.
 
 ---
 
-## 16. Setup & environment
+## 15. Setup, run & scripts
 
 ### Prerequisites
 
 - Node.js 20+ recommended  
 - Python **3.11–3.13**  
-- Windows-friendly scripts use `backend\.venv\Scripts\python.exe`
+- Windows scripts use `backend\.venv\Scripts\python.exe`
 
 ### Install
 
 ```bash
 # From repo root
-cp .env.example .env   # or copy manually on Windows
-# Edit .env: AUTH_SECRET, optional API keys, YOUTUBE_API_KEY, etc.
+cp .env.example .env   # Windows: copy manually
+# Edit .env: AUTH_SECRET, optional NVIDIA/GROQ/YOUTUBE keys
 
 npm run setup
 # installs frontend deps, creates backend venv, installs package,
 # prepares local DB from db/schema.sql
 ```
 
-### Docling (required for accurate PDF resume parsing)
+Docling is already a core dependency in `backend/pyproject.toml`. If PDF parse returns 503, reinstall:
 
 ```bash
 backend\.venv\Scripts\python.exe -m pip install "docling>=2.0,<3"
-# or
-backend\.venv\Scripts\python.exe -m pip install -e "backend/.[docling]"
 ```
+
+Optional official CrewAI package (Python &lt; 3.14):
+
+```bash
+backend\.venv\Scripts\python.exe -m pip install -e "backend/.[crewai]"
+```
+
+Without it, CrewAI-compatible built-in orchestrators still run for learning / improvement.
 
 ### Run
 
@@ -518,27 +974,12 @@ backend\.venv\Scripts\python.exe -m pip install -e "backend/.[docling]"
 npm run dev
 # frontend ~ http://127.0.0.1:3000
 # backend  ~ http://127.0.0.1:8000
-# OpenAPI  ~ http://127.0.0.1:8000/docs
+# OpenAPI  ~ http://127.0.0.1:8000/docs  (non-production)
 ```
 
-Or separately: `npm run dev:frontend` / `npm run dev:backend`.
+Or: `npm run dev:frontend` / `npm run dev:backend`.
 
-### Important env vars (see `.env.example`)
-
-| Variable | Purpose |
-|----------|---------|
-| `NEXT_PUBLIC_API_BASE_URL` / `PUBLIC_API_BASE_URL` | API origin |
-| `FRONTEND_ORIGINS` | CORS |
-| `DATABASE_PATH`, `LOCAL_STORAGE_DIR` | Local persistence |
-| `AUTH_SECRET` | JWT signing |
-| `NVIDIA_*` | NVIDIA LLM |
-| `GROQ_*` / `GROQ_RESUME_PARSER_*` | Groq LLM / parser |
-| `YOUTUBE_API_KEY`, `YOUTUBE_*` | Exact learning videos |
-| `DOCUMENT_*`, `AVATAR_*`, `INTERVIEW_*` buckets & size limits |
-
----
-
-## 17. Scripts & verification
+### Scripts
 
 | Script | Purpose |
 |--------|---------|
@@ -551,22 +992,21 @@ Or separately: `npm run dev:frontend` / `npm run dev:backend`.
 | `npm run check:frontend` | lint + typecheck + test + build |
 | `npm run test:backend` | `pytest backend/tests` |
 | `scripts/diagnostics/e2e-smoke.py` | API workflow smoke |
-| `frontend` `npm run test` | Vitest |
-| `frontend` `npm run e2e` / `e2e:landing` | Playwright |
+| frontend `npm run test` / `e2e` | Vitest / Playwright |
 
 ---
 
-## 18. Testing
+## 16. Testing
 
 | Area | Location |
 |------|----------|
-| ATS keyword scoring | `backend/tests/ats_scoring/` |
+| ATS keyword scoring + gate + schemas | `backend/tests/ats_scoring/` |
 | Document parsing / sections | `backend/tests/document_parsing/` |
 | Interview preparation | `backend/tests/interview/` |
 | Learning YouTube crew | `backend/tests/learning/` |
 | Avatars | `backend/tests/test_avatar_storage.py` |
 | Resume fixtures | `backend/tests/fixtures/resumes/` |
-| Frontend unit | `frontend/src/**/__tests__`, Vitest |
+| Frontend unit | `frontend/src/**/__tests__` |
 | Landing e2e | `frontend/e2e/landing.spec.ts` |
 
 ```bash
@@ -576,30 +1016,36 @@ cd frontend && npm run test
 
 ---
 
-## 19. Design principles
+## 17. Design principles
 
-1. **Evidence over invention** — resume/JD text and confirmations are the source of truth.  
+1. **Evidence over invention** — resume/JD text and user confirmations are the source of truth.  
 2. **Local ownership** — candidate data lives in local SQLite + files.  
 3. **Server-side secrets** — NVIDIA, Groq, YouTube keys never in the browser.  
-4. **Explainable ATS** — one scoring file (`ats_score.py`), percentage coverage, exact quotes.  
+4. **Explainable ATS** — one product scoring file (`ats_score.py`), weighted keyword coverage, exact quotes.  
 5. **Simple parse UI** — sections only; Docling for PDF accuracy.  
-6. **YouTube without hallucination** — video IDs only from YouTube API (or search page fallback).  
-7. **Delete what you create** — resumes, ATS, interviews, learning paths, account.  
+6. **YouTube without hallucination** — video IDs only from YouTube API (or search-page fallback).  
+7. **Delete what you create** — resumes, ATS, interviews, learning paths, full account wipe.  
+8. **Stable error codes** — `ApiError` for clients; request IDs on every response.
 
 ---
 
-## Quick reference: “where do I look?”
+## 18. Quick reference
 
 | Question | Answer |
 |----------|--------|
-| How is ATS scored? | `backend/app/features/ats/ats_score.py` |
-| How are PDFs parsed? | `document_parsing/parsing/text_extract.py` (Docling) + `pipeline.py` |
-| How are learning videos chosen? | `learning/youtube_api.py` + crew in `learning/agents/crew/` |
-| Where are routes? | `backend/app/api/router.py`, `frontend/src/app/` |
-| Where is schema? | `db/schema.sql` |
-| Where is env template? | `.env.example` |
-| Agent inventory? | `GET /api/v1/agents/status` or `agents/registry.py` |
+| How is product ATS scored? | `backend/app/features/ats/ats_score.py` — §9.1 formula |
+| What are composite parameter weights? | §9.2 library only; **not** persisted by `/ats-analyses` |
+| How is auth done? | scrypt passwords + HS256 JWT + localStorage/cookie — §4 |
+| How are PDFs parsed? | Docling in `document_parsing/parsing/text_extract.py` + `pipeline.py` |
+| Profile completion points? | `features/profile/completion.py` — §9.3 |
+| Job match formula? | `features/career_matching.py` — §9.4 |
+| Learning videos? | `learning/youtube_api.py` + crew in `learning/agents/crew/` |
+| Routes (API)? | `backend/app/api/router.py` + `features/ats/routes.py` + improvement routes |
+| Routes (UI)? | `frontend/src/app/` |
+| Schema? | `db/schema.sql` |
+| Env template? | `.env.example` |
+| Agent inventory at runtime? | `GET /api/v1/agents/status` |
 
 ---
 
-*This README matches the current codebase: local SQLite career workspace, Docling-based PDF extraction, keyword ATS scoring in a single module, YouTube Data API learning paths, mock interviews, profile/jobs/settings, and no in-app post-ATS resume editor. Prefer `/health` and `/agents/status` at runtime over assumptions about which keys are configured.*
+*This README matches the current codebase: local SQLite career workspace, Docling PDF extraction, product ATS as evidence-backed keyword coverage (`evidence-keyword-coverage-v3`), optional structured LLM ATS library with domain gate + composite weights, YouTube Data API learning paths, mock interviews without AI grading, profile/jobs/settings, BFF-proxied JWT auth, and no in-app post-ATS resume editor. Prefer `/health` and `/agents/status` at runtime over assumptions about which keys are configured.*
