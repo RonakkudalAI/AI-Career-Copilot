@@ -15,5 +15,5 @@ function run(command, args) {
 }
 
 if (run(npm, ["--prefix", "frontend", "ci"]) !== 0) process.exit(1);
-if (run(process.execPath, ["scripts/setup/backend.mjs"]) !== 0) process.exit(1);
-if (run(process.execPath, ["scripts/setup/local-db.mjs"]) !== 0) process.exit(1);
+if (run("node", ["scripts/setup/backend.mjs"]) !== 0) process.exit(1);
+if (run("node", ["scripts/setup/firebase.mjs"]) !== 0) process.exit(1);

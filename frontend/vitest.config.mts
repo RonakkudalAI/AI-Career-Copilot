@@ -7,7 +7,7 @@ export default defineConfig({
     globals: true,
     setupFiles: [],
     // Playwright E2E lives under e2e/ and must not be collected by Vitest.
-    exclude: ["**/node_modules/**", "**/e2e/**", "**/dist/**", "**/.next/**"],
+exclude: ["**/node_modules/**", "**/e2e/**", "**/dist/**"],
     include: ["src/**/*.{test,spec}.{ts,tsx}"],
   },
   resolve: {

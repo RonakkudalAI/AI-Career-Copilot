@@ -1,9 +1,3 @@
-"""
-Normalize and clean extracted profile draft fields.
-
-Used after both deterministic and AI extraction so the UI always receives
-clean, field-aware values (no 'Location:' prefixes, no 'Languages: Python' skills).
-"""
 
 from __future__ import annotations
 
@@ -36,8 +30,6 @@ _CAREER_LEVELS = {
     "manager",
     "executive",
 }
-
-
 def strip_field_label(value: str | None) -> str | None:
     if value is None:
         return None
@@ -46,28 +38,21 @@ def strip_field_label(value: str | None) -> str | None:
         return None
     text = _LABEL_PREFIX.sub("", text).strip()
     return text or None
-
-
 def clean_skill_name(value: str | None) -> str | None:
     text = strip_field_label(value)
     if not text:
         return None
-    # Drop category-only tokens
     if _SKILL_JUNK.match(text):
         return None
-    # "Languages: Python" already stripped; also split accidental "Python FastAPI" later
     if len(text) > 60:
         return None
     if text.endswith(":"):
         return None
     return text
-
-
 def clean_phone(value: str | None) -> str | None:
     if not value:
         return None
     text = strip_field_label(str(value)) or ""
-    # Keep digits and leading +
     digits = re.sub(r"[^\d+]", "", text)
     if digits.count("+") > 1:
         digits = digits.replace("+", "")
@@ -76,34 +61,23 @@ def clean_phone(value: str | None) -> str | None:
     if len(pure) < 8 or len(pure) > 15:
         return None
     return digits[:40] if digits.startswith("+") else pure[:40]
-
-
 def clean_location(value: str | None) -> str | None:
     text = strip_field_label(value)
     if not text:
         return None
-    # Drop trailing contact noise
     text = re.split(r"\||@", text)[0].strip()
     if _EMAIL_LIKE.search(text) or "http" in text.lower():
         return None
     return text[:160] or None
-
-
 _EMAIL_LIKE = re.compile(r"[\w.+-]+@[\w.-]+\.\w+")
-
-
 def clean_name(value: str | None) -> str | None:
     text = strip_field_label(value)
     if not text:
         return None
-    # Title-case messy ALL CAPS names carefully
     if text.isupper() and len(text) > 3:
         text = text.title()
     return text[:120]
-
-
 def normalize_date_value(value: Any) -> str | None:
-    """Accept only ISO dates or ISO month values from extraction/manual drafts."""
     text = str(value or "").strip()
     if re.fullmatch(r"\d{4}-\d{2}", text):
         text = f"{text}-01"
@@ -113,10 +87,7 @@ def normalize_date_value(value: Any) -> str | None:
         return date.fromisoformat(text).isoformat()
     except ValueError:
         return None
-
-
 def extract_explicit_years(text: str) -> float | None:
-    """Prefer phrases like '2+ years of experience' over year-span math."""
     matches = _YEARS_PHRASE.findall(text or "")
     if not matches:
         return None
@@ -128,13 +99,10 @@ def extract_explicit_years(text: str) -> float | None:
             continue
     if not values:
         return None
-    # Use the max stated experience phrase (usually the summary)
     years = max(values)
     if 0 <= years <= 50:
         return years
     return None
-
-
 def infer_career_level(years: float | None, text: str = "") -> str | None:
     blob = (text or "").casefold()
     for level in ("executive", "manager", "lead", "senior", "mid-level", "mid", "junior", "fresher", "entry"):
@@ -157,8 +125,6 @@ def infer_career_level(years: float | None, text: str = "") -> str | None:
     if years < 12:
         return "lead"
     return "manager"
-
-
 def normalize_skill_list(skills: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -166,7 +132,6 @@ def normalize_skill_list(skills: list[dict[str, Any]]) -> list[dict[str, Any]]:
         name = clean_skill_name(str(row.get("name") or ""))
         if not name:
             continue
-        # Split residual commas
         for part in re.split(r"[,;/|]", name):
             cleaned = clean_skill_name(part)
             if not cleaned:
@@ -177,8 +142,6 @@ def normalize_skill_list(skills: list[dict[str, Any]]) -> list[dict[str, Any]]:
             seen.add(key)
             out.append({**row, "name": cleaned, "selected": row.get("selected", True)})
     return out[:50]
-
-
 def normalize_profile_fields(profile: dict[str, Any], *, resume_text: str = "") -> dict[str, Any]:
     p = dict(profile or {})
     p["full_name"] = clean_name(p.get("full_name"))
@@ -193,7 +156,6 @@ def normalize_profile_fields(profile: dict[str, Any], *, resume_text: str = "") 
     p["current_role"] = strip_field_label(p.get("current_role"))
     if p.get("current_role"):
         p["current_role"] = p["current_role"][:160]
-
     years = p.get("years_experience")
     explicit = extract_explicit_years(resume_text)
     if explicit is not None:
@@ -206,7 +168,6 @@ def normalize_profile_fields(profile: dict[str, Any], *, resume_text: str = "") 
         except (TypeError, ValueError):
             years = explicit
     p["years_experience"] = years
-
     level = strip_field_label(p.get("career_level"))
     if level:
         level_key = level.casefold().replace(" ", "-")
@@ -216,11 +177,8 @@ def normalize_profile_fields(profile: dict[str, Any], *, resume_text: str = "") 
             p["career_level"] = infer_career_level(years, resume_text)
     else:
         p["career_level"] = infer_career_level(years, resume_text)
-
     p["selected"] = p.get("selected", True) is not False
     return p
-
-
 def normalize_experiences(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for index, row in enumerate(rows or []):
@@ -229,7 +187,6 @@ def normalize_experiences(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if not role:
             continue
         summary = strip_field_label(row.get("summary"))
-        # Prefer bullet-style newlines if summary was glued
         if summary:
             summary = re.sub(r"\s+[-–—•]\s+", "\n- ", summary)
             summary = re.sub(r"(?<=[a-z0-9])\s+(?=[A-Z][a-z])", " ", summary)
@@ -247,8 +204,6 @@ def normalize_experiences(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             }
         )
     return out
-
-
 def normalize_education(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for index, row in enumerate(rows or []):
@@ -257,7 +212,6 @@ def normalize_education(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
         degree = strip_field_label(row.get("degree"))
         field = strip_field_label(row.get("field_of_study"))
-        # "Bachelor of Technology in Computer Science"
         if degree and not field:
             m = re.search(r"\bin\s+(.+)$", degree, re.I)
             if m:
@@ -275,8 +229,6 @@ def normalize_education(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             }
         )
     return out
-
-
 def normalize_projects(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for index, row in enumerate(rows or []):
@@ -294,8 +246,6 @@ def normalize_projects(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             }
         )
     return out
-
-
 def normalize_links(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -319,10 +269,7 @@ def normalize_links(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             link_type = "other"
         out.append({**row, "url": url[:500], "link_type": link_type, "selected": True})
     return out
-
-
 def normalize_draft(draft: dict[str, Any], *, resume_text: str = "") -> dict[str, Any]:
-    """Return a cleaned draft with consistent field shapes for the UI and apply API."""
     text = resume_text or ""
     out = {
         "profile": normalize_profile_fields(draft.get("profile") or {}, resume_text=text),
@@ -353,9 +300,7 @@ def normalize_draft(draft: dict[str, Any], *, resume_text: str = "") -> dict[str
         "links": normalize_links(draft.get("links") or []),
         "meta": dict(draft.get("meta") or {}),
     }
-    # Drop empty language rows
     out["languages"] = [r for r in out["languages"] if r.get("language")]
-    # Field coverage summary for UI/debug
     profile = out["profile"]
     covered = [
         key

@@ -8,7 +8,7 @@
     "dev": "node scripts/dev/preflight.mjs && node scripts/dev/run.mjs",
     "dev:frontend": "node scripts/dev/frontend.mjs",
     "dev:backend": "node scripts/dev/backend.mjs",
-    "db:setup": "node scripts/dev/preflight.mjs",
+    "firebase:check": "node scripts/dev/preflight.mjs",
     "lint": "node scripts/run-frontend.mjs lint",
     "typecheck": "node scripts/run-frontend.mjs typecheck",
     "build:frontend": "node scripts/run-frontend.mjs build",

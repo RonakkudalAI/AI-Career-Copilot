@@ -1,12 +1,17 @@
-"use client";
 
-import Link from "next/link";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { Link } from "@/shared/ui/router-link";
+import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { BriefcaseBusiness, CheckCircle2, FileText, RotateCcw, ShieldCheck } from "lucide-react";
-import { Badge, Button, Card, Input, PageHeader, Progress, Textarea } from "@/shared/ui/primitives";
+
+
+
+
+
+
 import { apiRequest } from "@/shared/api/client";
 import { isValidCareerFile } from "@/shared/utils";
+import { Badge, Button, Card, Input, PageHeader, Progress, Textarea } from "@/shared/ui/primitives";
 
 type StructuredContent = {
   schema_version?: string;
@@ -214,7 +219,7 @@ function ParsedInputPanel({ title, input }: { title: string; input?: ParsedInput
             {input.filename || "Pasted text"} · {input.extraction_status || "parsed"}
           </p>
         </div>
-        <Badge tone="success">Source text</Badge>
+        <Badge variant="default">Source text</Badge>
       </div>
       {sections.length > 0 ? (
         <div className="stack" style={{ gap: 10 }}>
@@ -235,7 +240,7 @@ function ParsedInputPanel({ title, input }: { title: string; input?: ParsedInput
 }
 
 export function AnalysisHistory() {
-  const searchParams = useSearchParams();
+  const [searchParams] = useSearchParams();
   const tabParam = searchParams.get("tab");
   const initialTab: HubTab =
     tabParam === "upload" ? "upload" : tabParam === "resumes" ? "resumes" : "ats";
@@ -456,7 +461,7 @@ function ResumeLibrary() {
                   </p>
                 )}
               </div>
-              <Badge tone={resume.is_active ? "success" : "info"}>{resume.is_active ? "Active" : "Stored"}</Badge>
+              <Badge variant={resume.is_active ? "default" : "secondary"}>{resume.is_active ? "Active" : "Stored"}</Badge>
             </div>
             <div className="cluster">
               <Button
@@ -467,7 +472,7 @@ function ResumeLibrary() {
                 {previewLoading && previewLoadingId === resume.id ? "Loading PDF…" : "Preview"}
               </Button>
               <Button
-                variant="danger"
+                variant="destructive"
                 disabled={deletingId === resume.id}
                 onClick={() => deleteResume(resume.id, resume.title)}
               >
@@ -489,7 +494,7 @@ function ResumeLibrary() {
             role="dialog"
             aria-modal="true"
             aria-label={`PDF preview: ${preview.resume.title}`}
-            onClick={(event) => event.stopPropagation()}
+            onClick={(event: any) => event.stopPropagation()}
           >
             <div className="modal-header">
               <div>
@@ -614,7 +619,7 @@ function AtsHistoryList() {
                 </h2>
                 <p style={{ margin: 0 }}>{formatDate(analysis.created_at)}</p>
               </div>
-              <Badge tone={analysis.status === "completed" ? "success" : analysis.status === "failed" ? "danger" : "warning"}>
+              <Badge variant={analysis.status === "completed" ? "default" : analysis.status === "failed" ? "destructive" : "outline"}>
                 {analysis.status}
               </Badge>
             </div>
@@ -635,7 +640,7 @@ function AtsHistoryList() {
                 </Link>
               )}
               <Button
-                variant="danger"
+                variant="destructive"
                 disabled={deletingId === analysis.id}
                 onClick={() => deleteAnalysis(analysis.id)}
               >
@@ -673,7 +678,7 @@ function SectionEntries({
             <Textarea
               aria-label={`Edit ${section.replaceAll("_", " ")} entry ${index + 1}`}
               value={entry}
-              onChange={(event) => onEdit?.(index, event.target.value)}
+              onChange={(event: any) => onEdit?.(index, event.target.value)}
               rows={Math.min(6, Math.max(2, entry.split("\n").length))}
             />
           ) : (
@@ -715,7 +720,7 @@ function ExtractionPanel({
             <h2>{title.replace(/^Resume · |^Job description · /, "")}</h2>
           </div>
         </div>
-        <Badge tone={status === "confirmed" ? "success" : "warning"}>{status}</Badge>
+        <Badge variant={status === "confirmed" ? "default" : "outline"}>{status}</Badge>
       </div>
       <div className="extraction-card-meta">
         <span>{entries.length ? `${entries.length} sections` : "Raw text"}</span>
@@ -752,7 +757,7 @@ function ExtractionPanel({
 }
 
 export function NewAnalysis({ embedded = false }: { embedded?: boolean }) {
-  const router = useRouter();
+  const navigate = useNavigate();
   const [step, setStep] = useState<UploadStep>("upload");
   const [file, setFile] = useState<File | null>(null);
   const [jdMode, setJdMode] = useState<"text" | "file">("text");
@@ -873,7 +878,7 @@ export function NewAnalysis({ embedded = false }: { embedded?: boolean }) {
           job_description_id: confirmedJob.id,
         }),
       });
-      router.push(`/resume-analysis/report/${analysis.id}`);
+      navigate(`/resume-analysis/report/${analysis.id}`);
     } catch (reason) {
       setError((reason as Error).message);
       setMessage("");
@@ -901,9 +906,9 @@ export function NewAnalysis({ embedded = false }: { embedded?: boolean }) {
       )}
 
       <div className="cluster" style={{ marginBottom: 16 }}>
-        <Badge tone={step === "upload" ? "info" : "success"}>1. Select files</Badge>
-        <Badge tone={step === "review" ? "info" : "warning"}>2. Review extractions</Badge>
-        <Badge tone="warning">3. Analysis</Badge>
+        <Badge variant={step === "upload" ? "secondary" : "default"}>1. Select files</Badge>
+        <Badge variant={step === "review" ? "secondary" : "outline"}>2. Review extractions</Badge>
+        <Badge variant="outline">3. Analysis</Badge>
       </div>
 
       {error && (
@@ -930,7 +935,7 @@ export function NewAnalysis({ embedded = false }: { embedded?: boolean }) {
                 <Input
                   type="file"
                   accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                  onChange={(event) => setFile(event.target.files?.[0] || null)}
+                  onChange={(event: any) => setFile(event.target.files?.[0] || null)}
                 />
               </label>
               {file && (
@@ -964,7 +969,7 @@ export function NewAnalysis({ embedded = false }: { embedded?: boolean }) {
                   Paste text
                   <Textarea
                     value={jd}
-                    onChange={(event) => setJd(event.target.value)}
+                    onChange={(event: any) => setJd(event.target.value)}
                     placeholder="Paste the job description…"
                   />
                 </label>
@@ -974,7 +979,7 @@ export function NewAnalysis({ embedded = false }: { embedded?: boolean }) {
                   <Input
                     type="file"
                     accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                    onChange={(event) => setJdFile(event.target.files?.[0] || null)}
+                    onChange={(event: any) => setJdFile(event.target.files?.[0] || null)}
                   />
                 </label>
               )}
@@ -1055,7 +1060,7 @@ export function NewAnalysis({ embedded = false }: { embedded?: boolean }) {
               <input
                 type="checkbox"
                 checked={reviewed}
-                onChange={(event) => setReviewed(event.target.checked)}
+                onChange={(event: any) => setReviewed(event.target.checked)}
               />{" "}
               <span>
                 <strong>I reviewed both documents</strong>
@@ -1218,7 +1223,7 @@ export function AtsReport() {
                         </p>
                       )}
                     </div>
-                    <Badge tone={found ? (row.match_status === "strong_match" ? "success" : "info") : "warning"}>
+                    <Badge variant={found ? (row.match_status === "strong_match" ? "default" : "secondary") : "outline"}>
                       {found ? (row.match_status === "strong_match" ? "Found" : "Partial") : "Missing"}
                     </Badge>
                   </div>
@@ -1235,7 +1240,7 @@ export function AtsReport() {
             <strong>Critical / required</strong>
             <div className="cluster" style={{ gap: 8 }}>
               {criticalMissing.map((term) => (
-                <Badge key={`critical-${term}`} tone="warning">
+                <Badge key={`critical-${term}`} variant="outline">
                   {term}
                 </Badge>
               ))}
@@ -1247,7 +1252,7 @@ export function AtsReport() {
             <strong>Preferred</strong>
             <div className="cluster" style={{ gap: 8 }}>
               {preferredMissing.map((term) => (
-                <Badge key={`preferred-${term}`} tone="info">
+                <Badge key={`preferred-${term}`} variant="secondary">
                   {term}
                 </Badge>
               ))}
@@ -1259,7 +1264,7 @@ export function AtsReport() {
             <strong>Partial evidence</strong>
             <div className="cluster" style={{ gap: 8 }}>
               {partialTerms.map((term) => (
-                <Badge key={`partial-${term}`} tone="info">
+                <Badge key={`partial-${term}`} variant="secondary">
                   {term}
                 </Badge>
               ))}
@@ -1272,7 +1277,7 @@ export function AtsReport() {
         {missingTerms.length ? (
           <div className="cluster" style={{ gap: 8 }}>
             {missingTerms.map((term) => (
-              <Badge key={`missing-${term}`} tone="warning">
+              <Badge key={`missing-${term}`} variant="outline">
                 {term}
               </Badge>
             ))}

@@ -5,8 +5,15 @@ loadRootEnv();
 const environment = process.env;
 
 const checks = [
-  ["NEXT_PUBLIC_API_BASE_URL", "CLIENT-SAFE"],
-  ["DATABASE_PATH", "SERVER-ONLY"],
+  ["VITE_API_BASE_URL", "CLIENT-SAFE-OPTIONAL"],
+  ["VITE_FIREBASE_API_KEY", "CLIENT-SAFE"],
+  ["VITE_FIREBASE_AUTH_DOMAIN", "CLIENT-SAFE"],
+  ["VITE_FIREBASE_PROJECT_ID", "CLIENT-SAFE"],
+  ["VITE_FIREBASE_STORAGE_BUCKET", "CLIENT-SAFE"],
+  ["VITE_FIREBASE_MESSAGING_SENDER_ID", "CLIENT-SAFE"],
+  ["VITE_FIREBASE_APP_ID", "CLIENT-SAFE"],
+  ["FIREBASE_PROJECT_ID", "SERVER-ONLY"],
+  ["FIREBASE_CREDENTIALS_PATH", "SERVER-ONLY"],
   ["AUTH_SECRET", "SERVER-ONLY"],
   ["PUBLIC_API_BASE_URL", "SERVER-ONLY-OPTIONAL"],
   ["LLM_PROVIDER", "SERVER-ONLY"],
@@ -46,15 +53,22 @@ for (const [name, scope] of checks) {
 }
 
 for (const name of Object.keys(environment)) {
-  if (/^NEXT_PUBLIC_.*(SECRET|SERVICE|PASSWORD|DB_URL|NVIDIA|GROQ)/.test(name)) {
+  if (/^VITE_.*(SECRET|SERVICE|PASSWORD|DB_URL|NVIDIA|GROQ)/.test(name)) {
     failures.push(`${name}: SERVER SECRET HAS CLIENT-SAFE PREFIX`);
   }
 }
 
-for (const name of ["NEXT_PUBLIC_API_BASE_URL", "NVIDIA_BASE_URL"]) {
-  requireAbsoluteHttpUrl(name);
-}
+if (environment.VITE_API_BASE_URL) requireAbsoluteHttpUrl("VITE_API_BASE_URL");
+if (environment.NVIDIA_BASE_URL) requireAbsoluteHttpUrl("NVIDIA_BASE_URL");
 if (environment.GROQ_BASE_URL) requireAbsoluteHttpUrl("GROQ_BASE_URL");
+
+if (
+  environment.VITE_FIREBASE_PROJECT_ID &&
+  environment.FIREBASE_PROJECT_ID &&
+  environment.VITE_FIREBASE_PROJECT_ID !== environment.FIREBASE_PROJECT_ID
+) {
+  failures.push("Firebase project mismatch between VITE_FIREBASE_PROJECT_ID and FIREBASE_PROJECT_ID");
+}
 
 if (environment.NVIDIA_API_KEY && !environment.NVIDIA_MODEL) {
   failures.push("NVIDIA_MODEL: MISSING while live generation is enabled");

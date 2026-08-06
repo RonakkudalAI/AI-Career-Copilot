@@ -1,23 +1,13 @@
-"""
-Central registry of Career Copilot agents.
-
-This is the single source of truth for:
-  - which product agents exist
-  - which LLM provider each uses
-  - whether they are configured at runtime
-"""
 
 from __future__ import annotations
 
 from typing import Any
 
-from app.features.resume_improvement.agents.crew import crew_capability, crew_runtime_mode
-from app.features.learning.service import learning_agent_capability
 from app.agents.providers import GroqClient, NvidiaClient
 from app.core.config import Settings
+from app.features.learning.service import learning_agent_capability
+from app.features.resume_improvement.agents.crew import crew_capability, crew_runtime_mode
 
-
-# Product agent ids — keep stable for API/UI consumers.
 AGENT_RESUME_IMPROVEMENT = "resume_improvement"
 AGENT_PROFILE_FILL = "profile_fill"
 AGENT_INTERVIEW_QUESTIONS = "interview_questions"
@@ -25,14 +15,11 @@ AGENT_ATS_IMPROVEMENT_BRIEF = "ats_improvement_brief"
 AGENT_RESUME_IMPROVEMENT_CREW = "resume_improvement_crew"
 AGENT_LEARNING_YOUTUBE_CREW = "learning_youtube_crew"
 AGENT_DOCUMENT_SECTION_EXTRACT = "document_section_extract"
-
-
 def list_agents(settings: Settings) -> list[dict[str, Any]]:
     nvidia = NvidiaClient(settings).capability()
     groq = GroqClient(settings).capability()
     crew = crew_capability(settings)
     learning = learning_agent_capability(settings)
-
     return [
         {
             "id": AGENT_RESUME_IMPROVEMENT,
@@ -74,7 +61,7 @@ def list_agents(settings: Settings) -> list[dict[str, Any]]:
             "provider": "nvidia",
             "prompt": "fill_profile_from_resume_v1.txt",
             "configured": bool(nvidia.get("configured")),
-            "ready": True,  # deterministic path always works
+            "ready": True,
             "model": nvidia.get("model") if nvidia.get("configured") else None,
             "endpoint": "POST /api/v1/profile/from-resume/preview",
             "fallback": "Deterministic resume mapping when NVIDIA is unavailable.",
@@ -86,7 +73,7 @@ def list_agents(settings: Settings) -> list[dict[str, Any]]:
             "provider": "groq",
             "prompt": "interview_questions_v1.txt",
             "configured": bool(groq.get("configured")),
-            "ready": True,  # template fallback always works
+            "ready": True,
             "model": groq.get("model") if groq.get("configured") else None,
             "endpoint": "POST /api/v1/interviews/{session_id}/start",
             "fallback": "Local templates when Groq is unavailable (NVIDIA is never used here).",
@@ -98,7 +85,7 @@ def list_agents(settings: Settings) -> list[dict[str, Any]]:
             "provider": "nvidia_or_groq",
             "prompt": "ats_improvement_v1.txt",
             "configured": bool(nvidia.get("configured") or groq.get("configured")),
-            "ready": True,  # deterministic brief always works
+            "ready": True,
             "model": nvidia.get("model")
             if nvidia.get("configured")
             else (groq.get("model") if groq.get("configured") else None),
@@ -116,7 +103,7 @@ def list_agents(settings: Settings) -> list[dict[str, Any]]:
             "provider": "groq",
             "prompt": "learning_youtube_path_v1.txt (+ crew tools)",
             "configured": bool(groq.get("configured")),
-            "ready": True,  # deterministic plan + search URLs always work
+            "ready": True,
             "model": groq.get("model") if groq.get("configured") else None,
             "endpoint": "POST /api/v1/learning-paths/generate",
             "fallback": "Deterministic gap→YouTube search plan when Groq is unavailable.",
@@ -145,8 +132,6 @@ def list_agents(settings: Settings) -> list[dict[str, Any]]:
             "fallback": "Structural layout parser when no LLM is available.",
         },
     ]
-
-
 def agents_status(settings: Settings) -> dict[str, Any]:
     agents = list_agents(settings)
     nvidia = NvidiaClient(settings).capability()

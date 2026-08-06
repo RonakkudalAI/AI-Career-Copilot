@@ -5,10 +5,7 @@ from typing import Literal
 
 from app.core.config import get_settings
 
-
 Provider = Literal["groq", "nvidia"]
-
-
 @dataclass(frozen=True)
 class LLMSettings:
     provider: Provider
@@ -16,8 +13,6 @@ class LLMSettings:
     base_url: str
     api_key: str
     temperature: float = 0.1
-
-
 def get_llm_settings(provider: str | None = None) -> LLMSettings:
     project_settings = get_settings()
     selected = (provider or project_settings.llm_provider or "groq").lower()
@@ -36,10 +31,7 @@ def get_llm_settings(provider: str | None = None) -> LLMSettings:
         base_url=project_settings.nvidia_base_url,
         api_key=project_settings.nvidia_api_key,
     )
-
-
 def get_llm(provider: str | None = None):
-    """Return the CrewAI-native LLM for the configured OpenAI-compatible provider."""
     settings = get_llm_settings(provider)
     if not settings.api_key:
         raise RuntimeError(f"{settings.provider.upper()}_API_KEY is not configured")

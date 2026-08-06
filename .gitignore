@@ -5,12 +5,6 @@ backend/.venv/
 .venv/
 
 # Build / framework caches
-.next/
-frontend/.next/
-frontend/.next-dev-*/
-.next-dev-*/
-.next-build-*/
-out/
 dist/
 build/
 coverage/
@@ -49,17 +43,17 @@ backend/career_copilot_api.egg-info/
 .env
 .env.*
 !.env.example
+/secrets/
+firebase-service-account*.json
 
 # Logs / OS
 *.log
 .DS_Store
 Thumbs.db
 
-# Local database files and uploaded objects (user data)
+# Local uploaded objects (user data)
 .data/
 backend/.data/
-*.sqlite-shm
-*.sqlite-wal
 
 # Local agent/tooling scratch (not product source)
 .agents/

@@ -1,9 +1,4 @@
-"""
-Synthetic Resume Fixture Generator.
-
-Generates 22 requirement-driven resume fixture files (PDF, DOCX, Scanned, Poor OCR, Empty, Corrupted, Encrypted)
-and 22 corresponding golden ground-truth JSON output benchmark files in backend/tests/fixtures/resumes/golden/.
-"""
+# ruff: noqa: E402, E501
 
 import argparse
 import json
@@ -11,25 +6,18 @@ import logging
 import os
 import pathlib
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
-# Add backend root directory to sys.path if not present
 backend_root = str(pathlib.Path(__file__).resolve().parent.parent.parent.parent)
 if backend_root not in sys.path:
     sys.path.insert(0, backend_root)
-
-from app.features.document_parsing.schemas import ParsedResumeSchema
-
-# Standard libraries & third-party packages
-import pypdf
-from PIL import Image, ImageDraw, ImageFilter
 import docx
-from docx.shared import Inches, Pt, RGBColor
+import pypdf
 from docx.oxml import parse_xml
 from docx.oxml.ns import nsdecls
-
-import reportlab
+from docx.shared import Inches, Pt, RGBColor
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
@@ -48,24 +36,19 @@ from reportlab.platypus import (
     TableStyle,
 )
 
+from app.features.document_parsing.schemas import ParsedResumeSchema
+
 FIXTURES_DIR = pathlib.Path(__file__).resolve().parent
 GOLDEN_DIR = FIXTURES_DIR / "golden"
-
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger("generate_fixtures")
-
-
 class NumberedCanvas(canvas.Canvas):
-    """Two-pass canvas for adding running footers like 'Page X of Y'."""
-
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        self._saved_page_states: List[Dict[str, Any]] = []
-
+        self._saved_page_states: list[dict[str, Any]] = []
     def showPage(self) -> None:
         self._saved_page_states.append(dict(self.__dict__))
         self._startPage()
-
     def save(self) -> None:
         num_pages = len(self._saved_page_states)
         for state in self._saved_page_states:
@@ -73,68 +56,49 @@ class NumberedCanvas(canvas.Canvas):
             self.draw_page_number(num_pages)
             super().showPage()
         super().save()
-
     def draw_page_number(self, page_count: int) -> None:
         self.saveState()
         self.setFont("Helvetica", 9)
         self.setFillColor(colors.HexColor("#666666"))
         self.drawRightString(letter[0] - 36, 36, f"Page {self._pageNumber} of {page_count}")
         self.restoreState()
-
-
 @dataclass
 class FixtureSpec:
     id: int
     slug: str
     filename: str
     golden_filename: str
-    file_type: str  # "pdf" | "docx"
+    file_type: str
     description: str
-    generator_fn: Callable[[pathlib.Path, Dict[str, Any]], None]
-    golden_data: Dict[str, Any]
-
+    generator_fn: Callable[[pathlib.Path, dict[str, Any]], None]
+    golden_data: dict[str, Any]
     @property
     def fixture_path(self) -> pathlib.Path:
         return FIXTURES_DIR / self.filename
-
     @property
     def golden_path(self) -> pathlib.Path:
         return GOLDEN_DIR / self.golden_filename
-
-
-def make_field(value: Any, block_ids: List[str], confidence: str = "HIGH", warning: Optional[str] = None) -> Dict[str, Any]:
+def make_field(value: Any, block_ids: list[str], confidence: str = "HIGH", warning: str | None = None) -> dict[str, Any]:
     return {
         "value": value,
         "evidence_block_ids": block_ids,
         "confidence": confidence,
         "warning": warning,
     }
-
-
-def make_empty_field(warning: Optional[str] = None) -> Dict[str, Any]:
-    """Helper to generate a valid empty FieldWrapper dict for absent fields."""
+def make_empty_field(warning: str | None = None) -> dict[str, Any]:
     return {
         "value": None,
         "evidence_block_ids": [],
         "confidence": "HIGH",
         "warning": warning,
     }
-
-
-def normalize_golden_benchmark(data: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Normalizes golden benchmark dictionaries to align with ParsedResumeSchema field names
-    and replaces raw null values with empty FieldWrapper dictionaries.
-    """
+def normalize_golden_benchmark(data: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(data, dict):
         return data
-
     if "value" in data and "evidence_block_ids" in data:
         return data
-
     normalized = {}
     for key, val in data.items():
-        # Correct field name mismatches
         norm_key = key
         if key == "licenses":
             norm_key = "licences"
@@ -144,11 +108,8 @@ def normalize_golden_benchmark(data: Dict[str, Any]) -> Dict[str, Any]:
             norm_key = "field_of_study"
         elif key == "project_name":
             norm_key = "name"
-
-        # Filter out misplaced top-level project keys
         if key in ("dates", "confidence", "evidence_block_ids") and not isinstance(val, (dict, list)):
             continue
-
         if val is None:
             normalized[norm_key] = make_empty_field()
         elif isinstance(val, dict):
@@ -157,22 +118,13 @@ def normalize_golden_benchmark(data: Dict[str, Any]) -> Dict[str, Any]:
             normalized[norm_key] = [normalize_golden_benchmark(item) for item in val]
         else:
             normalized[norm_key] = val
-
     return normalized
-
-
-# ==============================================================================
-# Generator Functions for 22 Fixtures
-# ==============================================================================
-
-# --- Fixture 01: Single Column PDF ---
-def gen_01_single_column(path: pathlib.Path, golden: Dict[str, Any]) -> None:
+def gen_01_single_column(path: pathlib.Path, golden: dict[str, Any]) -> None:
     doc = SimpleDocTemplate(str(path), pagesize=letter, leftMargin=36, rightMargin=36, topMargin=36, bottomMargin=36)
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle('DocTitle', parent=styles['Title'], fontSize=20, leading=24, textColor=colors.HexColor('#1A252C'), alignment=0)
     heading_style = ParagraphStyle('SectionHeader', parent=styles['Heading2'], fontSize=12, leading=16, textColor=colors.HexColor('#007AFF'), spaceBefore=10, spaceAfter=4)
     body_style = ParagraphStyle('Body', parent=styles['Normal'], fontSize=10, leading=14, textColor=colors.HexColor('#333333'))
-
     story = [
         Paragraph("Alex Mercer", title_style),
         Paragraph("Email: alex.mercer@email.com | Phone: (555) 019-2834 | San Francisco, CA", body_style),
@@ -196,25 +148,19 @@ def gen_01_single_column(path: pathlib.Path, golden: Dict[str, Any]) -> None:
         Paragraph("<b>B.S. in Computer Science</b> — University of California, Berkeley (2014 – 2018)", body_style),
     ]
     doc.build(story)
-
-
-# --- Fixture 02: Two Column PDF ---
-def gen_02_two_column(path: pathlib.Path, golden: Dict[str, Any]) -> None:
+def gen_02_two_column(path: pathlib.Path, golden: dict[str, Any]) -> None:
     doc = BaseDocTemplate(str(path), pagesize=letter)
     margin = 36
     page_w, page_h = letter
     col_w = (page_w - 2 * margin - 18) / 2
-
     frame1 = Frame(margin, margin, col_w, page_h - 2 * margin, id='col1', leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0)
     frame2 = Frame(margin + col_w + 18, margin, col_w, page_h - 2 * margin, id='col2', leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0)
     template = PageTemplate(id='two_col', frames=[frame1, frame2])
     doc.addPageTemplates([template])
-
     styles = getSampleStyleSheet()
     h1_style = ParagraphStyle('ColH1', parent=styles['Heading1'], fontSize=16, leading=20, textColor=colors.HexColor('#1F4E79'))
     h2_style = ParagraphStyle('ColH2', parent=styles['Heading2'], fontSize=12, leading=16, textColor=colors.HexColor('#1F4E79'), spaceBefore=8, spaceAfter=4)
     body_style = ParagraphStyle('ColBody', parent=styles['Normal'], fontSize=9.5, leading=13, textColor=colors.HexColor('#333333'))
-
     story = [
         Paragraph("Elena Rostova", h1_style),
         Paragraph("Lead Data Scientist | elena.rostova@example.com | Boston, MA", body_style),
@@ -242,31 +188,23 @@ def gen_02_two_column(path: pathlib.Path, golden: Dict[str, Any]) -> None:
         Paragraph("• Rostova E., et al. 'Genomic Sequence Transformer Networks', Nature AI, 2021.", body_style),
     ]
     doc.build(story)
-
-
-# --- Fixture 03: Sidebar PDF ---
 def draw_sidebar_bg(canvas_obj: canvas.Canvas, doc_obj: Any) -> None:
     canvas_obj.saveState()
     canvas_obj.setFillColor(colors.HexColor('#2C3E50'))
     canvas_obj.rect(0, 0, 180, letter[1], fill=1, stroke=0)
     canvas_obj.restoreState()
-
-
-def gen_03_sidebar(path: pathlib.Path, golden: Dict[str, Any]) -> None:
+def gen_03_sidebar(path: pathlib.Path, golden: dict[str, Any]) -> None:
     doc = BaseDocTemplate(str(path), pagesize=letter)
     sidebar_frame = Frame(18, 18, 144, letter[1] - 36, id='sidebar', leftPadding=6, rightPadding=6, topPadding=18)
     main_frame = Frame(198, 18, letter[0] - 216, letter[1] - 36, id='main', leftPadding=6, rightPadding=6, topPadding=18)
-
     template = PageTemplate(id='sidebar_layout', frames=[sidebar_frame, main_frame], onPage=draw_sidebar_bg)
     doc.addPageTemplates([template])
-
     styles = getSampleStyleSheet()
     side_title = ParagraphStyle('SideTitle', parent=styles['Heading2'], fontSize=11, leading=14, textColor=colors.white, spaceBefore=8, spaceAfter=4)
     side_body = ParagraphStyle('SideBody', parent=styles['Normal'], fontSize=9, leading=13, textColor=colors.HexColor('#ECEFF1'))
     main_title = ParagraphStyle('MainTitle', parent=styles['Title'], fontSize=20, leading=24, textColor=colors.HexColor('#2C3E50'), alignment=0)
     main_h2 = ParagraphStyle('MainH2', parent=styles['Heading2'], fontSize=12, leading=16, textColor=colors.HexColor('#2C3E50'), spaceBefore=10, spaceAfter=4)
     main_body = ParagraphStyle('MainBody', parent=styles['Normal'], fontSize=9.5, leading=13.5, textColor=colors.HexColor('#333333'))
-
     story = [
         Paragraph("CONTACT", side_title),
         Paragraph("marcus.vance@example.com", side_body),
@@ -299,16 +237,12 @@ def gen_03_sidebar(path: pathlib.Path, golden: Dict[str, Any]) -> None:
         Paragraph("• Built CI/CD automation pipelines serving 120+ microservices.", main_body),
     ]
     doc.build(story)
-
-
-# --- Fixture 04: Table Based PDF ---
-def gen_04_table_based(path: pathlib.Path, golden: Dict[str, Any]) -> None:
+def gen_04_table_based(path: pathlib.Path, golden: dict[str, Any]) -> None:
     doc = SimpleDocTemplate(str(path), pagesize=letter, leftMargin=36, rightMargin=36, topMargin=36, bottomMargin=36)
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle('TTitle', parent=styles['Heading1'], fontSize=16, leading=20, textColor=colors.HexColor('#1A252C'))
     cell_bold = ParagraphStyle('CBold', parent=styles['Normal'], fontSize=9.5, leading=13, fontName='Helvetica-Bold')
     cell_body = ParagraphStyle('CBody', parent=styles['Normal'], fontSize=9.5, leading=13)
-
     data = [
         [Paragraph("<b>CANDIDATE PROFILE</b>", title_style), Paragraph("<b>Contact:</b> samuel.oak@example.com | (555) 321-9876", cell_body)],
         [Paragraph("SUMMARY", cell_bold), Paragraph("Experienced Full Stack Developer specializing in React, Node.js, and Python web architectures.", cell_body)],
@@ -324,16 +258,12 @@ def gen_04_table_based(path: pathlib.Path, golden: Dict[str, Any]) -> None:
         ('PADDING', (0, 0), (-1, -1), 8),
     ]))
     doc.build([t])
-
-
-# --- Fixture 05: Long Multipage PDF ---
-def gen_05_long_multipage(path: pathlib.Path, golden: Dict[str, Any]) -> None:
+def gen_05_long_multipage(path: pathlib.Path, golden: dict[str, Any]) -> None:
     doc = SimpleDocTemplate(str(path), pagesize=letter, leftMargin=36, rightMargin=36, topMargin=36, bottomMargin=36)
     styles = getSampleStyleSheet()
     h1_style = ParagraphStyle('H1', parent=styles['Title'], fontSize=20, leading=24, textColor=colors.HexColor('#1A252C'), alignment=0)
     h2_style = ParagraphStyle('H2', parent=styles['Heading2'], fontSize=12, leading=16, textColor=colors.HexColor('#007AFF'), spaceBefore=10, spaceAfter=4)
     body_style = ParagraphStyle('Body', parent=styles['Normal'], fontSize=10, leading=14)
-
     story = [
         Paragraph("Dr. Arthur Pendelton", h1_style),
         Paragraph("Vice President of Engineering | arthur.pendelton@executive.org | (555) 999-0001 | New York, NY", body_style),
@@ -348,7 +278,7 @@ def gen_05_long_multipage(path: pathlib.Path, golden: Dict[str, Any]) -> None:
         Spacer(1, 15),
         Paragraph("<b>Senior Director of Software Architecture</b> — Enterprise Cloud Corp (2015 – 2020)", body_style),
         Paragraph("• Directed software architecture strategy across 12 product lines.", body_style),
-        PageBreak(),  # Page 2
+        PageBreak(),
         Paragraph("CAREER EXPERIENCE CONTINUED (PAGE 2)", h2_style),
         Paragraph("<b>Director of Engineering</b> — NextGen Systems (2010 – 2015)", body_style),
         Paragraph("• Led development of core microservices platform processing $2B in transaction volume.", body_style),
@@ -359,7 +289,7 @@ def gen_05_long_multipage(path: pathlib.Path, golden: Dict[str, Any]) -> None:
         Paragraph("BOARD ADVISORY & FELLOWSHIPS", h2_style),
         Paragraph("• Technical Advisory Board Member — Cloud Native Computing Foundation (CNCF)", body_style),
         Paragraph("• Executive Fellow — Institute of Software Engineering", body_style),
-        PageBreak(),  # Page 3
+        PageBreak(),
         Paragraph("EDUCATION & PATENTS (PAGE 3)", h2_style),
         Paragraph("<b>Ph.D. in Computer Engineering</b> — Stanford University (2001 – 2005)", body_style),
         Paragraph("<b>M.S. in Electrical Engineering</b> — MIT (1999 – 2001)", body_style),
@@ -369,16 +299,12 @@ def gen_05_long_multipage(path: pathlib.Path, golden: Dict[str, Any]) -> None:
         Paragraph("• US Patent 8,912,441: Dynamic load-balancing across edge nodes.", body_style),
     ]
     doc.build(story, canvasmaker=NumberedCanvas)
-
-
-# --- Fixture 06: Minimal Fresher PDF ---
-def gen_06_minimal_fresher(path: pathlib.Path, golden: Dict[str, Any]) -> None:
+def gen_06_minimal_fresher(path: pathlib.Path, golden: dict[str, Any]) -> None:
     doc = SimpleDocTemplate(str(path), pagesize=letter, leftMargin=36, rightMargin=36, topMargin=36, bottomMargin=36)
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle('Title', parent=styles['Title'], fontSize=18, leading=22, alignment=0)
     h2_style = ParagraphStyle('H2', parent=styles['Heading2'], fontSize=11, leading=15, textColor=colors.HexColor('#007AFF'), spaceBefore=8, spaceAfter=2)
     body_style = ParagraphStyle('Body', parent=styles['Normal'], fontSize=9.5, leading=13)
-
     story = [
         Paragraph("Sam Rivera", title_style),
         Paragraph("Email: sam.rivera@gmail.com | Phone: (555) 444-3322 | Chicago, IL", body_style),
@@ -398,16 +324,12 @@ def gen_06_minimal_fresher(path: pathlib.Path, golden: Dict[str, Any]) -> None:
         Paragraph("• Created a web portal using Python Flask and SQLite for managing course assignments.", body_style),
     ]
     doc.build(story)
-
-
-# --- Fixture 07: Senior Technical PDF ---
-def gen_07_senior_technical(path: pathlib.Path, golden: Dict[str, Any]) -> None:
+def gen_07_senior_technical(path: pathlib.Path, golden: dict[str, Any]) -> None:
     doc = SimpleDocTemplate(str(path), pagesize=letter, leftMargin=36, rightMargin=36, topMargin=36, bottomMargin=36)
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle('Title', parent=styles['Title'], fontSize=20, leading=24, alignment=0)
     h2_style = ParagraphStyle('H2', parent=styles['Heading2'], fontSize=12, leading=16, textColor=colors.HexColor('#107C41'), spaceBefore=10, spaceAfter=4)
     body_style = ParagraphStyle('Body', parent=styles['Normal'], fontSize=9.5, leading=13.5)
-
     story = [
         Paragraph("Vikram Patel", title_style),
         Paragraph("Staff Distributed Systems Architect | vikram.patel@techleader.io | Seattle, WA | github.com/vpatel-staff", body_style),
@@ -436,16 +358,12 @@ def gen_07_senior_technical(path: pathlib.Path, golden: Dict[str, Any]) -> None:
         Paragraph("Certified Kubernetes Administrator (CKA)", body_style),
     ]
     doc.build(story)
-
-
-# --- Fixture 08: Career Change PDF ---
-def gen_08_career_change(path: pathlib.Path, golden: Dict[str, Any]) -> None:
+def gen_08_career_change(path: pathlib.Path, golden: dict[str, Any]) -> None:
     doc = SimpleDocTemplate(str(path), pagesize=letter, leftMargin=36, rightMargin=36, topMargin=36, bottomMargin=36)
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle('Title', parent=styles['Title'], fontSize=18, leading=22, alignment=0)
     h2_style = ParagraphStyle('H2', parent=styles['Heading2'], fontSize=11, leading=15, textColor=colors.HexColor('#D9381E'), spaceBefore=8, spaceAfter=3)
     body_style = ParagraphStyle('Body', parent=styles['Normal'], fontSize=9.5, leading=13)
-
     story = [
         Paragraph("Jordan Lee", title_style),
         Paragraph("Full Stack Developer (Transitioned from Financial Analysis) | jordan.lee@email.com | New York, NY", body_style),
@@ -470,16 +388,12 @@ def gen_08_career_change(path: pathlib.Path, golden: Dict[str, Any]) -> None:
         Paragraph("<b>B.S. in Finance</b> — NYU Stern School of Business (2014 – 2018)", body_style),
     ]
     doc.build(story)
-
-
-# --- Fixture 09: Academic CV PDF ---
-def gen_09_academic_cv(path: pathlib.Path, golden: Dict[str, Any]) -> None:
+def gen_09_academic_cv(path: pathlib.Path, golden: dict[str, Any]) -> None:
     doc = SimpleDocTemplate(str(path), pagesize=letter, leftMargin=36, rightMargin=36, topMargin=36, bottomMargin=36)
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle('Title', parent=styles['Title'], fontSize=20, leading=24, alignment=0)
     h2_style = ParagraphStyle('H2', parent=styles['Heading2'], fontSize=12, leading=16, textColor=colors.HexColor('#4A154B'), spaceBefore=10, spaceAfter=4)
     body_style = ParagraphStyle('Body', parent=styles['Normal'], fontSize=9.5, leading=13.5)
-
     story = [
         Paragraph("Dr. Catherine Thorne", title_style),
         Paragraph("Associate Professor of Computer Science | catherine.thorne@university.edu | Cambridge, MA", body_style),
@@ -495,7 +409,7 @@ def gen_09_academic_cv(path: pathlib.Path, golden: Dict[str, Any]) -> None:
         Paragraph("ACADEMIC APPOINTMENTS", h2_style),
         Paragraph("<b>Associate Professor</b> — Dept of CS, Harvard University (2021 – Present)", body_style),
         Paragraph("<b>Assistant Professor</b> — Dept of CS, Harvard University (2015 – 2021)", body_style),
-        PageBreak(),  # Page 2
+        PageBreak(),
         Paragraph("PUBLICATIONS & CONFERENCES", h2_style),
         Paragraph("• Thorne C., & Vaswani A. 'Neural Program Synthesis with Constraint Verification', NeurIPS 2022.", body_style),
         Paragraph("• Thorne C. 'Semantic Grounding in Large Code Models', ACL 2020.", body_style),
@@ -508,16 +422,12 @@ def gen_09_academic_cv(path: pathlib.Path, golden: Dict[str, Any]) -> None:
         Paragraph("• CS 182: Artificial Intelligence Principles", body_style),
     ]
     doc.build(story, canvasmaker=NumberedCanvas)
-
-
-# --- Fixture 10: Project Heavy PDF ---
-def gen_10_project_heavy(path: pathlib.Path, golden: Dict[str, Any]) -> None:
+def gen_10_project_heavy(path: pathlib.Path, golden: dict[str, Any]) -> None:
     doc = SimpleDocTemplate(str(path), pagesize=letter, leftMargin=36, rightMargin=36, topMargin=36, bottomMargin=36)
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle('Title', parent=styles['Title'], fontSize=18, leading=22, alignment=0)
     h2_style = ParagraphStyle('H2', parent=styles['Heading2'], fontSize=11, leading=15, textColor=colors.HexColor('#008080'), spaceBefore=8, spaceAfter=3)
     body_style = ParagraphStyle('Body', parent=styles['Normal'], fontSize=9.5, leading=13)
-
     story = [
         Paragraph("David Kim", title_style),
         Paragraph("Open Source Contributor & Software Developer | david.kim@dev.io | github.com/dkim-dev", body_style),
@@ -546,16 +456,12 @@ def gen_10_project_heavy(path: pathlib.Path, golden: Dict[str, Any]) -> None:
         Paragraph("<b>B.S. in Computer Engineering</b> — Georgia Tech (2018 – 2022)", body_style),
     ]
     doc.build(story)
-
-
-# --- Fixture 11: Freelance PDF ---
-def gen_11_freelance(path: pathlib.Path, golden: Dict[str, Any]) -> None:
+def gen_11_freelance(path: pathlib.Path, golden: dict[str, Any]) -> None:
     doc = SimpleDocTemplate(str(path), pagesize=letter, leftMargin=36, rightMargin=36, topMargin=36, bottomMargin=36)
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle('Title', parent=styles['Title'], fontSize=18, leading=22, alignment=0)
     h2_style = ParagraphStyle('H2', parent=styles['Heading2'], fontSize=11, leading=15, textColor=colors.HexColor('#8E44AD'), spaceBefore=8, spaceAfter=3)
     body_style = ParagraphStyle('Body', parent=styles['Normal'], fontSize=9.5, leading=13)
-
     story = [
         Paragraph("Maya Lin", title_style),
         Paragraph("Independent Cloud Solutions Architect & Consultant | maya@linconsulting.com | San Jose, CA", body_style),
@@ -577,16 +483,12 @@ def gen_11_freelance(path: pathlib.Path, golden: Dict[str, Any]) -> None:
         Paragraph("AWS, GCP, Terraform, Kubernetes, Docker, Python, Node.js, CI/CD pipelines", body_style),
     ]
     doc.build(story)
-
-
-# --- Fixture 12: Multiple Roles PDF ---
-def gen_12_multiple_roles(path: pathlib.Path, golden: Dict[str, Any]) -> None:
+def gen_12_multiple_roles(path: pathlib.Path, golden: dict[str, Any]) -> None:
     doc = SimpleDocTemplate(str(path), pagesize=letter, leftMargin=36, rightMargin=36, topMargin=36, bottomMargin=36)
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle('Title', parent=styles['Title'], fontSize=18, leading=22, alignment=0)
     h2_style = ParagraphStyle('H2', parent=styles['Heading2'], fontSize=11, leading=15, textColor=colors.HexColor('#1A252C'), spaceBefore=8, spaceAfter=3)
     body_style = ParagraphStyle('Body', parent=styles['Normal'], fontSize=9.5, leading=13)
-
     story = [
         Paragraph("Chris Evans", title_style),
         Paragraph("Staff Software Engineer | chris.evans@email.com | Austin, TX", body_style),
@@ -607,16 +509,12 @@ def gen_12_multiple_roles(path: pathlib.Path, golden: Dict[str, Any]) -> None:
         Paragraph("<b>B.S. in Computer Science</b> — University of Texas at Austin (2014 – 2018)", body_style),
     ]
     doc.build(story)
-
-
-# --- Fixture 13: Overlapping Dates PDF ---
-def gen_13_overlapping_dates(path: pathlib.Path, golden: Dict[str, Any]) -> None:
+def gen_13_overlapping_dates(path: pathlib.Path, golden: dict[str, Any]) -> None:
     doc = SimpleDocTemplate(str(path), pagesize=letter, leftMargin=36, rightMargin=36, topMargin=36, bottomMargin=36)
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle('Title', parent=styles['Title'], fontSize=18, leading=22, alignment=0)
     h2_style = ParagraphStyle('H2', parent=styles['Heading2'], fontSize=11, leading=15, textColor=colors.HexColor('#1A252C'), spaceBefore=8, spaceAfter=3)
     body_style = ParagraphStyle('Body', parent=styles['Normal'], fontSize=9.5, leading=13)
-
     story = [
         Paragraph("Taylor Morgan", title_style),
         Paragraph("Full Stack Engineer & Tech Advisor | taylor.morgan@email.com | Denver, CO", body_style),
@@ -632,16 +530,12 @@ def gen_13_overlapping_dates(path: pathlib.Path, golden: Dict[str, Any]) -> None
         Paragraph("• Concurrent evening consulting role auditing AWS IAM security policies.", body_style),
     ]
     doc.build(story)
-
-
-# --- Fixture 14: Unusual Headings PDF ---
-def gen_14_unusual_headings(path: pathlib.Path, golden: Dict[str, Any]) -> None:
+def gen_14_unusual_headings(path: pathlib.Path, golden: dict[str, Any]) -> None:
     doc = SimpleDocTemplate(str(path), pagesize=letter, leftMargin=36, rightMargin=36, topMargin=36, bottomMargin=36)
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle('Title', parent=styles['Title'], fontSize=18, leading=22, alignment=0)
     h2_style = ParagraphStyle('H2', parent=styles['Heading2'], fontSize=11, leading=15, textColor=colors.HexColor('#C0392B'), spaceBefore=8, spaceAfter=3)
     body_style = ParagraphStyle('Body', parent=styles['Normal'], fontSize=9.5, leading=13)
-
     story = [
         Paragraph("Morgan Reed", title_style),
         Paragraph("Creative Developer & Designer | morgan.reed@creative.net", body_style),
@@ -660,15 +554,11 @@ def gen_14_unusual_headings(path: pathlib.Path, golden: Dict[str, Any]) -> None:
         Paragraph("<b>Interactive Shader Generator</b> — Open source WebGL shader tool with 1,000+ stars.", body_style),
     ]
     doc.build(story)
-
-
-# --- Fixture 15: No Headings PDF ---
-def gen_15_no_headings(path: pathlib.Path, golden: Dict[str, Any]) -> None:
+def gen_15_no_headings(path: pathlib.Path, golden: dict[str, Any]) -> None:
     doc = SimpleDocTemplate(str(path), pagesize=letter, leftMargin=36, rightMargin=36, topMargin=36, bottomMargin=36)
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle('Title', parent=styles['Title'], fontSize=18, leading=22, alignment=0)
     body_style = ParagraphStyle('Body', parent=styles['Normal'], fontSize=10, leading=14)
-
     story = [
         Paragraph("Riley Harper", title_style),
         Paragraph("Software Developer | riley.harper@email.com | (555) 777-8899 | San Diego, CA", body_style),
@@ -684,16 +574,12 @@ def gen_15_no_headings(path: pathlib.Path, golden: Dict[str, Any]) -> None:
         Paragraph("Bachelor of Science in Computer Science from San Diego State University, 2015 to 2019.", body_style),
     ]
     doc.build(story)
-
-
-# --- Fixture 16: Icons PDF ---
-def gen_16_icons(path: pathlib.Path, golden: Dict[str, Any]) -> None:
+def gen_16_icons(path: pathlib.Path, golden: dict[str, Any]) -> None:
     doc = SimpleDocTemplate(str(path), pagesize=letter, leftMargin=36, rightMargin=36, topMargin=36, bottomMargin=36)
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle('Title', parent=styles['Title'], fontSize=18, leading=22, alignment=0)
     h2_style = ParagraphStyle('H2', parent=styles['Heading2'], fontSize=11, leading=15, textColor=colors.HexColor('#27AE60'), spaceBefore=8, spaceAfter=3)
     body_style = ParagraphStyle('Body', parent=styles['Normal'], fontSize=9.5, leading=13)
-
     story = [
         Paragraph("Avery Bennett", title_style),
         Paragraph("📧 avery.bennett@email.com | 📱 (555) 019-7733 | 🌐 averybennett.dev | 📍 Portland, OR", body_style),
@@ -707,26 +593,20 @@ def gen_16_icons(path: pathlib.Path, golden: Dict[str, Any]) -> None:
         Paragraph("<b>B.S. Computer Science</b> — University of Oregon (2016 – 2020)", body_style),
     ]
     doc.build(story)
-
-
-# --- Fixture 17: DOCX Tables ---
-def gen_17_docx_tables(path: pathlib.Path, golden: Dict[str, Any]) -> None:
+def gen_17_docx_tables(path: pathlib.Path, golden: dict[str, Any]) -> None:
     doc = docx.Document()
     for s in doc.sections:
         s.top_margin = Inches(0.75)
         s.bottom_margin = Inches(0.75)
         s.left_margin = Inches(0.75)
         s.right_margin = Inches(0.75)
-
     p_title = doc.add_paragraph()
     r_name = p_title.add_run("Marcus Vance")
     r_name.font.size = Pt(20)
     r_name.font.bold = True
     r_name.font.color.rgb = RGBColor(31, 78, 121)
-
     p_contact = doc.add_paragraph("Email: marcus.vance@example.com | Phone: (555) 019-4820 | Location: Austin, TX")
     p_contact.paragraph_format.space_after = Pt(12)
-
     doc.add_heading("PROFESSIONAL SUMMARY", level=1)
     tbl_sum = doc.add_table(rows=1, cols=1)
     tbl_sum.style = 'Table Grid'
@@ -734,7 +614,6 @@ def gen_17_docx_tables(path: pathlib.Path, golden: Dict[str, Any]) -> None:
     shd_xml = f'<w:shd {nsdecls("w")} w:fill="F2F4F7"/>'
     c_sum._tc.get_or_add_tcPr().append(parse_xml(shd_xml))
     c_sum.paragraphs[0].text = "Principal Systems Engineer with over 10 years experience designing distributed systems, cloud architecture, and microservices."
-
     doc.add_heading("EMPLOYMENT MATRIX", level=1)
     tbl_exp = doc.add_table(rows=1, cols=4)
     tbl_exp.style = 'Table Grid'
@@ -747,79 +626,38 @@ def gen_17_docx_tables(path: pathlib.Path, golden: Dict[str, Any]) -> None:
             for r in p.runs:
                 r.font.bold = True
                 r.font.color.rgb = RGBColor(255, 255, 255)
-
     row1 = tbl_exp.add_row().cells
     row1[0].text = "CloudScale Inc.\n2021 - Present"
     row1[1].text = "Lead Architect"
     row1[2].text = "• Managed team of 8 backend engineers.\n• Designed Kubernetes platform."
     row1[3].text = "Python, FastAPI, AWS, K8s, Docker"
-
     doc.save(str(path))
 
 
-# --- Fixture 18: Scanned PDF ---
-def gen_18_scanned(path: pathlib.Path, golden: Dict[str, Any]) -> None:
-    img = Image.new('RGB', (1654, 2339), color=(255, 255, 255))
-    draw = ImageDraw.Draw(img)
-    draw.text((100, 100), "SCANNED RESUME - SARAH CONNOR", fill=(0, 0, 0))
-    draw.text((100, 160), "Contact: sarah.connor@cyberdyne.org | Phone: 555-0199", fill=(30, 30, 30))
-    draw.text((100, 220), "EXPERIENCE", fill=(0, 0, 0))
-    draw.text((100, 260), "Cyberdyne Systems - Security Specialist (2020 - 2024)", fill=(30, 30, 30))
-    draw.text((100, 300), "• Implemented defensive security protocols and threat monitoring.", fill=(50, 50, 50))
-    img.save(str(path), "PDF", resolution=200.0)
-
-
-# --- Fixture 19: Poor OCR PDF ---
-def gen_19_poor_ocr(path: pathlib.Path, golden: Dict[str, Any]) -> None:
-    img = Image.new('RGB', (612, 792), color=(240, 240, 235))
-    draw = ImageDraw.Draw(img)
-    draw.text((50, 50), "P00r QUA1ITY 0CR R3SUM3 - J0HN D0E", fill=(80, 80, 80))
-    draw.text((50, 90), "Exp3ri3nc3: S0ftw4r3 Eng1n33r @ T3ch (2021-2023)", fill=(90, 90, 90))
-    draw.text((50, 130), "Sk1lls: Pyth0n, J4v4Scr1pt, D0ck3r", fill=(90, 90, 90))
-    img = img.filter(ImageFilter.GaussianBlur(radius=1.2))
-    img.save(str(path), "PDF", resolution=75.0, quality=15)
-
-
-# --- Fixture 20: Empty PDF ---
-def gen_20_empty(path: pathlib.Path, golden: Dict[str, Any]) -> None:
+def gen_20_empty(path: pathlib.Path, golden: dict[str, Any]) -> None:
     with open(path, "wb") as f:
         f.write(b"")
-
-
-# --- Fixture 21: Corrupted PDF ---
-def gen_21_corrupted(path: pathlib.Path, golden: Dict[str, Any]) -> None:
+def gen_21_corrupted(path: pathlib.Path, golden: dict[str, Any]) -> None:
     corrupted_bytes = (
         b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n"
         b"CORRUPTED_FILE_INVALID_XREF_TRAILER_STREAM_1234567890_BYTES_PAYLOAD"
     )
     with open(path, "wb") as f:
         f.write(corrupted_bytes)
-
-
-# --- Fixture 22: Encrypted PDF ---
-def gen_22_encrypted(path: pathlib.Path, golden: Dict[str, Any]) -> None:
+def gen_22_encrypted(path: pathlib.Path, golden: dict[str, Any]) -> None:
     temp_path = str(path) + ".tmp"
     c = canvas.Canvas(temp_path, pagesize=letter)
     c.drawString(100, 700, "Encrypted Resume Content - Confidential Candidate Data")
     c.save()
-
     reader = pypdf.PdfReader(temp_path)
     writer = pypdf.PdfWriter()
     writer.append(reader)
     writer.encrypt(user_password="user123", owner_password="owner123")
-
     with open(path, "wb") as f:
         writer.write(f)
-
     if os.path.exists(temp_path):
         os.remove(temp_path)
-
-
-# ==============================================================================
-# 22 Golden Ground Truth Definitions
-# ==============================================================================
-
-GOLDEN_BENCHMARKS: Dict[int, Dict[str, Any]] = {
+GOLDEN_BENCHMARKS: dict[int, dict[str, Any]] = {
     1: {
         "fixture_meta": {"fixture_id": 1, "fixture_slug": "01_single_column", "filename": "01_single_column.pdf", "expected_status": "SUCCESS"},
         "contact": {
@@ -1322,20 +1160,6 @@ GOLDEN_BENCHMARKS: Dict[int, Dict[str, Any]] = {
         ],
         "projects": [], "education": [], "certifications": [], "licenses": [], "achievements": [], "publications": [], "languages": [], "volunteer_experience": [], "training": [], "links": [], "additional_sections": [], "warnings": [], "unclassified_blocks": []
     },
-    18: {
-        "fixture_meta": {"fixture_id": 18, "fixture_slug": "18_scanned", "filename": "18_scanned.pdf", "expected_status": "OCR_REQUIRED"},
-        "contact": {"full_name": None, "email": None, "phone": None, "location": None, "linkedin": None, "github": None, "portfolio": None, "other_links": []},
-        "professional_summary": None, "target_role": None, "skills": [], "experience": [], "projects": [], "education": [], "certifications": [], "licenses": [], "achievements": [], "publications": [], "languages": [], "volunteer_experience": [], "training": [], "links": [], "additional_sections": [],
-        "warnings": ["Scanned document detected (no selectable text layer); OCR pipeline triggered"],
-        "unclassified_blocks": []
-    },
-    19: {
-        "fixture_meta": {"fixture_id": 19, "fixture_slug": "19_poor_ocr", "filename": "19_poor_ocr.pdf", "expected_status": "OCR_POOR"},
-        "contact": {"full_name": None, "email": None, "phone": None, "location": None, "linkedin": None, "github": None, "portfolio": None, "other_links": []},
-        "professional_summary": None, "target_role": None, "skills": [], "experience": [], "projects": [], "education": [], "certifications": [], "licenses": [], "achievements": [], "publications": [], "languages": [], "volunteer_experience": [], "training": [], "links": [], "additional_sections": [],
-        "warnings": ["Low confidence OCR text extraction due to image noise/blur"],
-        "unclassified_blocks": []
-    },
     20: {
         "fixture_meta": {"fixture_id": 20, "fixture_slug": "20_empty", "filename": "20_empty.pdf", "expected_status": "EMPTY_FILE"},
         "contact": {"full_name": None, "email": None, "phone": None, "location": None, "linkedin": None, "github": None, "portfolio": None, "other_links": []},
@@ -1358,12 +1182,7 @@ GOLDEN_BENCHMARKS: Dict[int, Dict[str, Any]] = {
         "unclassified_blocks": []
     },
 }
-
-# ==============================================================================
-# Fixture Specs Registry
-# ==============================================================================
-
-FIXTURES: List[FixtureSpec] = [
+FIXTURES: list[FixtureSpec] = [
     FixtureSpec(1, "01_single_column", "01_single_column.pdf", "01_single_column.json", "pdf", "Single column PDF", gen_01_single_column, GOLDEN_BENCHMARKS[1]),
     FixtureSpec(2, "02_two_column", "02_two_column.pdf", "02_two_column.json", "pdf", "Two column PDF", gen_02_two_column, GOLDEN_BENCHMARKS[2]),
     FixtureSpec(3, "03_sidebar", "03_sidebar.pdf", "03_sidebar.json", "pdf", "Sidebar layout PDF", gen_03_sidebar, GOLDEN_BENCHMARKS[3]),
@@ -1381,42 +1200,32 @@ FIXTURES: List[FixtureSpec] = [
     FixtureSpec(15, "15_no_headings", "15_no_headings.pdf", "15_no_headings.json", "pdf", "No section headings PDF", gen_15_no_headings, GOLDEN_BENCHMARKS[15]),
     FixtureSpec(16, "16_icons", "16_icons.pdf", "16_icons.json", "pdf", "Unicode icons PDF", gen_16_icons, GOLDEN_BENCHMARKS[16]),
     FixtureSpec(17, "17_docx_tables", "17_docx_tables.docx", "17_docx_tables.json", "docx", "DOCX tables resume", gen_17_docx_tables, GOLDEN_BENCHMARKS[17]),
-    FixtureSpec(18, "18_scanned", "18_scanned.pdf", "18_scanned.json", "pdf", "Scanned raster image PDF", gen_18_scanned, GOLDEN_BENCHMARKS[18]),
-    FixtureSpec(19, "19_poor_ocr", "19_poor_ocr.pdf", "19_poor_ocr.json", "pdf", "Poor quality OCR PDF", gen_19_poor_ocr, GOLDEN_BENCHMARKS[19]),
     FixtureSpec(20, "20_empty", "20_empty.pdf", "20_empty.json", "pdf", "Zero byte empty PDF", gen_20_empty, GOLDEN_BENCHMARKS[20]),
     FixtureSpec(21, "21_corrupted", "21_corrupted.pdf", "21_corrupted.json", "pdf", "Corrupted PDF header", gen_21_corrupted, GOLDEN_BENCHMARKS[21]),
     FixtureSpec(22, "22_encrypted", "22_encrypted.pdf", "22_encrypted.json", "pdf", "Encrypted PDF", gen_22_encrypted, GOLDEN_BENCHMARKS[22]),
 ]
-
-
-def run_generator(force: bool = False, quiet: bool = False, golden_only: bool = False, files_only: bool = False, selected_ids: Optional[List[int]] = None) -> int:
+def run_generator(force: bool = False, quiet: bool = False, golden_only: bool = False, files_only: bool = False, selected_ids: list[int] | None = None) -> int:
     FIXTURES_DIR.mkdir(parents=True, exist_ok=True)
     GOLDEN_DIR.mkdir(parents=True, exist_ok=True)
-
     targets = FIXTURES
     if selected_ids:
         targets = [f for f in FIXTURES if f.id in selected_ids]
-
     success_count = 0
     skip_count = 0
     fail_count = 0
-
     for spec in targets:
         fixture_exists = spec.fixture_path.exists()
         golden_exists = spec.golden_path.exists()
-
         if not force and fixture_exists and golden_exists:
             if not quiet:
                 logger.info(f"[SKIP] {spec.slug}: Output files already exist. Use --force to overwrite.")
             skip_count += 1
             continue
-
         try:
             if not golden_only:
                 if not quiet:
                     logger.info(f"Generating fixture document: {spec.filename}...")
                 spec.generator_fn(spec.fixture_path, spec.golden_data)
-
             if not files_only:
                 if not quiet:
                     logger.info(f"Generating golden JSON: {spec.golden_filename}...")
@@ -1424,14 +1233,12 @@ def run_generator(force: bool = False, quiet: bool = False, golden_only: bool = 
                 ParsedResumeSchema.model_validate(normalized_data)
                 with open(spec.golden_path, "w", encoding="utf-8") as f:
                     json.dump(normalized_data, f, indent=2)
-
             if not quiet:
                 logger.info(f"[OK] {spec.slug}: Successfully generated.")
             success_count += 1
         except Exception as e:
             logger.error(f"[ERROR] {spec.slug}: Generation failed — {e}", exc_info=True)
             fail_count += 1
-
     if not quiet:
         print("\n" + "=" * 70)
         print("Synthetic Resume Fixture Generation Summary")
@@ -1443,10 +1250,7 @@ def run_generator(force: bool = False, quiet: bool = False, golden_only: bool = 
         print(f"Fixture Directory     : {FIXTURES_DIR}")
         print(f"Golden Directory      : {GOLDEN_DIR}")
         print("=" * 70)
-
     return 0 if fail_count == 0 else 1
-
-
 def clean_generated_files() -> int:
     removed = 0
     for spec in FIXTURES:
@@ -1458,8 +1262,6 @@ def clean_generated_files() -> int:
             removed += 1
     logger.info(f"Cleaned {removed} generated fixture and golden files.")
     return 0
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description="Synthetic Resume Fixture Generator CLI")
     parser.add_argument("-f", "--force", action="store_true", help="Force overwrite of existing fixture documents and golden JSON files.")
@@ -1469,19 +1271,15 @@ def main() -> None:
     parser.add_argument("--golden-only", action="store_true", help="Generate golden JSON files only.")
     parser.add_argument("--files-only", action="store_true", help="Generate resume document files only.")
     parser.add_argument("-q", "--quiet", action="store_true", help="Suppress detailed per-fixture logging.")
-
     args = parser.parse_args()
-
     if args.list:
         print("\nRegistered Fixture Specifications (1..22):")
         print("-" * 70)
         for spec in FIXTURES:
             print(f"[{spec.id:02d}] {spec.slug:<22} | Format: {spec.file_type:<4} | {spec.description}")
         sys.exit(0)
-
     if args.clean:
         sys.exit(clean_generated_files())
-
     selected_ids = None
     if args.fixture:
         selected_ids = []
@@ -1492,7 +1290,6 @@ def main() -> None:
                 for f in FIXTURES:
                     if f.slug == item or f.filename == item:
                         selected_ids.append(f.id)
-
     exit_code = run_generator(
         force=args.force,
         quiet=args.quiet,
@@ -1501,7 +1298,5 @@ def main() -> None:
         selected_ids=selected_ids,
     )
     sys.exit(exit_code)
-
-
 if __name__ == "__main__":
     main()

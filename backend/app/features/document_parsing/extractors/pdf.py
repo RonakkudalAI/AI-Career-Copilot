@@ -9,41 +9,57 @@ from app.features.document_parsing.source_blocks import SourceBlock
 
 logger = logging.getLogger(__name__)
 
-# Character density threshold below which a PDF page is considered image/scanned.
-SCANNED_DENSITY_THRESHOLD_PER_PAGE = 20.0
 
+def parse_pdf_to_blocks(content: bytes) -> list[SourceBlock]:
+    """Extract SourceBlocks using the first available backend that succeeds.
 
-def parse_pdf_to_blocks(content: bytes) -> tuple[list[SourceBlock], bool]:
+    Optional backends (PyMuPDF / pdfplumber) are tried when installed. On
+    parse failure they fall through to the next backend. pypdf is the
+    declared, always-available final backend. Encrypted-PDF errors do not fall
+    through.
     """
-    Extract layout-aware SourceBlock objects from PDF bytes.
+    errors: list[str] = []
 
-    Returns:
-        (blocks, is_scanned_flag)
-    """
-    # 1. Try PyMuPDF (fitz) if installed
-    try:
-        import fitz  # type: ignore
-        return _parse_pdf_fitz(content)
-    except ImportError:
-        pass
+    for name, runner in (
+        ("pymupdf", _try_fitz),
+        ("pdfplumber", _try_pdfplumber),
+        ("pypdf", _parse_pdf_pypdf),
+    ):
+        try:
+            return runner(content)
+        except ApiError as exc:
+            if exc.code == "encrypted_pdf":
+                raise
+            errors.append(f"{name}: {exc.message}")
+            logger.warning("pdf_backend_failed backend=%s code=%s", name, exc.code)
+        except ImportError:
+            continue
+        except Exception as exc:
+            errors.append(f"{name}: {exc}")
+            logger.warning("pdf_backend_failed backend=%s error=%s", name, exc)
 
-    # 2. Try pdfplumber if installed
-    try:
-        import pdfplumber  # type: ignore
-        return _parse_pdf_pdfplumber(content)
-    except ImportError:
-        pass
-
-    # 3. Fall back to pypdf
-    return _parse_pdf_pypdf(content)
+    detail = "; ".join(errors) if errors else "no PDF backend available"
+    raise ApiError(400, "pdf_parse_failed", f"Failed to parse PDF document: {detail}")
 
 
-def _parse_pdf_fitz(content: bytes) -> tuple[list[SourceBlock], bool]:
-    import fitz  # type: ignore
+def _try_fitz(content: bytes) -> list[SourceBlock]:
+    import fitz  # type: ignore[import-untyped]
+
+    del fitz
+    return _parse_pdf_fitz(content)
+
+
+def _try_pdfplumber(content: bytes) -> list[SourceBlock]:
+    import pdfplumber  # type: ignore[import-untyped]
+
+    del pdfplumber
+    return _parse_pdf_pdfplumber(content)
+
+
+def _parse_pdf_fitz(content: bytes) -> list[SourceBlock]:
+    import fitz  # type: ignore[import-untyped]
 
     blocks: list[SourceBlock] = []
-    total_chars = 0
-    page_count = 0
 
     try:
         doc = fitz.open(stream=content, filetype="pdf")
@@ -52,30 +68,24 @@ def _parse_pdf_fitz(content: bytes) -> tuple[list[SourceBlock], bool]:
 
         page_count = len(doc)
         if page_count == 0:
-            return [], True
+            return []
 
         for page_idx in range(1, page_count + 1):
             page = doc.load_page(page_idx - 1)
-            text_page = page.get_text("blocks")  # returns list of (x0, y0, x1, y1, text, block_no, block_type)
-            
-            # Sort blocks by vertical top (y0), then horizontal left (x0)
+            text_page = page.get_text("blocks")
             sorted_blocks = sorted(text_page, key=lambda b: (round(b[1], 1), round(b[0], 1)))
-            
+
             current_heading: str | None = None
             block_order = 1
 
             for b in sorted_blocks:
-                # b[4] is text string, b[6] is block type (0 for text)
                 if len(b) < 5 or not b[4]:
                     continue
                 block_text = b[4].strip()
                 if not block_text:
                     continue
 
-                total_chars += len(block_text)
                 bbox = (float(b[0]), float(b[1]), float(b[2]), float(b[3]))
-
-                # Heading detection heuristic
                 lines = block_text.splitlines()
                 first_line = lines[0].strip() if lines else block_text
                 is_heading = (
@@ -111,23 +121,19 @@ def _parse_pdf_fitz(content: bytes) -> tuple[list[SourceBlock], bool]:
         logger.error("fitz parsing failed: %s", exc)
         raise ApiError(400, "pdf_parse_failed", f"Failed to parse PDF document: {exc}") from exc
 
-    avg_density = total_chars / max(1, page_count)
-    is_scanned = avg_density < SCANNED_DENSITY_THRESHOLD_PER_PAGE
-    return blocks, is_scanned
+    return blocks
 
 
-def _parse_pdf_pdfplumber(content: bytes) -> tuple[list[SourceBlock], bool]:
-    import pdfplumber  # type: ignore
+def _parse_pdf_pdfplumber(content: bytes) -> list[SourceBlock]:
+    import pdfplumber  # type: ignore[import-untyped]
 
     blocks: list[SourceBlock] = []
-    total_chars = 0
-    page_count = 0
 
     try:
         with pdfplumber.open(io.BytesIO(content)) as pdf:
             page_count = len(pdf.pages)
             if page_count == 0:
-                return [], True
+                return []
 
             for page_idx, page in enumerate(pdf.pages, start=1):
                 current_heading: str | None = None
@@ -141,7 +147,6 @@ def _parse_pdf_pdfplumber(content: bytes) -> tuple[list[SourceBlock], bool]:
                 grouped_lines = _group_words_into_lines(extracted_words)
 
                 for line_text, bbox, is_heading in grouped_lines:
-                    total_chars += len(line_text)
                     if is_heading:
                         current_heading = line_text
                         b_type = "heading"
@@ -168,16 +173,15 @@ def _parse_pdf_pdfplumber(content: bytes) -> tuple[list[SourceBlock], bool]:
         logger.error("pdfplumber parsing failed: %s", exc)
         raise ApiError(400, "pdf_parse_failed", f"Failed to parse PDF document: {exc}") from exc
 
-    avg_density = total_chars / max(1, page_count)
-    is_scanned = avg_density < SCANNED_DENSITY_THRESHOLD_PER_PAGE
-    return blocks, is_scanned
+    return blocks
 
 
-def _group_words_into_lines(words: list[dict[str, Any]]) -> list[tuple[str, tuple[float, float, float, float], bool]]:
+def _group_words_into_lines(
+    words: list[dict[str, Any]],
+) -> list[tuple[str, tuple[float, float, float, float], bool]]:
     if not words:
         return []
 
-    # Sort by top coordinate, then x0
     sorted_words = sorted(words, key=lambda w: (round(w["top"], 1), w["x0"]))
 
     lines: list[list[dict[str, Any]]] = []
@@ -216,20 +220,18 @@ def _group_words_into_lines(words: list[dict[str, Any]]) -> list[tuple[str, tupl
     return result
 
 
-def _parse_pdf_pypdf(content: bytes) -> tuple[list[SourceBlock], bool]:
+def _parse_pdf_pypdf(content: bytes) -> list[SourceBlock]:
     from pypdf import PdfReader
+
     try:
         reader = PdfReader(io.BytesIO(content))
         if reader.is_encrypted:
             raise ApiError(400, "encrypted_pdf", "Password-protected PDFs are not supported.")
 
         blocks: list[SourceBlock] = []
-        total_chars = 0
-        page_count = len(reader.pages)
 
         for page_idx, page in enumerate(reader.pages, start=1):
             text = page.extract_text() or ""
-            total_chars += len(text)
             lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
 
             current_heading: str | None = None
@@ -247,9 +249,7 @@ def _parse_pdf_pypdf(content: bytes) -> tuple[list[SourceBlock], bool]:
                 )
                 blocks.append(sb)
 
-        avg_density = total_chars / max(1, page_count)
-        is_scanned = avg_density < SCANNED_DENSITY_THRESHOLD_PER_PAGE
-        return blocks, is_scanned
+        return blocks
 
     except ApiError:
         raise

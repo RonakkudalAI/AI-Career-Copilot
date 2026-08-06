@@ -1,10 +1,3 @@
-"""
-Groq OpenAI-compatible chat client.
-
-Used for dedicated tasks (mock interview questions, optional ATS brief).
-This is intentionally separate from NVIDIA and must NOT be wired as an
-NVIDIA fallback for resume improvement / profile fill.
-"""
 
 from __future__ import annotations
 
@@ -22,15 +15,13 @@ from app.agents.providers.common import (
     provider_error_detail,
     strip_json_fence,
 )
+from app.agents.providers.rate_limit import provider_rpm_limiter
 from app.core.config import Settings
 from app.core.errors import ApiError
 
 TRANSIENT_STATUS = {408, 429, 500, 502, 503, 504}
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
-
-
 def _strict_schema(schema: dict[str, Any]) -> dict[str, Any]:
-    """Make a Pydantic JSON schema acceptable to Groq strict structured outputs."""
     result = dict(schema)
     result.pop("title", None)
     result.pop("default", None)
@@ -60,13 +51,10 @@ def _strict_schema(schema: dict[str, Any]) -> dict[str, Any]:
             for key, value in defs.items()
         }
     return result
-
-
 class GroqClient:
     def __init__(self, settings: Settings, transport: httpx.AsyncBaseTransport | None = None):
         self.settings = settings
         self.transport = transport
-
     def capability(self) -> dict[str, Any]:
         return {
             "configured": self.settings.groq_configured,
@@ -75,10 +63,8 @@ class GroqClient:
             "base_url": self.settings.groq_base_url or None,
             "tasks": ["interview_questions", "ats_improvement_brief", "learning_youtube_path"],
         }
-
     def _strip_json_fence(self, content: str) -> str:
         return strip_json_fence(content)
-
     async def generate_structured(
         self,
         *,
@@ -125,17 +111,17 @@ class GroqClient:
                 },
             ],
         }
+        repair_allowed = allow_repair and bool(getattr(self.settings, "llm_allow_repair", True))
         raw = await self._request(payload, timeout_seconds=timeout_seconds, max_retries=max_retries)
         try:
             return schema_model.model_validate(parse_json_object(raw))
         except (json.JSONDecodeError, ValidationError, TypeError, ValueError):
-            if not allow_repair:
+            if not repair_allowed:
                 raise ApiError(
                     502,
                     "invalid_groq_response",
                     "Groq returned an invalid structured response.",
-                )
-            # One repair pass (parity with NVIDIA client).
+                ) from None
             repair_path = PROMPTS_DIR / "repair_structured_output_v1.txt"
             repair_prompt = (
                 repair_path.read_text(encoding="utf-8")
@@ -169,7 +155,6 @@ class GroqClient:
                     "invalid_groq_response",
                     "Groq returned an invalid structured response after repair.",
                 ) from exc
-
     async def _request(
         self,
         payload: dict[str, Any],
@@ -183,8 +168,10 @@ class GroqClient:
         }
         timeout = httpx.Timeout(timeout_seconds or self.settings.groq_timeout_seconds)
         attempts = (self.settings.groq_max_retries if max_retries is None else max_retries) + 1
+        limiter = await provider_rpm_limiter("groq", self.settings.llm_rpm_limit)
         async with httpx.AsyncClient(timeout=timeout, transport=self.transport) as client:
             for attempt in range(attempts):
+                await limiter.acquire()
                 try:
                     response = await client.post(
                         f"{self.settings.groq_base_url.rstrip('/')}/chat/completions",

@@ -9,22 +9,17 @@ process.chdir(repositoryRoot);
 loadRootEnv();
 
 const frontendDirectory = resolve(repositoryRoot, "frontend");
-const nextBinary = resolve(frontendDirectory, "node_modules", "next", "dist", "bin", "next");
-if (!existsSync(nextBinary)) {
+const viteBinary = resolve(frontendDirectory, "node_modules", "vite", "bin", "vite.js");
+if (!existsSync(viteBinary)) {
   console.error("Frontend dependencies are missing. Run npm run setup first.");
   process.exit(1);
 }
 
 const environment = { ...process.env };
-const frontendLock = resolve(frontendDirectory, ".next", "dev", "lock");
-if (existsSync(frontendLock)) {
-  environment.NEXT_DIST_DIR = `.next-dev-${process.pid}`;
-  console.log(`[dev] Existing Next lock detected; using ${environment.NEXT_DIST_DIR} for this frontend.`);
-}
 
 const child = spawn(
   process.execPath,
-  [nextBinary, "dev", "--webpack", "--hostname", process.env.FRONTEND_HOST || "127.0.0.1", "--port", process.env.FRONTEND_PORT || process.env.PORT || "3000"],
+  [viteBinary, "--host", process.env.FRONTEND_HOST || "127.0.0.1", "--port", process.env.FRONTEND_PORT || process.env.PORT || "3000"],
   {
     cwd: frontendDirectory,
     env: environment,

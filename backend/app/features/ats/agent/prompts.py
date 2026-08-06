@@ -8,7 +8,6 @@ hard skills or tool names. Do not put skills inside experience summary_bullets,
 and do not put education inside skills. Use empty lists or empty strings when
 the resume does not provide a value.
 """.strip()
-
 JD_PARSE_PROMPT = """
 Parse the supplied job description into ONLY valid JSON matching the JDParsed
 schema. Identify an explicit domain and role_family. Separate required_skills
@@ -17,7 +16,6 @@ criteria only when stated or clearly required by the text. Do not invent a
 company, technology, qualification, location, visa condition, or experience
 requirement.
 """.strip()
-
 DOMAIN_GATE_PROMPT = f"""
 Evaluate whether the parsed resume is in-domain for the parsed job description.
 Output ONLY valid JSON matching GateResult with decision ALLOW or REJECT.
@@ -26,7 +24,6 @@ less than {DOMAIN_GATE_MIN_SKILL_OVERLAP}. Also reject when no experience entry 
 and industry. Explain the evidence used in one concise reason. Do not reject
 based on missing preferred skills alone.
 """.strip()
-
 _WEIGHT_EXPR = (
     f"{ATS_COMPOSITE_WEIGHTS['hard_skill_match']}*hard_skill_match + "
     f"{ATS_COMPOSITE_WEIGHTS['experience_relevance']}*experience_relevance + "
@@ -34,7 +31,6 @@ _WEIGHT_EXPR = (
     f"{ATS_COMPOSITE_WEIGHTS['certifications_match']}*certifications_match + "
     f"{ATS_COMPOSITE_WEIGHTS['seniority_alignment']}*seniority_alignment"
 )
-
 SCORING_PROMPT = f"""
 Score only the supplied ResumeParsed and JDParsed JSON. Output ONLY valid JSON
 matching ScoreResult. Score every parameter from 0 to 100:

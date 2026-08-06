@@ -5,12 +5,9 @@ from app.features.ats.scoring.schemas import ScoreRequest
 from app.features.auth.service import CurrentUser, get_current_user
 
 router = APIRouter(prefix="/ats", tags=["ats-scoring"])
-
-
 @router.post("/score")
 async def score(
     payload: ScoreRequest,
     _: CurrentUser = Depends(get_current_user),
 ) -> AtsScore:
-    """Run the same deterministic evidence scorer used by persisted analyses."""
     return score_resume(payload.resume_text, payload.jd_text)

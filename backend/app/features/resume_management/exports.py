@@ -8,11 +8,11 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
-from app.features.auth.service import CurrentUser
 from app.core.config import Settings
-from app.features.document_parsing.service import DOCX_MIME, PDF_MIME
 from app.core.errors import ApiError
 from app.database.repository import owned_row
+from app.features.auth.service import CurrentUser
+from app.features.document_parsing.service import DOCX_MIME, PDF_MIME
 
 
 def _sections(structured: dict[str, Any]) -> list[tuple[str, list[str]]]:
@@ -21,8 +21,6 @@ def _sections(structured: dict[str, Any]) -> list[tuple[str, list[str]]]:
         lines = [str(item).strip() for item in value] if isinstance(value, list) else [str(value).strip()]
         result.append((str(key), [line for line in lines if line]))
     return result
-
-
 def render_docx(structured: dict[str, Any]) -> bytes:
     document = Document()
     unclassified = structured.get("unclassified_blocks") or []
@@ -37,8 +35,6 @@ def render_docx(structured: dict[str, Any]) -> bytes:
     output = io.BytesIO()
     document.save(output)
     return output.getvalue()
-
-
 def render_pdf(structured: dict[str, Any]) -> bytes:
     output = io.BytesIO()
     styles = getSampleStyleSheet()
@@ -55,8 +51,6 @@ def render_pdf(structured: dict[str, Any]) -> bytes:
             story.append(Spacer(1, 4))
     SimpleDocTemplate(output, pagesize=A4, title="Resume", author="").build(story)
     return output.getvalue()
-
-
 def create_export(
     client, settings: Settings, user: CurrentUser, version_id: str, export_format: str
 ) -> dict[str, Any]:
@@ -96,8 +90,6 @@ def create_export(
         except Exception:
             pass
         raise ApiError(500, "resume_export_failed", "The resume export could not be created.") from exc
-
-
 def signed_export(client, settings: Settings, user: CurrentUser, export_id: str) -> dict[str, Any]:
     record = owned_row(client, "resume_exports", export_id, user)
     try:

@@ -1,11 +1,11 @@
-"use client";
+import { usePathname } from "@/shared/router";
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import Link from "next/link";
+import { Link } from "@/shared/ui/router-link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { usePathname, useRouter } from "next/navigation";
-import { Button, Card, Input, PageHeader, Progress, Select, Textarea } from "@/shared/ui/primitives";
+import { useNavigate } from "react-router-dom";
 import { apiRequest } from "@/shared/api/client";
 import { createClient } from "@/features/auth/api/client";
+import { Button, Card, Input, PageHeader, Progress, Select, Textarea } from "@/shared/ui/primitives";
 import {
   clampCompletion,
   extractMissing,
@@ -390,7 +390,7 @@ function SelectWithOther({
         </span>
         <Select
           value={selectValue}
-          onChange={(e) => {
+          onChange={(e: any) => {
             const next = e.target.value;
             if (next === OTHER_VALUE) {
               setOtherLocked(true);
@@ -420,7 +420,7 @@ function SelectWithOther({
             autoComplete="off"
             spellCheck={inputType !== "number"}
             value={value ?? ""}
-            onChange={(e) => {
+            onChange={(e: any) => {
               // Keep Other for the entire typing session (text or number).
               setOtherLocked(true);
               onChange(e.target.value);
@@ -495,7 +495,7 @@ function MultiOptionGroup({
         Add {legend.toLowerCase()}
         <Select
           value={pickerValue}
-          onChange={(e) => {
+          onChange={(e: any) => {
             const next = e.target.value;
             if (!next) {
               setPickerValue("");
@@ -534,9 +534,9 @@ function MultiOptionGroup({
               type="text"
               autoComplete="off"
               value={otherText}
-              onChange={(e) => setOtherText(e.target.value)}
+              onChange={(e: any) => setOtherText(e.target.value)}
               placeholder={otherPlaceholder}
-              onKeyDown={(e) => {
+              onKeyDown={(e: any) => {
                 if (e.key === "Enter") {
                   e.preventDefault();
                   addOtherValue();
@@ -1266,7 +1266,7 @@ export function ProfileSettings() {
                 Saved resume
                 <Select
                   value={selectedVersionId}
-                  onChange={(e) => setSelectedVersionId(e.target.value)}
+                  onChange={(e: any) => setSelectedVersionId(e.target.value)}
                 >
                   <option value="">Latest resume with text</option>
                   {resumes.map((resume) =>
@@ -1287,7 +1287,7 @@ export function ProfileSettings() {
                   type="file"
                   accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                   disabled={fillBusy}
-                  onChange={(e) => {
+                  onChange={(e: any) => {
                     const file = e.target.files?.[0] || null;
                     void previewFromUpload(file);
                     e.target.value = "";
@@ -1299,7 +1299,7 @@ export function ProfileSettings() {
               <input
                 type="checkbox"
                 checked={fillEmptyOnly}
-                onChange={(e) => setFillEmptyOnly(e.target.checked)}
+                onChange={(e: any) => setFillEmptyOnly(e.target.checked)}
               />
               <span>Only fill empty profile fields (recommended)</span>
             </label>
@@ -1433,8 +1433,7 @@ export function ProfileSettings() {
             <div className="row" style={{ justifyContent: "flex-start", gap: 16, alignItems: "center" }}>
               <div className="profile-avatar-preview" aria-hidden={!form.avatar_url}>
                 {form.avatar_url ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
+                                    <img
                     src={form.avatar_url}
                     alt=""
                     width={88}
@@ -1461,7 +1460,7 @@ export function ProfileSettings() {
                     type="file"
                     accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
                     disabled={avatarBusy}
-                    onChange={(e) => {
+                    onChange={(e: any) => {
                       const file = e.target.files?.[0] || null;
                       void uploadAvatar(file);
                       e.target.value = "";
@@ -1487,15 +1486,15 @@ export function ProfileSettings() {
                   Full name
                   <RequiredMark />
                 </span>
-                <Input value={form.full_name || ""} onChange={(e) => updateField("full_name", e.target.value)} />
+                <Input value={form.full_name || ""} onChange={(e: any) => updateField("full_name", e.target.value)} />
               </label>
               <label className="field-label">
                 Headline
-                <Input value={form.headline || ""} onChange={(e) => updateField("headline", e.target.value)} />
+                <Input value={form.headline || ""} onChange={(e: any) => updateField("headline", e.target.value)} />
               </label>
               <label className="field-label">
                 Phone
-                <Input value={form.phone || ""} onChange={(e) => updateField("phone", e.target.value)} />
+                <Input value={form.phone || ""} onChange={(e: any) => updateField("phone", e.target.value)} />
               </label>
               <SelectWithOther
                 label="Location"
@@ -1547,7 +1546,7 @@ export function ProfileSettings() {
             </div>
             <label className="field-label">
               Bio
-              <Textarea value={form.bio || ""} onChange={(e) => updateField("bio", e.target.value)} />
+              <Textarea value={form.bio || ""} onChange={(e: any) => updateField("bio", e.target.value)} />
             </label>
             <p className="mono" style={{ margin: 0 }}>
               Tip: choose 0 years if you are a fresher with no work history yet.
@@ -1636,7 +1635,7 @@ export function ProfileSettings() {
                   inputMode="decimal"
                   autoComplete="off"
                   value={prefDraft.salary_min}
-                  onChange={(e) => setPrefDraft({ ...prefDraft, salary_min: e.target.value })}
+                  onChange={(e: any) => setPrefDraft({ ...prefDraft, salary_min: e.target.value })}
                   placeholder="e.g. 600000"
                 />
               </label>
@@ -1647,7 +1646,7 @@ export function ProfileSettings() {
                   inputMode="decimal"
                   autoComplete="off"
                   value={prefDraft.salary_max}
-                  onChange={(e) => setPrefDraft({ ...prefDraft, salary_max: e.target.value })}
+                  onChange={(e: any) => setPrefDraft({ ...prefDraft, salary_max: e.target.value })}
                   placeholder="e.g. 1200000"
                 />
               </label>
@@ -1657,7 +1656,7 @@ export function ProfileSettings() {
               <input
                 type="checkbox"
                 checked={prefDraft.willing_to_relocate}
-                onChange={(e) => setPrefDraft({ ...prefDraft, willing_to_relocate: e.target.checked })}
+                onChange={(e: any) => setPrefDraft({ ...prefDraft, willing_to_relocate: e.target.checked })}
               />
             </label>
             <Button onClick={savePreferences} disabled={saving}>
@@ -1739,7 +1738,7 @@ export function ProfileSettings() {
                 Company
                 <Input
                   value={experienceDraft.company_name}
-                  onChange={(e) => setExperienceDraft({ ...experienceDraft, company_name: e.target.value })}
+                  onChange={(e: any) => setExperienceDraft({ ...experienceDraft, company_name: e.target.value })}
                 />
               </label>
               <SelectWithOther
@@ -1771,7 +1770,7 @@ export function ProfileSettings() {
                 <Input
                   type="date"
                   value={experienceDraft.start_date}
-                  onChange={(e) => setExperienceDraft({ ...experienceDraft, start_date: e.target.value })}
+                  onChange={(e: any) => setExperienceDraft({ ...experienceDraft, start_date: e.target.value })}
                 />
               </label>
               <label className="field-label">
@@ -1780,14 +1779,14 @@ export function ProfileSettings() {
                   type="date"
                   value={experienceDraft.end_date}
                   disabled={experienceDraft.is_current}
-                  onChange={(e) => setExperienceDraft({ ...experienceDraft, end_date: e.target.value })}
+                  onChange={(e: any) => setExperienceDraft({ ...experienceDraft, end_date: e.target.value })}
                 />
               </label>
               <label className="row" style={{ justifyContent: "flex-start", gap: 8, alignSelf: "end", minHeight: 44 }}>
                 <input
                   type="checkbox"
                   checked={experienceDraft.is_current}
-                  onChange={(e) => setExperienceDraft({ ...experienceDraft, is_current: e.target.checked, end_date: e.target.checked ? "" : experienceDraft.end_date })}
+                  onChange={(e: any) => setExperienceDraft({ ...experienceDraft, is_current: e.target.checked, end_date: e.target.checked ? "" : experienceDraft.end_date })}
                 />
                 <span>Currently working here</span>
               </label>
@@ -1795,7 +1794,7 @@ export function ProfileSettings() {
                 Summary
                 <Input
                   value={experienceDraft.summary}
-                  onChange={(e) => setExperienceDraft({ ...experienceDraft, summary: e.target.value })}
+                  onChange={(e: any) => setExperienceDraft({ ...experienceDraft, summary: e.target.value })}
                 />
               </label>
             </div>
@@ -1859,7 +1858,7 @@ export function ProfileSettings() {
                 Institution
                 <Input
                   value={educationDraft.institution}
-                  onChange={(e) => setEducationDraft({ ...educationDraft, institution: e.target.value })}
+                  onChange={(e: any) => setEducationDraft({ ...educationDraft, institution: e.target.value })}
                 />
               </label>
               <SelectWithOther
@@ -1933,7 +1932,7 @@ export function ProfileSettings() {
                 Link type
                 <Select
                   value={linkDraft.link_type}
-                  onChange={(e) => setLinkDraft({ ...linkDraft, link_type: e.target.value })}
+                  onChange={(e: any) => setLinkDraft({ ...linkDraft, link_type: e.target.value })}
                 >
                   {LINK_TYPE_OPTIONS.map((option) => (
                     <option key={option.value} value={option.value}>
@@ -1946,7 +1945,7 @@ export function ProfileSettings() {
                 URL
                 <Input
                   value={linkDraft.url}
-                  onChange={(e) => setLinkDraft({ ...linkDraft, url: e.target.value })}
+                  onChange={(e: any) => setLinkDraft({ ...linkDraft, url: e.target.value })}
                   placeholder="https://"
                 />
               </label>
@@ -1954,7 +1953,7 @@ export function ProfileSettings() {
                 Label
                 <Input
                   value={linkDraft.label}
-                  onChange={(e) => setLinkDraft({ ...linkDraft, label: e.target.value })}
+                  onChange={(e: any) => setLinkDraft({ ...linkDraft, label: e.target.value })}
                   placeholder="Optional label"
                 />
               </label>
@@ -2021,7 +2020,7 @@ export function ProfileSettings() {
 const DELETE_ACCOUNT_PHRASE = "DELETE MY ACCOUNT";
 
 export function AccountSettings() {
-  const router = useRouter();
+  const navigate = useNavigate();
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [accountEmail, setAccountEmail] = useState("");
@@ -2047,8 +2046,8 @@ export function AccountSettings() {
 
   async function logout() {
     await createClient()?.auth.signOut();
-    router.replace("/");
-    router.refresh();
+    navigate("/");
+
   }
 
   async function change() {
@@ -2089,8 +2088,8 @@ export function AccountSettings() {
         }),
       });
       await createClient()?.auth.signOut();
-      router.replace("/");
-      router.refresh();
+      navigate("/");
+
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -2134,7 +2133,7 @@ export function AccountSettings() {
           activity, and preferences. This cannot be undone.
         </p>
         {!showDeletePanel ? (
-          <Button variant="danger" onClick={() => setShowDeletePanel(true)}>
+          <Button variant="destructive" onClick={() => setShowDeletePanel(true)}>
             I want to delete my account
           </Button>
         ) : (
@@ -2145,7 +2144,7 @@ export function AccountSettings() {
                 type="email"
                 autoComplete="email"
                 value={confirmEmail}
-                onChange={(e) => setConfirmEmail(e.target.value)}
+                onChange={(e: any) => setConfirmEmail(e.target.value)}
                 placeholder={accountEmail || "you@example.com"}
                 disabled={deleting}
               />
@@ -2154,14 +2153,14 @@ export function AccountSettings() {
               Type <span className="mono">{DELETE_ACCOUNT_PHRASE}</span> to confirm
               <Input
                 value={confirmPhrase}
-                onChange={(e) => setConfirmPhrase(e.target.value)}
+                onChange={(e: any) => setConfirmPhrase(e.target.value)}
                 placeholder={DELETE_ACCOUNT_PHRASE}
                 disabled={deleting}
                 autoComplete="off"
               />
             </label>
             <div className="cluster">
-              <Button variant="danger" disabled={deleting || !canDelete} onClick={() => void deleteAccount()}>
+              <Button variant="destructive" disabled={deleting || !canDelete} onClick={() => void deleteAccount()}>
                 {deleting ? "Deleting…" : "Permanently delete account"}
               </Button>
               <Button
@@ -2199,7 +2198,7 @@ function StoredSettings({ kind }: { kind: "notifications" | "privacy" }) {
   useEffect(() => {
     apiRequest<any>("/settings")
       .then((r) => setData(r[kind] || {}))
-      .catch((e) => setMessage(e.message))
+      .catch((e: any) => setMessage(e.message))
       .finally(() => setLoaded(true));
   }, [kind]);
   async function save() {
@@ -2241,7 +2240,7 @@ function StoredSettings({ kind }: { kind: "notifications" | "privacy" }) {
             type="checkbox"
             disabled={!loaded}
             checked={Boolean(data[key])}
-            onChange={(e) => setData({ ...data, [key]: e.target.checked })}
+            onChange={(e: any) => setData({ ...data, [key]: e.target.checked })}
           />
         </label>
       ))}

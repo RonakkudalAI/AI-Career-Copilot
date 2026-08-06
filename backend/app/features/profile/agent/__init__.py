@@ -1,11 +1,3 @@
-"""
-Profile-fill agent: resume text → reviewable profile draft.
-
-Modules:
-  deterministic.py  Rule-based section mapping
-  normalize.py      Field cleaning (labels, skills, years, phones)
-  pipeline.py       AI + rules orchestration (preview only; apply is in routes)
-"""
 
 from app.features.profile.agent.deterministic import build_profile_draft, draft_counts
 from app.features.profile.agent.normalize import normalize_draft

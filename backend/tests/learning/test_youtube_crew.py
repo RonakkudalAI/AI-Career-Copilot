@@ -1,4 +1,3 @@
-"""Tests for ATS-grounded YouTube learning crew (no invented video IDs)."""
 
 from __future__ import annotations
 
@@ -23,18 +22,15 @@ def test_extract_only_missing_or_partial_gaps():
         {"requirement_text": "Docker", "match_status": "not_found"},
         {"requirement_text": "Python", "match_status": "partial_match"},
         {"requirement_text": "SQL", "match_status": "matched"},
-        {"requirement_text": "Docker", "match_status": "not_found"},  # duplicate
+        {"requirement_text": "Docker", "match_status": "not_found"},
     ]
     out = tool_extract_ats_gaps({"evidence_rows": evidence, "source_analysis_id": "a1"})
     assert out["allowed_gaps"] == ["Docker", "Python"]
     assert out["gap_count"] == 2
-
-
 def test_validator_rejects_invented_gap_and_fills_missing():
     class DummySettings:
         youtube_configured = False
         groq_configured = False
-
     ctx = {
         "allowed_gaps": ["Docker", "Kubernetes"],
         "planner_provider": "test",
@@ -58,7 +54,7 @@ def test_validator_rejects_invented_gap_and_fills_missing():
             ]
         },
     }
-    out = asyncio.run(tool_validate_and_materialize(DummySettings(), ctx))  # type: ignore[arg-type]
+    out = asyncio.run(tool_validate_and_materialize(DummySettings(), ctx))
     assert out["accepted_count"] == 2
     requirements = {item["metadata"]["requirement"] for item in out["items"]}
     assert requirements == {"Docker", "Kubernetes"}
@@ -67,8 +63,6 @@ def test_validator_rejects_invented_gap_and_fills_missing():
         for resource in item["resources"]:
             assert is_allowed_youtube_url(resource["url"])
             assert "youtube.com" in resource["url"]
-
-
 def test_api_video_resource_uses_exact_watch_url():
     resource = build_api_video_resource(
         gap="Docker",
@@ -87,8 +81,6 @@ def test_api_video_resource_uses_exact_watch_url():
     assert resource["metadata"]["video_id"] == "abc123XYZ01"
     assert resource["metadata"]["video_id_policy"] == "youtube_api_only_no_invented_ids"
     assert is_allowed_youtube_url(resource["url"])
-
-
 def test_grounded_resource_prefers_api_videos():
     resources = build_grounded_resource(
         gap="Rust",
@@ -108,22 +100,16 @@ def test_grounded_resource_prefers_api_videos():
     assert len(resources) == 1
     assert resources[0]["resource_type"] == "youtube_video"
     assert "/watch?v=rustVid001" in resources[0]["url"]
-
-
 def test_fallback_is_search_not_fake_watch():
     resource = build_search_fallback_resource(gap="Rust", search_query="Rust tutorial freecodecamp")
     assert resource["resource_type"] == "youtube_search"
     assert is_allowed_youtube_url(resource["url"])
     assert "/results" in resource["url"]
     assert "/watch" not in resource["url"]
-
-
 def test_search_url_encoding():
     url = youtube_search_url("C++ basics for beginners")
     assert url.startswith("https://www.youtube.com/results?search_query=")
     assert is_allowed_youtube_url(url)
-
-
 def test_validator_uses_youtube_api_when_available():
     class DummySettings:
         youtube_configured = True
@@ -131,7 +117,6 @@ def test_validator_uses_youtube_api_when_available():
         youtube_api_key = "test"
         youtube_api_base_url = "https://www.googleapis.com/youtube/v3"
         youtube_timeout_seconds = 10.0
-
     ctx = {
         "allowed_gaps": ["Docker"],
         "planner_provider": "test",
@@ -163,30 +148,26 @@ def test_validator_uses_youtube_api_when_available():
         "app.features.learning.agents.crew.tools.search_youtube_videos",
         new=AsyncMock(return_value=fake_videos),
     ):
-        out = asyncio.run(tool_validate_and_materialize(DummySettings(), ctx))  # type: ignore[arg-type]
+        out = asyncio.run(tool_validate_and_materialize(DummySettings(), ctx))
     assert out["accepted_count"] == 1
     assert out["youtube_api_video_steps"] == 1
     resource = out["items"][0]["resources"][0]
     assert resource["resource_type"] == "youtube_video"
     assert resource["url"] == "https://www.youtube.com/watch?v=dckr111aaa"
     assert resource["metadata"]["video_id"] == "dckr111aaa"
-
-
 def test_crew_run_end_to_end_without_llm():
     from app.features.learning.agents.crew.orchestrator import run_learning_youtube_crew
-
     class DummySettings:
         groq_configured = False
         nvidia_configured = False
         youtube_configured = False
-
     evidence = [
         {"requirement_text": "Docker", "match_status": "not_found"},
         {"requirement_text": "Git", "match_status": "not_found"},
     ]
     items, audit = asyncio.run(
         run_learning_youtube_crew(
-            DummySettings(),  # type: ignore[arg-type]
+            DummySettings(),
             evidence_rows=evidence,
             source_analysis_id="analysis-1",
             role_title="Backend Engineer",

@@ -1,7 +1,7 @@
 import unittest
 
 from app.features.ats.agent.crew import evaluate_domain_gate
-from app.features.ats.scoring.schemas import JDParsed, ExperienceEntry, ResumeParsed
+from app.features.ats.scoring.schemas import ExperienceEntry, JDParsed, ResumeParsed
 
 
 def it_resume() -> ResumeParsed:
@@ -17,8 +17,6 @@ def it_resume() -> ResumeParsed:
         ],
         total_years_exp=4,
     )
-
-
 class DomainGateTests(unittest.TestCase):
     def test_it_resume_and_it_jd_are_allowed(self):
         result = evaluate_domain_gate(
@@ -30,7 +28,6 @@ class DomainGateTests(unittest.TestCase):
             ),
         )
         self.assertEqual(result.decision, "ALLOW")
-
     def test_banking_resume_and_it_jd_are_rejected(self):
         resume = ResumeParsed(
             skills=["AML", "Risk Analysis"],

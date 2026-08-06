@@ -1,10 +1,14 @@
-"use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import { Button, Card, Input, PageHeader, Textarea } from "@/shared/ui/primitives";
+import { useNavigate } from "react-router-dom";
+
+
+
+
+
 import { apiRequest } from "@/shared/api/client";
 import { createClient } from "@/features/auth/api/client";
+import { Button, Card, Input, PageHeader, Textarea } from "@/shared/ui/primitives";
 
 type OnboardingForm = {
   full_name: string;
@@ -34,7 +38,7 @@ function pickNameFromAuthMeta(meta: Record<string, unknown> | undefined | null):
 }
 
 export function Onboarding() {
-  const router = useRouter();
+  const navigate = useNavigate();
   const [form, setForm] = useState<OnboardingForm>(EMPTY);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -120,8 +124,8 @@ export function Onboarding() {
           onboarding_completed: true,
         }),
       });
-      router.replace("/dashboard");
-      router.refresh();
+      navigate("/dashboard");
+
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -156,7 +160,7 @@ export function Onboarding() {
                     {label}
                     <Input
                       value={form[key]}
-                      onChange={(e) => updateField(key, e.target.value)}
+                      onChange={(e: any) => updateField(key, e.target.value)}
                       required={key === "full_name"}
                     />
                   </label>
@@ -164,7 +168,7 @@ export function Onboarding() {
               </div>
               <label className="field-label">
                 Bio
-                <Textarea value={form.bio} onChange={(e) => updateField("bio", e.target.value)} />
+                <Textarea value={form.bio} onChange={(e: any) => updateField("bio", e.target.value)} />
               </label>
               {error ? (
                 <p role="alert" className="field-error">

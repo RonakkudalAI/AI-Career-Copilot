@@ -1,5 +1,7 @@
 import os
+
 import pytest
+
 
 @pytest.fixture(autouse=True, scope="session")
 def setup_test_environment():
@@ -9,10 +11,8 @@ def setup_test_environment():
     os.environ["PUBLIC_API_BASE_URL"] = "http://localhost:8000"
     os.environ["LOG_LEVEL"] = "ERROR"
     os.environ["FRONTEND_ORIGINS"] = "http://localhost:3000"
-    os.environ["DATABASE_PATH"] = ":memory:"
     os.environ["AUTH_SECRET"] = "test-secret"
     os.environ["LOCAL_STORAGE_DIR"] = "/tmp/storage"
-    os.environ["CREWAI_STORAGE_DIR"] = "/tmp/crewai"
     os.environ["DOCUMENT_BUCKET"] = "candidate-documents"
     os.environ["AVATAR_BUCKET"] = "candidate-avatars"
     os.environ["INTERVIEW_BUCKET"] = "interview-media"

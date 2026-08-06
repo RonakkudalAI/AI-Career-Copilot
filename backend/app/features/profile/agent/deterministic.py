@@ -1,4 +1,3 @@
-"""Deterministic profile draft generation from resume text (no invented facts)."""
 
 from __future__ import annotations
 
@@ -29,11 +28,11 @@ _MONTH_NUMBERS = {
     "aug": 8, "august": 8, "sep": 9, "sept": 9, "september": 9, "oct": 10,
     "october": 10, "nov": 11, "november": 11, "dec": 12, "december": 12,
 }
-_DATE_TOKEN = rf"(?:{_MONTH}\.?(?:\s*'?)\d{{2,4}}|(?:19|20)\d{{2}}|\d{{1,2}}[/-]\d{{2,4}})"
+_DATE_TOKEN = rf"(?:{_MONTH}\.?(?:\s*'?)\d{ 2,4} |(?:19|20)\d{ 2} |\d{ 1,2} [/-]\d{ 2,4} )"
 _DATE_RANGE_RE = re.compile(
     rf"(?P<start>{_DATE_TOKEN})"
     rf"\s*[-–—to]+\s*"
-    rf"(?P<end>(?:{_MONTH}\.?\s*'?\d{{2,4}}|(?:19|20)\d{{2}}|\d{{1,2}}[/\-.]\d{{2,4}}"
+    rf"(?P<end>(?:{_MONTH}\.?\s*'?\d{ 2,4} |(?:19|20)\d{ 2} |\d{ 1,2} [/\-.]\d{ 2,4} "
     rf"|present|current|now|ongoing|till\s+date|to\s+date))",
     re.I,
 )
@@ -44,13 +43,9 @@ _CLEAN_DATE_RANGE_RE = re.compile(
 )
 _YEAR_RE = re.compile(r"(?:19|20)\d{2}")
 _BULLET_RE = re.compile(r"^[\u2022\u2023\u25E6\u2043\u2219•●○▪▸►\*◦‣⁃\-–—]\s*")
-
-
 def _clean(value: str | None, limit: int = 500) -> str:
     text = " ".join((value or "").split()).strip()
     return text[:limit]
-
-
 def _section_lines(sections: dict[str, Any], key: str) -> list[str]:
     raw = sections.get(key) or []
     if isinstance(raw, str):
@@ -63,16 +58,10 @@ def _section_lines(sections: dict[str, Any], key: str) -> list[str]:
         if text:
             lines.append(text)
     return lines
-
-
 def _split_entry_lines(entry: str) -> list[str]:
     return [line.strip() for line in entry.splitlines() if line.strip()]
-
-
 def _strip_bullet(line: str) -> str:
     return _BULLET_RE.sub("", line).strip()
-
-
 def _looks_like_name(line: str) -> bool:
     if not line or len(line) > 60:
         return False
@@ -84,7 +73,6 @@ def _looks_like_name(line: str) -> bool:
     words = [w for w in re.split(r"\s+", line) if w]
     if not (1 <= len(words) <= 5):
         return False
-    # Reject obvious headings / locations
     if line.lower() in {"resume", "curriculum vitae", "cv"}:
         return False
     if re.search(
@@ -95,11 +83,8 @@ def _looks_like_name(line: str) -> bool:
     ):
         return False
     if "," in line and len(words) <= 3:
-        # "City, Country" is not a person name
         return False
     return True
-
-
 def _extract_phone(text: str) -> str | None:
     match = _PHONE_RE.search(text)
     if not match:
@@ -109,10 +94,7 @@ def _extract_phone(text: str) -> str | None:
     if digits < 8:
         return None
     return _clean(candidate, 40)
-
-
 def _date_to_storage(value: str | None) -> str | None:
-    """Normalize a resume month/year into a date without claiming day precision."""
     token = _clean(value, 40).lower().replace(".", "")
     if not token or re.fullmatch(r"present|current|now|ongoing|till date|to date", token):
         return None
@@ -135,8 +117,6 @@ def _date_to_storage(value: str | None) -> str | None:
     if not 1 <= month <= 12:
         return None
     return f"{year:04d}-{month:02d}-01"
-
-
 def _parse_experience_entry(entry: str, order: int) -> dict[str, Any] | None:
     lines = _split_entry_lines(entry)
     if not lines:
@@ -144,23 +124,18 @@ def _parse_experience_entry(entry: str, order: int) -> dict[str, Any] | None:
     header = lines[0]
     bullets = [_strip_bullet(line) for line in lines[1:] if _BULLET_RE.match(line) or line.startswith("-")]
     body_lines = [_strip_bullet(line) for line in lines[1:] if not (_BULLET_RE.match(line) or line.startswith("-"))]
-    # Prefer bullet summary; else remaining body
     summary_parts = bullets or body_lines
     summary = _clean(" ".join(summary_parts), 2000) or None
-
     role_title = None
     company_name = None
     location = None
     date_source = " ".join(lines[:2])
     is_current = bool(re.search(r"\b(present|current|now|ongoing|till\s+date|to\s+date)\b", date_source, re.I))
-
-    # Patterns: Role | Company | Location | Dates
     if "|" in header:
         parts = [p.strip() for p in header.split("|") if p.strip()]
         if parts:
             role_title = parts[0]
         if len(parts) >= 2:
-            # second part may be company or dates
             if _DATE_RANGE_RE.search(parts[1]) or _YEAR_RE.fullmatch(parts[1].strip()):
                 company_name = parts[0]
                 role_title = parts[0]
@@ -175,15 +150,12 @@ def _parse_experience_entry(entry: str, order: int) -> dict[str, Any] | None:
             company_name = at_match.group("company").strip()
             company_name = _DATE_RANGE_RE.sub("", company_name).strip(" -–—|")
         else:
-            # Single-line experience like "Built APIs" — use as summary/role
             role_title = _DATE_RANGE_RE.sub("", header).strip(" -–—|") or header
             company_name = "Not specified"
-
     role_title = _clean(role_title or "Role", 160)
     company_name = _clean(company_name or "Not specified", 160)
     if company_name.lower() in {"present", "current"}:
         company_name = "Not specified"
-
     range_match = _DATE_RANGE_RE.search(date_source) or _CLEAN_DATE_RANGE_RE.search(date_source)
     start_date = _date_to_storage(range_match.group("start")) if range_match else None
     end_date = _date_to_storage(range_match.group("end")) if range_match else None
@@ -192,7 +164,6 @@ def _parse_experience_entry(entry: str, order: int) -> dict[str, Any] | None:
         summary = _clean(f"{date_note}. {summary}", 2000)
     elif date_note and not summary:
         summary = _clean(date_note, 2000)
-
     return {
         "company_name": company_name,
         "role_title": role_title,
@@ -205,8 +176,6 @@ def _parse_experience_entry(entry: str, order: int) -> dict[str, Any] | None:
         "display_order": order,
         "selected": True,
     }
-
-
 def _parse_education_entry(entry: str, order: int) -> dict[str, Any] | None:
     lines = _split_entry_lines(entry)
     if not lines:
@@ -217,10 +186,8 @@ def _parse_education_entry(entry: str, order: int) -> dict[str, Any] | None:
     degree = None
     field_of_study = None
     grade = None
-
     if "|" in header:
         parts = [p.strip() for p in header.split("|") if p.strip()]
-        # Common: Degree Field | Institution | Years
         if parts:
             first = parts[0]
             institution = parts[1] if len(parts) >= 2 and not _DATE_RANGE_RE.search(parts[1]) else parts[0]
@@ -229,7 +196,6 @@ def _parse_education_entry(entry: str, order: int) -> dict[str, Any] | None:
             elif len(parts) == 1:
                 institution = first
             else:
-                # Degree might include field
                 degree = first
                 if len(parts) >= 2:
                     institution = parts[1]
@@ -237,12 +203,9 @@ def _parse_education_entry(entry: str, order: int) -> dict[str, Any] | None:
             field_of_study = parts[2]
     else:
         institution = _DATE_RANGE_RE.sub("", header).strip(" -–—|") or header
-
     grade_match = re.search(r"(?:cgpa|gpa|grade|percentage)\s*[:\-]?\s*([0-9.]+%?(?:/\d+)?)", f"{header} {rest}", re.I)
     if grade_match:
         grade = grade_match.group(1)
-
-    # Try to split "B.Tech Computer Science"
     if degree and not field_of_study:
         field_hit = re.search(
             r"\b(computer science|information technology|data science|electronics|mechanical|ai|ml)\b",
@@ -251,7 +214,6 @@ def _parse_education_entry(entry: str, order: int) -> dict[str, Any] | None:
         )
         if field_hit:
             field_of_study = field_hit.group(0).title()
-
     institution = _clean(institution or "Institution", 200)
     return {
         "institution": institution,
@@ -263,8 +225,6 @@ def _parse_education_entry(entry: str, order: int) -> dict[str, Any] | None:
         "display_order": order,
         "selected": True,
     }
-
-
 def _parse_project_entry(entry: str, order: int) -> dict[str, Any] | None:
     lines = _split_entry_lines(entry)
     if not lines:
@@ -287,8 +247,6 @@ def _parse_project_entry(entry: str, order: int) -> dict[str, Any] | None:
         "display_order": order,
         "selected": True,
     }
-
-
 def _parse_cert_entry(entry: str) -> dict[str, Any] | None:
     lines = _split_entry_lines(entry)
     if not lines:
@@ -306,13 +264,10 @@ def _parse_cert_entry(entry: str) -> dict[str, Any] | None:
         "issuer": _clean(issuer, 160) if issuer else None,
         "selected": True,
     }
-
-
 def _parse_language_line(line: str) -> dict[str, Any] | None:
     text = _strip_bullet(line)
     if not text:
         return None
-    # English - Fluent
     parts = re.split(r"[:\-–—|]", text, maxsplit=1)
     language = parts[0].strip()
     proficiency = parts[1].strip() if len(parts) > 1 else None
@@ -323,15 +278,10 @@ def _parse_language_line(line: str) -> dict[str, Any] | None:
         "proficiency": _clean(proficiency, 80) if proficiency else None,
         "selected": True,
     }
-
-
 def _estimate_years(experience_entries: list[dict[str, Any]], text: str) -> float | None:
-    # Prefer explicit "2+ years" in summary over calendar-span guesses (span often
-    # includes education years and overstates experience).
     explicit = extract_explicit_years(text or "")
     if explicit is not None:
         return explicit
-    # Use only years appearing near experience headers / roles when possible
     exp_blob = "\n".join(
         f"{e.get('role_title','')} {e.get('company_name','')} {e.get('summary','')}"
         for e in experience_entries
@@ -344,20 +294,12 @@ def _estimate_years(experience_entries: list[dict[str, Any]], text: str) -> floa
     if experience_entries:
         return float(min(max(len(experience_entries), 1), 15))
     return None
-
-
 def _infer_career_level(years: float | None, text: str = "") -> str | None:
     return infer_career_level(years, text)
-
-
 def build_profile_draft(
     plain_text: str,
     structured_content: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """
-    Build a reviewable profile draft from resume plain text + optional structured sections.
-    Only uses content present in the resume (deterministic heuristics).
-    """
     text = plain_text or ""
     structured = structured_content if isinstance(structured_content, dict) else {}
     sections = structured.get("sections") if isinstance(structured.get("sections"), dict) else None
@@ -366,7 +308,6 @@ def build_profile_draft(
     unclassified = structured.get("unclassified_blocks") or []
     if not unclassified:
         unclassified = extract_sections(text).get("unclassified_blocks") or []
-
     contact_lines = _section_lines(sections, "contact")
     summary_lines = _section_lines(sections, "summary")
     skill_lines = _section_lines(sections, "skills")
@@ -376,28 +317,21 @@ def build_profile_draft(
     cert_lines = _section_lines(sections, "certifications")
     language_lines = _section_lines(sections, "languages")
     link_lines = _section_lines(sections, "links")
-
-    # Contact first (often holds the candidate name after section promotion).
     header_pool = list(contact_lines) + [str(item) for item in unclassified]
     full_blob = "\n".join([text] + header_pool)
-
     full_name = None
     for line in header_pool:
         first = line.split("\n")[0].strip()
         if _looks_like_name(first):
             full_name = _clean(first, 120)
             break
-
     phone = _extract_phone(full_blob)
     emails = _EMAIL_RE.findall(full_blob)
-    # email is not a profiles column; keep in notes for UI only
     email = emails[0] if emails else None
-
     location = None
     for line in header_pool + summary_lines:
         if _EMAIL_RE.search(line) or _URL_RE.search(line):
             continue
-        # "City, Country" or "Location: City"
         labeled = re.match(r"^(?:location|address|city)\s*[:\-–—]\s*(.+)$", line, re.I)
         if labeled:
             location = _clean(labeled.group(1), 160)
@@ -412,39 +346,31 @@ def build_profile_draft(
                 loc = re.sub(r"^(?:location|address|city)\s*[:\-–—]\s*", "", line, flags=re.I)
                 location = _clean(loc, 160)
                 break
-
     headline = _clean(summary_lines[0], 240) if summary_lines else None
     bio = _clean(" ".join(summary_lines), 4000) if summary_lines else None
-
     experiences: list[dict[str, Any]] = []
     for index, entry in enumerate(experience_lines):
         parsed = _parse_experience_entry(entry, index)
         if parsed:
             experiences.append(parsed)
-
     current_role = experiences[0]["role_title"] if experiences else None
-
     educations: list[dict[str, Any]] = []
     for index, entry in enumerate(education_lines):
         parsed = _parse_education_entry(entry, index)
         if parsed:
             educations.append(parsed)
-
     projects: list[dict[str, Any]] = []
     for index, entry in enumerate(project_lines):
         parsed = _parse_project_entry(entry, index)
         if parsed:
             projects.append(parsed)
-
     certifications: list[dict[str, Any]] = []
     for entry in cert_lines:
         parsed = _parse_cert_entry(entry)
         if parsed:
             certifications.append(parsed)
-
     languages: list[dict[str, Any]] = []
     for line in language_lines:
-        # languages section may be one comma list
         if "," in line and "|" not in line and line.count(",") >= 1 and len(line) < 120:
             for part in line.split(","):
                 parsed = _parse_language_line(part)
@@ -454,15 +380,12 @@ def build_profile_draft(
             parsed = _parse_language_line(line)
             if parsed:
                 languages.append(parsed)
-
-    # Skills — strip category labels ("Languages:", "Frameworks:") before splitting
     skill_names: list[str] = []
     seen_skills: set[str] = set()
     for line in skill_lines:
         payload = line
         if ":" in line:
             left, right = line.split(":", 1)
-            # Only treat as label if left side is short category text
             if len(left.strip()) <= 40 and not re.search(r"\d", left):
                 payload = right
         chunks = re.split(r"[,;|/]|·", payload)
@@ -486,12 +409,9 @@ def build_profile_draft(
         if key not in seen_skills:
             seen_skills.add(key)
             skill_names.append(skill)
-
     skills = [{"name": name, "source": "resume_import", "selected": True} for name in skill_names[:40]]
-
     links: list[dict[str, Any]] = []
     seen_urls: set[str] = set()
-
     def add_link(link_type: str, url: str, label: str | None = None) -> None:
         cleaned = url.strip().rstrip(").,;")
         if cleaned.startswith("www."):
@@ -508,7 +428,6 @@ def build_profile_draft(
                 "selected": True,
             }
         )
-
     for line in [full_blob, *link_lines]:
         for match in _URL_RE.findall(line):
             lower = match.lower()
@@ -518,10 +437,8 @@ def build_profile_draft(
                 add_link("github", match, "GitHub")
             else:
                 add_link("website", match, None)
-
     years = _estimate_years(experiences, text)
     career_level = _infer_career_level(years, text)
-
     profile = {
         "full_name": full_name,
         "headline": headline,
@@ -534,7 +451,6 @@ def build_profile_draft(
         "career_goal": None,
         "selected": True,
     }
-
     warnings: list[str] = []
     if not full_name:
         warnings.append("Could not detect a full name; please fill it manually.")
@@ -542,7 +458,6 @@ def build_profile_draft(
         warnings.append("Little structured content was detected; review the draft carefully.")
     if email:
         warnings.append(f"Email detected ({email}) — stored in account auth, not profile phone fields.")
-
     draft = {
         "profile": profile,
         "skills": skills,
@@ -560,8 +475,6 @@ def build_profile_draft(
         },
     }
     return normalize_draft(draft, resume_text=text)
-
-
 def draft_counts(draft: dict[str, Any]) -> dict[str, int]:
     return {
         "skills": len(draft.get("skills") or []),

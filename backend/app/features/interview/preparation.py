@@ -1,4 +1,3 @@
-"""Evidence-grounded preparation material for the existing mock-interview flow."""
 
 from __future__ import annotations
 
@@ -17,20 +16,14 @@ from app.features.interview.question_bank import has_questions, normalize_skill,
 
 _PROMPT_PATH = Path(__file__).resolve().parents[2] / "agents" / "prompts" / "interview_preparation_v1.txt"
 _GENERIC_TERMS = {"experience", "required", "preferred", "knowledge", "team", "work", "skills", "years"}
-
-
 class _GeneratedQuestion(BaseModel):
     model_config = ConfigDict(extra="ignore")
     question: str = Field(min_length=8, max_length=800)
     skill: str = Field(min_length=1, max_length=160)
     difficulty: str = Field(default="medium", max_length=20)
-
-
 class _GeneratedQuestions(BaseModel):
     model_config = ConfigDict(extra="ignore")
     questions: list[_GeneratedQuestion] = Field(default_factory=list, max_length=12)
-
-
 def _unique(values: Iterable[object], limit: int = 24) -> list[str]:
     result: list[str] = []
     seen: set[str] = set()
@@ -43,16 +36,12 @@ def _unique(values: Iterable[object], limit: int = 24) -> list[str]:
         if len(result) >= limit:
             break
     return result
-
-
 def _strings(value: object) -> list[str]:
     if isinstance(value, str):
         return [part.strip() for part in value.replace("\n", ",").replace(";", ",").split(",") if part.strip()]
     if isinstance(value, list):
         return [str(item).strip() for item in value if str(item).strip()]
     return []
-
-
 def _section_values(structured: object, names: tuple[str, ...]) -> list[str]:
     if not isinstance(structured, dict):
         return []
@@ -65,21 +54,15 @@ def _section_values(structured: object, names: tuple[str, ...]) -> list[str]:
             if any(name in str(key).casefold() for name in names):
                 values.extend(_strings(value))
     return values
-
-
 def _candidate_skills(resume: dict[str, Any], profile_skills: list[dict[str, Any]]) -> list[str]:
     explicit = [row.get("name") or row.get("normalized_name") for row in profile_skills]
     structured = _section_values(resume.get("structured_content"), ("skill", "technolog", "tool"))
     plain = extract_skill_candidates(str(resume.get("plain_text") or ""))
     return _unique([*explicit, *structured, *plain])
-
-
 def _job_terms(job: dict[str, Any]) -> list[str]:
     structured = _section_values(job.get("structured_content"), ("requirement", "qualification", "skill", "technolog", "tool"))
     plain = extract_skill_candidates(str(job.get("raw_text") or ""))
     return _unique([*structured, *plain])
-
-
 def _question(question: str, skill: str | None, difficulty: str | None, source: str) -> dict[str, Any]:
     return {
         "question": question.strip()[:800],
@@ -87,16 +70,12 @@ def _question(question: str, skill: str | None, difficulty: str | None, source: 
         "difficulty": difficulty if difficulty in {"easy", "medium", "hard"} else "medium",
         "source": source,
     }
-
-
 def _bank_questions(skills: list[str], per_skill: int = 1) -> list[dict[str, Any]]:
     return [
         _question(text, skill, difficulty, "question_bank")
         for skill in skills
         for text, difficulty in questions_for(skill, per_skill)
     ]
-
-
 async def _ai_questions(settings: Settings, missing_skills: list[str], role: str) -> list[dict[str, Any]]:
     unknown = [skill for skill in missing_skills if not has_questions(skill)]
     if not unknown or not settings.groq_configured:
@@ -117,8 +96,6 @@ async def _ai_questions(settings: Settings, missing_skills: list[str], role: str
         for item in response.questions
         if normalize_skill(item.skill) in requested
     ][:12]
-
-
 def _project_questions(projects: list[dict[str, Any]]) -> list[dict[str, Any]]:
     groups: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -137,8 +114,6 @@ def _project_questions(projects: list[dict[str, Any]]) -> list[dict[str, Any]]:
             questions.append(_question(f"How does this project detail affect your design choices: {description}", None, "medium", "candidate_context"))
         groups.append({"project_name": name, "questions": questions})
     return groups[:8]
-
-
 async def generate_interview_preparation(
     client: Any,
     settings: Settings,
@@ -147,7 +122,6 @@ async def generate_interview_preparation(
     resume_version_id: UUID,
     job_description_id: UUID,
 ) -> dict[str, Any]:
-    """Create a transient preparation response; no records or scores are fabricated or persisted."""
     user_id = str(user.id)
     resume_rows = client.table("resume_versions").select("*").eq("id", str(resume_version_id)).eq("user_id", user_id).limit(1).execute().data or []
     job_rows = client.table("job_descriptions").select("*").eq("id", str(job_description_id)).eq("user_id", user_id).limit(1).execute().data or []
@@ -156,7 +130,6 @@ async def generate_interview_preparation(
     resume, job = resume_rows[0], job_rows[0]
     if resume.get("extraction_status") != "confirmed" or job.get("extraction_status") != "confirmed":
         raise ApiError(409, "confirmed_sources_required", "Confirm both the resume and job description before preparing for an interview.")
-
     skills_rows = client.table("candidate_skills").select("name,normalized_name").eq("user_id", user_id).execute().data or []
     project_rows = client.table("candidate_projects").select("title,description").eq("user_id", user_id).order("display_order").execute().data or []
     candidate_skills = _candidate_skills(resume, skills_rows)
@@ -173,7 +146,6 @@ async def generate_interview_preparation(
         candidate_keys = {normalize_skill(skill) for skill in candidate_skills}
         matched = [skill for skill in job_skills if normalize_skill(skill) in candidate_keys]
         missing = [skill for skill in job_skills if normalize_skill(skill) not in candidate_keys]
-
     role = str(job.get("role_title") or job.get("title") or "the target role").strip()[:200]
     technical = _bank_questions(matched, per_skill=2)[:16]
     missing_questions = _bank_questions(missing, per_skill=2)[:16]

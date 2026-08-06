@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 from typing import Any
 
 from app.features.ats.agent.prompts import (
@@ -10,45 +9,18 @@ from app.features.ats.agent.prompts import (
     RESUME_PARSE_PROMPT,
     SCORING_PROMPT,
 )
-from app.features.ats.scoring.schemas import JDParsed, GateResult, ResumeParsed, ScoreResult
+from app.features.ats.scoring.schemas import GateResult, JDParsed, ResumeParsed, ScoreResult
 
 
-def _configure_crewai_storage() -> None:
-    """Keep CrewAI's implicit Chroma/RAG storage inside the project data dir."""
-    from app.core.config import get_settings
-
-    # ATS scoring must not send CrewAI traces to a third-party telemetry
-    # service unless the project explicitly opts in.
+def _configure_crewai_runtime() -> None:
     os.environ.setdefault("CREWAI_TRACING_ENABLED", "false")
-
-    storage_dir = Path(get_settings().crewai_storage_dir).expanduser().resolve()
-    storage_dir.mkdir(parents=True, exist_ok=True)
-    (storage_dir / "credentials").mkdir(parents=True, exist_ok=True)
-
-    # CrewAI imports Chroma constants while importing ``crewai``. Patch its
-    # storage boundary before that import so Windows shell-folder permissions
-    # cannot prevent the ATS pipeline from initializing.
-    import crewai_core.paths as crewai_paths
-
-    crewai_paths.db_storage_path = lambda: str(storage_dir)
-
-    # Recent CrewAI releases also create an encrypted telemetry credential
-    # directory independently of db_storage_path. Keep that directory local
-    # as well; otherwise import can still fail before any ATS task is created.
-    from crewai_core.token_manager import TokenManager
-
-    TokenManager._get_secure_storage_path = staticmethod(lambda: storage_dir / "credentials")
-
-
 def _crewai():
     try:
-        _configure_crewai_storage()
+        _configure_crewai_runtime()
         from crewai import Agent, Task
     except Exception as exc:
         raise RuntimeError("CrewAI could not be initialized for the ATS scoring pipeline") from exc
     return Agent, Task
-
-
 def build_agents(llm: Any) -> dict[str, Any]:
     Agent, _ = _crewai()
     return {
@@ -81,8 +53,6 @@ def build_agents(llm: Any) -> dict[str, Any]:
             verbose=False,
         ),
     }
-
-
 def build_resume_parse_task(agent: Any, resume_text: str) -> Any:
     _, Task = _crewai()
     return Task(
@@ -91,8 +61,6 @@ def build_resume_parse_task(agent: Any, resume_text: str) -> Any:
         agent=agent,
         output_pydantic=ResumeParsed,
     )
-
-
 def build_jd_parse_task(agent: Any, jd_text: str) -> Any:
     _, Task = _crewai()
     return Task(
@@ -101,8 +69,6 @@ def build_jd_parse_task(agent: Any, jd_text: str) -> Any:
         agent=agent,
         output_pydantic=JDParsed,
     )
-
-
 def build_domain_gate_task(agent: Any, resume: ResumeParsed, jd: JDParsed) -> Any:
     _, Task = _crewai()
     return Task(
@@ -114,8 +80,6 @@ def build_domain_gate_task(agent: Any, resume: ResumeParsed, jd: JDParsed) -> An
         agent=agent,
         output_pydantic=GateResult,
     )
-
-
 def build_scoring_task(agent: Any, resume: ResumeParsed, jd: JDParsed, gate: GateResult) -> Any:
     _, Task = _crewai()
     return Task(

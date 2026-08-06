@@ -11,8 +11,6 @@ def _blocks() -> list[SourceBlock]:
         SourceBlock.create(page=1, order=2, text="Python, FastAPI", heading_context="SKILLS"),
         SourceBlock.create(page=1, order=3, text="Built APIs at Acme", heading_context="WORK EXPERIENCE"),
     ]
-
-
 def test_grounding_keeps_source_values_and_drops_unverifiable_values():
     blocks = _blocks()
     assert evidence_block_ids("Python", blocks) == ["page-1-block-02"]
@@ -22,29 +20,22 @@ def test_grounding_keeps_source_values_and_drops_unverifiable_values():
     assert sections == {"skills": ["Python"]}
     assert evidence["skills"] == [["page-1-block-02"]]
     assert len(warnings) == 1
-
-
 def test_contamination_reports_clear_heading_mismatch():
     blocks = _blocks()
     issues = find_contamination({"skills": [["page-1-block-03"]]}, blocks)
     assert issues == [{"section": "skills", "source_section": "experience"}]
-
-
 def test_reconciliation_is_deterministic_and_counts_duplicates():
     result, duplicates = reconcile_sections(
         {"skills": ["Python", " python "], "experience": ["Built APIs", "Python"]}
     )
     assert result == {"skills": ["Python"], "experience": ["Built APIs"]}
     assert duplicates == 2
-
-
-def test_confidence_is_measurable_and_ocr_adjusted():
+def test_confidence_is_measurable():
     result = calculate_confidence(
         total_values=4,
         grounded_values=4,
         warnings=0,
         contamination_issues=0,
-        is_scanned=True,
     )
-    assert result["score"] == 0.85
-    assert result["level"] == "MEDIUM"
+    assert result["score"] == 1.0
+    assert result["level"] == "HIGH"

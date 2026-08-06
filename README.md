@@ -1,14 +1,14 @@
 # Career Copilot
 
-**Version:** 1.0.0  
-**Type:** Full-stack monorepo — Next.js frontend + FastAPI backend + local SQLite  
+**Version:** 1.0.0
+**Type:** Full-stack monorepo — Vite frontend + FastAPI backend + Firebase Cloud Firestore
 **Purpose:** Private local career workspace for candidates
 
 Career Copilot helps candidates manage profiles, parse resumes, score them against job descriptions with **auditable keyword evidence**, prepare for interviews, generate **YouTube learning paths** from ATS gaps, and browse **job recommendations** grounded in confirmed resume evidence.
 
-> **Golden rule:** Do not invent the candidate’s career.  
-> Only use what the user types, uploads, **confirms**, or explicitly accepts.  
-> **Local SQLite + local filesystem** is the system of record. AI keys stay on the server.
+> **Golden rule:** Do not invent the candidate’s career.\
+> Only use what the user types, uploads, **confirms**, or explicitly accepts.
+> **Cloud Firestore + file buckets** are the system of record. AI keys and Firebase credentials stay on the server.
 
 ---
 
@@ -32,6 +32,7 @@ Career Copilot helps candidates manage profiles, parse resumes, score them again
 16. [Testing](#16-testing)
 17. [Design principles](#17-design-principles)
 18. [Quick reference](#18-quick-reference)
+19. [Scaling Considerations](#19-scaling-considerations)
 
 ---
 
@@ -52,7 +53,7 @@ Career Copilot helps candidates manage profiles, parse resumes, score them again
 | Interview preparation from resume + JD | Yes | Evidence-grounded question packs |
 | Learning paths from ATS gaps | Yes | Gaps → planner → YouTube Data API exact videos |
 | Delete learning paths / interviews / ATS / account | Yes | Owned data cascade + storage purge on account delete |
-| Jobs browse / save + recommendations | Yes | Local jobs scored against confirmed resume evidence |
+| Jobs browse / save + recommendations | Yes | Premium glassmorphism UI for local jobs scored against confirmed resume evidence |
 | Demo session (offline frontend mock) | Yes | Cookie `career_copilot_demo=1`; mocks key APIs in browser |
 | In-app post-ATS resume editor | **No** | Removed; re-upload instead |
 | Browser-side AI / YouTube keys | **No** | Server `.env` only |
@@ -68,9 +69,9 @@ Career Copilot helps candidates manage profiles, parse resumes, score them again
 | In-app full resume editor after ATS | Removed; re-upload a revised file |
 | AI interview scoring / hiring prediction | Questions + practice only |
 | Embedding / cosine similarity ATS | Not used in the product path |
-| Hosted multi-tenant cloud DB | Local SQLite file |
-| Working email verify / password-reset delivery | Stubs return “not configured” for local dev |
-| Social OAuth sign-in | Explicitly not configured |
+| Hosted multi-tenant cloud DB | Firebase Cloud Firestore |
+| Working email verify / password-reset delivery | Stubs return "not configuredâ€  for local dev |
+| Social OAuth sign-in | Google sign-in via Firebase Authentication |
 | Python 3.14+ as primary | `requires-python = ">=3.11,<3.14"` |
 
 ---
@@ -78,26 +79,26 @@ Career Copilot helps candidates manage profiles, parse resumes, score them again
 ## 3. Architecture
 
 ```text
-Browser (Next.js App Router)
-  frontend/src/app  +  frontend/src/features
+Browser (Vite React application)
+  frontend/src/App.tsx  +  frontend/src/features
   Token: localStorage key career_copilot_access_token
          + cookie     career_copilot_session  (same JWT value)
   Guard: frontend/src/proxy.ts → features/auth/server/proxy.ts
-        │
-        ├─► /api/backend/*     Next.js BFF proxy → FastAPI /api/v1/*
-        └─► /api/files/*       Next.js BFF proxy → FastAPI file download
-                │
-                ▼
+        â”‚
+        â”œâ”€â–º /api/backend/*     Vite BFF proxy → FastAPI /api/v1/*
+        â””â”€â–º /api/files/*       Vite BFF proxy → FastAPI file download
+                â”‚
+                â–¼
 FastAPI  backend/app/main.py
   Prefix: API_V1_PREFIX (default /api/v1)
   Auth:   JWT HS256 (AUTH_SECRET) → CurrentUser
   CORS:   FRONTEND_ORIGINS + credentials
-        │
-        ├─► SQLite     DATABASE_PATH (default ./.data/career-copilot.sqlite)
-        │     backend/app/database/client.py  (table/select/eq/insert API over SQLite)
-        ├─► Files      LOCAL_STORAGE_DIR
-        │     buckets: candidate-documents, candidate-avatars, interview-media
-        └─► Optional server-only services
+        â”‚
+        â”œâ”€â–º Firestore  FIREBASE_PROJECT_ID + server credentials
+        â”‚     backend/app/database/client.py  (collection/document query adapter)
+        â”œâ”€â–º Files      LOCAL_STORAGE_DIR
+        â”‚     buckets: candidate-documents, candidate-avatars, interview-media
+        â””â”€â–º Optional server-only services
               NVIDIA Integrate API  → structured LLM tasks
               Groq                  → interviews, learning planner, ATS brief fallback, section extract
               YouTube Data API v3   → exact learning-path videos
@@ -108,8 +109,8 @@ FastAPI  backend/app/main.py
 
 1. UI calls `apiRequest()` in `frontend/src/shared/api/client.ts`.
 2. Browser base is always `/api/backend` (same-origin BFF; avoids CORS from the page).
-3. Next.js route `frontend/src/app/api/backend/[...path]/route.ts` forwards to  
-   `{PUBLIC_API_BASE_URL|NEXT_PUBLIC_API_BASE_URL}{API_V1_PREFIX}/{path}`.
+3. Vite development proxy forwards `/api/backend/*` and `/api/files/*` to
+   `{PUBLIC_API_BASE_URL}{API_V1_PREFIX}`.
 4. Request includes `Authorization: Bearer <JWT>` (and cookies via `credentials: "include"`).
 5. FastAPI dependency `get_current_user` validates JWT (header preferred, else session cookie).
 6. Handlers in `backend/app/api/router.py` (and feature routers) enforce **user ownership** of rows.
@@ -123,8 +124,8 @@ If cookie `career_copilot_demo=1` is set, `apiRequest` routes to `demo-session.t
 
 ## 4. Authentication (end-to-end)
 
-**Code:**  
-- Backend: `backend/app/features/auth/service.py`, account wipe in `account_deletion.py`, routes in `api/router.py`  
+**Code:**
+- Backend: `backend/app/features/auth/service.py`, account wipe in `account_deletion.py`, routes in `api/router.py`
 - Frontend: `frontend/src/features/auth/api/client.ts`, `auth-screen.tsx`, `server/proxy.ts`
 
 ### 4.1 Password storage
@@ -158,8 +159,8 @@ create_access_token(user_id, email, settings)
 ```text
 UI POST /api/backend/auth/sign-up
   body: { email, password, full_name? }
-        │
-        ▼
+        â”‚
+        â–¼
 FastAPI POST /api/v1/auth/sign-up
   1. Normalize email (lower/strip); validate email + password length
   2. Reject 409 if email already exists
@@ -167,8 +168,8 @@ FastAPI POST /api/v1/auth/sign-up
   4. Insert profiles row (id = user_id)
   5. Insert default rows: candidate_preferences, notification_preferences, privacy_preferences
   6. Return { access_token, token_type: "bearer", user: { id, email, full_name } }
-        │
-        ▼
+        â”‚
+        â–¼
 Frontend saveToken(access_token):
   - localStorage["career_copilot_access_token"] = token
   - document.cookie career_copilot_session=<token>; Path=/; SameSite=Lax
@@ -209,15 +210,15 @@ get_current_user:
 | `POST /auth/session` | Authenticated; returns current user |
 | `POST /auth/resend` | Stub: email delivery not configured |
 | `POST /auth/reset-password` | Stub: reset email not configured |
-| OAuth | Frontend returns “Social sign-in is not configured” |
+| OAuth | Frontend returns "Social sign-in is not configuredâ€  |
 
-### 4.8 Route protection (Next.js)
+### 4.8 Route protection (React Router)
 
 `frontend/src/features/auth/server/proxy.ts` (wired via `proxy.ts`):
 
 | Condition | Action |
 |-----------|--------|
-| Path under `/dashboard`, `/resume-analysis`, `/mock-interview`, `/learning`, `/jobs`, `/settings`, `/onboarding` **and** no session cookie | Redirect to `/sign-in?next=…` |
+| Path under `/dashboard`, `/resume-analysis`, `/mock-interview`, `/learning`, `/jobs`, `/settings`, `/onboarding` **and** no session cookie | Redirect to `/sign-in?next=â€¦` |
 | Logged in on `/sign-in` or `/sign-up` | Redirect to `/dashboard` |
 
 API ownership is still enforced server-side; the proxy only protects pages.
@@ -240,42 +241,43 @@ DELETE /api/v1/account
 
 ```text
 career-copilot/
-├── README.md
-├── package.json              # root scripts (setup, dev, checks)
-├── .env / .env.example       # single env file for UI + API
-├── db/schema.sql             # SQLite schema (source of truth)
-├── scripts/
-│   ├── setup/                # project, backend, local DB migrate
-│   ├── dev/                  # preflight, frontend, backend, run
-│   ├── diagnostics/          # env, secrets, e2e-smoke, DB checks
-│   └── shared/               # load-env, ports
-├── frontend/                 # Next.js app
-│   ├── e2e/                  # Playwright
-│   ├── src/
-│   │   ├── app/              # routes, layouts, BFF proxies
-│   │   ├── features/         # domain UI
-│   │   ├── components/       # shared visual pieces
-│   │   └── shared/           # api client, config, theme, primitives
-│   └── package.json
-└── backend/                  # career-copilot-api (FastAPI)
-    ├── pyproject.toml
-    ├── tests/
-    └── app/
-        ├── main.py
-        ├── core/             # config, constants, errors
-        ├── api/              # router.py, schemas.py
-        ├── database/         # SQLite client, repository, activity
-        ├── agents/           # registry, prompts/, providers/
-        └── features/
-            ├── auth/
-            ├── profile/
-            ├── document_parsing/
-            ├── resume_management/
-            ├── resume_improvement/   # API/agents (no editor UI)
-            ├── ats/                  # product scorer + optional LLM crew library
-            ├── interview/
-            ├── learning/
-            └── career_matching.py
+â”œâ”€â”€ README.md
+â”œâ”€â”€ package.json              # root scripts (setup, dev, checks)
+â”œâ”€â”€ .env / .env.example       # single env file for UI + API
+â”œâ”€â”€ FIREBASE_SETUP.md         # Firebase project and Firestore setup
+â”œâ”€â”€ firebase/firestore.rules  # Deny direct browser database access
+â”œâ”€â”€ scripts/
+â”‚   â”œâ”€â”€ setup/                # project, backend, local DB migrate
+â”‚   â”œâ”€â”€ dev/                  # preflight, frontend, backend, run
+â”‚   â”œâ”€â”€ diagnostics/          # env, secrets, e2e-smoke, DB checks
+â”‚   â””â”€â”€ shared/               # load-env, ports
+â”œâ”€â”€ frontend/                 # Vite React app
+â”‚   â”œâ”€â”€ e2e/                  # Playwright
+â”‚   â”œâ”€â”€ src/
+â”‚   â”‚   â”œâ”€â”€ app/              # routes, layouts, BFF proxies
+â”‚   â”‚   â”œâ”€â”€ features/         # domain UI
+â”‚   â”‚   â”œâ”€â”€ components/       # shared visual pieces
+â”‚   â”‚   â””â”€â”€ shared/           # api client, config, theme, primitives
+â”‚   â””â”€â”€ package.json
+â””â”€â”€ backend/                  # career-copilot-api (FastAPI)
+    â”œâ”€â”€ pyproject.toml
+    â”œâ”€â”€ tests/
+    â””â”€â”€ app/
+        â”œâ”€â”€ main.py
+        â”œâ”€â”€ core/             # config, constants, errors
+        â”œâ”€â”€ api/              # router.py, schemas.py
+        â”œâ”€â”€ database/         # Firestore client, repository, activity
+        â”œâ”€â”€ agents/           # registry, prompts/, providers/
+        â””â”€â”€ features/
+            â”œâ”€â”€ auth/
+            â”œâ”€â”€ profile/
+            â”œâ”€â”€ document_parsing/
+            â”œâ”€â”€ resume_management/
+            â”œâ”€â”€ resume_improvement/   # API/agents (no editor UI)
+            â”œâ”€â”€ ats/                  # product scorer + optional LLM crew library
+            â”œâ”€â”€ interview/
+            â”œâ”€â”€ learning/
+            â””â”€â”€ career_matching.py
 ```
 
 ---
@@ -284,12 +286,12 @@ career-copilot/
 
 | Layer | Technology | Location |
 |-------|------------|----------|
-| UI | Next.js App Router, React, TypeScript | `frontend/` |
-| Styling | CSS variables + Tailwind postcss | `frontend/src/app/globals.css` |
+| UI | Vite React application, React, TypeScript | `frontend/` |
+| Styling | CSS variables + Tailwind postcss | `frontend/src/globals.css` |
 | Motion / 3D | motion, three, @react-three/*, cobe | marketing, jobs globe |
 | API | FastAPI, Uvicorn, Pydantic v2 | `backend/` |
 | Auth | PyJWT HS256, scrypt passwords | `features/auth`, `api/router` |
-| DB | SQLite + custom query client | `database/client.py` |
+| DB | Firestore + custom query adapter | `database/client.py` |
 | Docs | **Docling** (PDF), python-docx, pypdf available | `document_parsing` |
 | Export | reportlab, python-docx | resume exports |
 | HTTP / LLM | httpx, OpenAI-compatible clients | NVIDIA, Groq |
@@ -301,19 +303,20 @@ career-copilot/
 
 ## 7. Configuration & environment
 
-One root `.env` (copy from `.env.example`). **Never** put secrets under `NEXT_PUBLIC_*`.
+One root `.env` (copy from `.env.example`). Browser-safe Firebase values use the `VITE_FIREBASE_*` prefix; server secrets remain server-only.
 
 ### 7.1 Core app
 
 | Variable | Purpose | Default / notes |
 |----------|---------|-----------------|
-| `NEXT_PUBLIC_API_BASE_URL` / `PUBLIC_API_BASE_URL` | Upstream FastAPI origin | `http://127.0.0.1:8000` |
+| `VITE_API_BASE_URL` / `PUBLIC_API_BASE_URL` | Upstream FastAPI origin | `http://127.0.0.1:8000` |
 | `FRONTEND_ORIGINS` | CORS allow-list (comma-separated) | localhost + 127.0.0.1:3000 |
 | `APP_NAME` | API title in health | Career Copilot API |
 | `APP_ENV` | `development` disables OpenAPI docs when `production` | development |
 | `API_V1_PREFIX` | Versioned API prefix | `/api/v1` |
 | `LOG_LEVEL` | Logging | INFO |
-| `DATABASE_PATH` | SQLite file | `./.data/career-copilot.sqlite` |
+| `FIREBASE_PROJECT_ID` | Firebase project ID | required |
+| `FIREBASE_CREDENTIALS_PATH` | Server-only service-account JSON path | required locally |
 | `LOCAL_STORAGE_DIR` | File buckets root | `./.data/storage` |
 | `AUTH_SECRET` | JWT signing secret | **required** (set a long random value) |
 | `DOCUMENT_BUCKET` / `AVATAR_BUCKET` / `INTERVIEW_BUCKET` | Storage bucket names | candidate-* |
@@ -361,8 +364,6 @@ From `backend/app/core/constants.py`:
 |----------|-------|----------|
 | `JWT_ALGORITHM` | `HS256` | Auth |
 | `MIN_PASSWORD_LENGTH` | `6` | Auth |
-| `SQLITE_CONNECT_TIMEOUT_SECONDS` | `10` | DB |
-| `SQLITE_BUSY_TIMEOUT_MS` | `10000` | DB |
 | `DOMAIN_GATE_MIN_SKILL_OVERLAP` | `0.15` | Optional structured ATS library |
 | `ATS_COMPOSITE_WEIGHTS` | see [§9.2](#92-optional-library-structured-llm-ats-composite) | Optional structured ATS library |
 
@@ -370,7 +371,7 @@ From `backend/app/core/constants.py`:
 
 ## 8. Models, providers & agents
 
-Registry: `backend/app/agents/registry.py`  
+Registry: `backend/app/agents/registry.py`
 Live status: `GET /api/v1/agents/status` and fields on `GET /api/v1/health`.
 
 | Agent ID | Name | Provider | Prompt | Fallback when LLM off |
@@ -395,9 +396,9 @@ This section is the full math for every score the product computes.
 
 ### 9.1 Product ATS score — keyword coverage (primary)
 
-**File:** `backend/app/features/ats/ats_score.py`  
-**Algorithm version:** `evidence-keyword-coverage-v3`  
-**Endpoints:** `POST /api/v1/ats-analyses`, `POST /api/v1/ats/score`  
+**File:** `backend/app/features/ats/ats_score.py`
+**Algorithm version:** `evidence-keyword-coverage-v3`
+**Endpoints:** `POST /api/v1/ats-analyses`, `POST /api/v1/ats/score`
 **Comment in router:** single scoring path — deterministic keyword coverage only.
 
 #### Inputs
@@ -426,7 +427,7 @@ Both resume version and JD must have `extraction_status = confirmed`. Re-running
 | kubernetes | kubernetes, k8s |
 | postgresql | postgresql, postgres, postgre sql |
 | machine learning | machine learning, ml |
-| … | see `ALIAS_GROUPS` in `ats_score.py` |
+| â€¦ | see `ALIAS_GROUPS` in `ats_score.py` |
 
 Weights used later:
 
@@ -437,7 +438,7 @@ Weights used later:
 
 #### Step 2 — Resume lines (`_resume_lines`)
 
-Prefer confirmed structured sections → list of `(exact_line, section)`.  
+Prefer confirmed structured sections → list of `(exact_line, section)`.\
 Else split plain text by layout headings (never invent body text).
 
 #### Step 3 — Match (`_find_match`)
@@ -450,8 +451,8 @@ For each JD term, scan resume lines with whole-word match of the term or aliases
 | **partial** | Found via alias or outside skills-like section | **0.5** |
 | **missing** | Not found | **0.0** |
 
-- Matched evidence quote = **exact resume line** (never rewritten).  
-- Missing evidence = `null` (never invented).  
+- Matched evidence quote = **exact resume line** (never rewritten).
+- Missing evidence = `null` (never invented).
 - DB `match_status`: `strong_match` | `partial_match` | `not_found`.
 
 #### Step 4 — Score formula
@@ -484,7 +485,7 @@ Sub-scores (for UI breakdown):
 
 #### Worked example
 
-JD terms after extraction: `python` (required), `docker` (required), `aws` (preferred).  
+JD terms after extraction: `python` (required), `docker` (required), `aws` (preferred).
 Resume has strong match for python, partial for docker, missing aws.
 
 | Term | \(w\) | \(c\) | contribution |
@@ -502,17 +503,17 @@ required_score = \(100 \times (2+1)/4 = 75\); preferred_score = 0.
 |-------|---------|
 | `ats_analyses.overall_score` | Keyword coverage % |
 | `ats_analyses.score_breakdown` | method, counts, term lists, required/preferred scores, section_summary |
-| `ats_analyses.summary` | Counts, missing lists, optional LLM brief (`overall_inference`, focus areas, …) |
+| `ats_analyses.summary` | Counts, missing lists, optional LLM brief (`overall_inference`, focus areas, â€¦) |
 | `ats_evidence` rows | One per JD term + quote, contribution, explanation, rule_id `exact_resume_quote_match_v3` |
 
 Optional **ATS improvement brief** (`generate_ats_improvement_brief`) runs after scoring: uses missing/matched lists only; never invents experience. Provider NVIDIA or Groq; deterministic brief if neither is configured.
 
 #### What product ATS is not
 
-- Not a hiring prediction  
-- Not an LLM composite score  
-- Not cross-candidate ranking  
-- Not embedding similarity  
+- Not a hiring prediction
+- Not an LLM composite score
+- Not cross-candidate ranking
+- Not embedding similarity
 
 ---
 
@@ -533,14 +534,14 @@ Constants in `core/constants.py`:
 
 Pipeline (`run_pipeline`):
 
-1. LLM parse resume → `ResumeParsed` (skills, experience, education, certifications, years).  
-2. LLM parse JD → `JDParsed` (domain, role_family, required/preferred skills, min years, mandatory criteria).  
-3. **Domain gate** (rule + model):  
-   - Skill overlap = \(|resume\_skills \cap required\_skills| / |required\_skills|\).  
-   - If domain family mismatches **and** overlap \(< 0.15\) (`DOMAIN_GATE_MIN_SKILL_OVERLAP`) → **REJECT**.  
-   - Also REJECT if no experience entry matches role family / industry.  
-   - REJECT → all parameter scores 0, `composite_score = 0`.  
-4. On **ALLOW**, scorer outputs each parameter in \([0,100]\).  
+1. LLM parse resume → `ResumeParsed` (skills, experience, education, certifications, years).\
+2. LLM parse JD → `JDParsed` (domain, role_family, required/preferred skills, min years, mandatory criteria).\
+3. **Domain gate** (rule + model):
+   - Skill overlap = \(|resume\_skills \cap required\_skills| / |required\_skills|\).
+   - If domain family mismatches **and** overlap \(< 0.15\) (`DOMAIN_GATE_MIN_SKILL_OVERLAP`) → **REJECT**.\
+   - Also REJECT if no experience entry matches role family / industry.
+   - REJECT → all parameter scores 0, `composite_score = 0`.\
+4. On **ALLOW**, scorer outputs each parameter in \([0,100]\).
 5. Composite (always recomputed in code, not trusted from model alone):
 
 \[
@@ -554,7 +555,7 @@ Treat this as a **library / research path**, not the persisted product score unl
 
 ### 9.3 Profile completion (0–100)
 
-**File:** `backend/app/features/profile/completion.py`  
+**File:** `backend/app/features/profile/completion.py`
 Recalculated on profile mutations via `recalculate_completion` — **not** on page load bootstrap.
 
 Checklist weights (sum = **100**). Resume upload/confirm is **not** included.
@@ -581,18 +582,18 @@ Checklist weights (sum = **100**). Resume upload/confirm is **not** included.
 
 ### 9.4 Job recommendation match score
 
-**File:** `backend/app/features/career_matching.py`  
-**Algorithm version:** `evidence-keyword-match-v1`  
+**File:** `backend/app/features/career_matching.py`
+**Algorithm version:** `evidence-keyword-match-v1`
 **Endpoint:** `POST /api/v1/job-recommendations/generate`
 
 Evidence:
 
-- Candidate skills from `candidate_skills` + skills-like resume sections + resume plain text.  
+- Candidate skills from `candidate_skills` + skills-like resume sections + resume plain text.
 - Job `requirements` list from local `jobs` table.
 
 Matching:
 
-- Requirement is **matched** if normalized name is in skill set **or** phrase appears in evidence text.  
+- Requirement is **matched** if normalized name is in skill set **or** phrase appears in evidence text.
 - Title terms (3+ letter tokens from job title) that appear in evidence add **role hits**.
 
 Formula:
@@ -609,7 +610,7 @@ Formula:
 \text{match\_score} = \mathrm{round}\bigl(\min(\text{role\_hits}\times 12,\; 40),\; 1\bigr)
 \]
 
-So requirements drive up to **80** points; title/role evidence up to **20** more (4 × 5). Results are ranked and top `limit` stored in `job_recommendations`.
+So requirements drive up to **80** points; title/role evidence up to **20** more (4 Ã— 5). Results are ranked and top `limit` stored in `job_recommendations`.
 
 ---
 
@@ -624,19 +625,19 @@ So requirements drive up to **80** points; title/role evidence up to **20** more
 
 ---
 
-### 9.6 Learning path generation (not a numeric “score”, but the pipeline)
+### 9.6 Learning path generation (not a numeric "scoreâ€ , but the pipeline)
 
-**Algorithm version:** `ats-youtube-api-v1`  
-**Endpoint:** `POST /api/v1/learning-paths/generate`  
+**Algorithm version:** `ats-youtube-api-v1`
+**Endpoint:** `POST /api/v1/learning-paths/generate`
 **Requires:** at least one **completed** ATS analysis (optional `source_analysis_id`).
 
 Sequential crew (`learning/agents/crew/`):
 
-1. **Gap analyst (deterministic)** — unique requirements with `match_status` in `{not_found, partial_match}` from `ats_evidence`.  
-2. **YouTube planner (Groq or deterministic)** — one study step per gap with **search queries only** (no video IDs).  
+1. **Gap analyst (deterministic)** — unique requirements with `match_status` in `{not_found, partial_match}` from `ats_evidence`.\
+2. **YouTube planner (Groq or deterministic)** — one study step per gap with **search queries only** (no video IDs).\
 3. **Validator + materializer** — for each step:
-   - If `YOUTUBE_API_KEY` configured → YouTube Data API v3 `search` (`type=video`, `safeSearch=strict`, `videoEmbeddable=true`, max results from settings).  
-   - Store exact `https://www.youtube.com/watch?v=<api_id>` only.  
+   - If `YOUTUBE_API_KEY` configured → YouTube Data API v3 `search` (`type=video`, `safeSearch=strict`, `videoEmbeddable=true`, max results from settings).\
+   - Store exact `https://www.youtube.com/watch?v=<api_id>` only.
    - If API unavailable → **search results page URL only** (never invent watch IDs).
 
 Items/resources are written to `learning_paths` → `learning_items` → `learning_resources`.
@@ -662,19 +663,19 @@ Items/resources are written to `learning_paths` → `learning_items` → `learni
 
 `extract_sections_enriched` (`parsing/llm_sections.py`):
 
-1. Split plain text into numbered lines (cap ~400).  
-2. If LLM available: model assigns **line numbers + section kinds only**; content is reconstructed from source lines (never model-written body).  
-   - NVIDIA first (rate-limit throttle ~1.6s interval); Groq only on NVIDIA 429.  
-3. Else: structural layout heuristics (headings, bullets, contact detection).  
+1. Split plain text into numbered lines (cap ~400).
+2. If LLM available: model assigns **line numbers + section kinds only**; content is reconstructed from source lines (never model-written body).
+   - NVIDIA first (rate-limit throttle ~1.6s interval); Groq only on NVIDIA 429.
+3. Else: structural layout heuristics (headings, bullets, contact detection).
 
 ### 10.3 Stored structured payload
 
 ```json
 {
   "schema_version": "resume-extraction-v1",
-  "sections": { "skills": ["…"], "experience": ["…"] },
+  "sections": { "skills": ["â€¦"], "experience": ["â€¦"] },
   "warnings": [],
-  "extraction_method": "…"
+  "extraction_method": "â€¦"
 }
 ```
 
@@ -710,7 +711,7 @@ UI: `/resume-analysis`, `/resume-analysis/new`, `/review`, `/report/[id]`.
 ### B. Learning loop
 
 ```text
-1. Complete ≥1 ATS analysis
+1. Complete â‰¥1 ATS analysis
 2. POST /learning-paths/generate  (optional source_analysis_id)
 3. Open /learning/[pathId] → watch exact YouTube URLs
 4. PATCH item status → progress_percentage recalculated
@@ -742,7 +743,7 @@ UI: `/mock-interview`, `/setup`, `/preparation`, `/session/[id]`, `/report/[id]`
 
 ```text
 POST /profile/from-resume/preview  (or preview-upload)
-  → NVIDIA + deterministic draft (skills, experience, education, …)
+  → NVIDIA + deterministic draft (skills, experience, education, â€¦)
 User reviews → POST /profile/from-resume/apply
   → insert validated rows; recalculate profile completion
 ```
@@ -764,7 +765,7 @@ Evidence validation uses source text hashes so suggestions cannot invent content
 
 ## 12. API map
 
-Base: **`/api/v1`** (override with `API_V1_PREFIX`).  
+Base: **`/api/v1`** (override with `API_V1_PREFIX`).
 Browser calls go through **`/api/backend/...`** which maps 1:1 onto that prefix.
 
 ### Auth & health
@@ -790,7 +791,7 @@ Browser calls go through **`/api/backend/...`** which maps 1:1 onto that prefix.
 | PUT | `/profile/preferences` |
 | POST | `/profile/skills/from-resume` |
 | POST | `/profile/from-resume/preview`, `/preview-upload`, `/apply` |
-| GET/POST/PATCH/DELETE | `/profile/{resource}` … |
+| GET/POST/PATCH/DELETE | `/profile/{resource}` â€¦ |
 
 Profile resources include skills, experiences, projects, education, certifications, languages, links (via `CANDIDATE_TABLES`).
 
@@ -858,7 +859,7 @@ Profile resources include skills, experiences, projects, education, certificatio
 |--------|------|
 | GET | `/jobs`, `/jobs/{id}` |
 | GET/POST | `/job-recommendations`, `/job-recommendations/generate` |
-| GET/POST/PATCH/DELETE | `/saved-jobs` … |
+| GET/POST/PATCH/DELETE | `/saved-jobs` â€¦ |
 | GET | `/settings` |
 | PUT | `/settings/notifications`, `/settings/privacy` |
 | DELETE | `/account` |
@@ -881,8 +882,8 @@ Profile resources include skills, experiences, projects, education, certificatio
 | `/api/backend/[...path]` | BFF → FastAPI |
 | `/api/files/[bucket]/[...path]` | BFF → file download |
 
-Shared route helpers: `frontend/src/shared/routes.ts`.  
-Config constants: `frontend/src/shared/config.ts`  
+Shared route helpers: `frontend/src/shared/routes.ts`.
+Config constants: `frontend/src/shared/config.ts`
 (`ACCESS_TOKEN_STORAGE_KEY`, `SESSION_COOKIE_NAME`, `BROWSER_API_PROXY_PREFIX`, demo cookie).
 
 ### Browser vs server API base
@@ -890,7 +891,7 @@ Config constants: `frontend/src/shared/config.ts`
 | Context | Base |
 |---------|------|
 | Browser | `/api/backend` (always) |
-| Server components / Node | `{PUBLIC_API_BASE_URL|NEXT_PUBLIC_API_BASE_URL}{API_V1_PREFIX}` |
+| Static browser bundle | `{PUBLIC_API_BASE_URL|VITE_API_BASE_URL}{API_V1_PREFIX}` |
 
 In-flight GET dedupe lives in memory only (no client data cache).
 
@@ -898,9 +899,9 @@ In-flight GET dedupe lives in memory only (no client data cache).
 
 ## 14. Database & file storage
 
-- **Schema source of truth:** `db/schema.sql`  
-- **Engine:** SQLite at `DATABASE_PATH`  
-- **Client:** `backend/app/database/client.py` — Supabase-like chainable query API, JSON columns, ownership helpers in `repository.py`
+- **Database setup:** `FIREBASE_SETUP.md`
+- **Engine:** Firebase Cloud Firestore
+- **Client:** `backend/app/database/client.py` — chainable collection/document adapter and ownership helpers in `repository.py`
 
 ### Main table groups
 
@@ -938,8 +939,8 @@ Access: `GET /api/v1/files/{bucket}/{path}` only if path is under the authentica
 
 ### Prerequisites
 
-- Node.js 20+ recommended  
-- Python **3.11–3.13**  
+- Node.js 20+ recommended
+- Python **3.11–3.13**\
 - Windows scripts use `backend\.venv\Scripts\python.exe`
 
 ### Install
@@ -951,7 +952,7 @@ cp .env.example .env   # Windows: copy manually
 
 npm run setup
 # installs frontend deps, creates backend venv, installs package,
-# prepares local DB from db/schema.sql
+# verifies the configured Firebase Firestore connection
 ```
 
 Docling is already a core dependency in `backend/pyproject.toml`. If PDF parse returns 503, reinstall:
@@ -1018,14 +1019,15 @@ cd frontend && npm run test
 
 ## 17. Design principles
 
-1. **Evidence over invention** — resume/JD text and user confirmations are the source of truth.  
-2. **Local ownership** — candidate data lives in local SQLite + files.  
-3. **Server-side secrets** — NVIDIA, Groq, YouTube keys never in the browser.  
-4. **Explainable ATS** — one product scoring file (`ats_score.py`), weighted keyword coverage, exact quotes.  
-5. **Simple parse UI** — sections only; Docling for PDF accuracy.  
-6. **YouTube without hallucination** — video IDs only from YouTube API (or search-page fallback).  
-7. **Delete what you create** — resumes, ATS, interviews, learning paths, full account wipe.  
+1. **Evidence over invention** — resume/JD text and user confirmations are the source of truth.\
+2. **Server-enforced ownership** — candidate data lives in Firestore + file buckets.
+3. **Server-side secrets** — NVIDIA, Groq, YouTube keys never in the browser.\
+4. **Explainable ATS** — one product scoring file (`ats_score.py`), weighted keyword coverage, exact quotes.\
+5. **Simple parse UI** — sections only; Docling for PDF accuracy.\
+6. **YouTube without hallucination** — video IDs only from YouTube API (or search-page fallback).\
+7. **Delete what you create** — resumes, ATS, interviews, learning paths, full account wipe.\
 8. **Stable error codes** — `ApiError` for clients; request IDs on every response.
+9. **Premium UI aesthetic** — leveraging glassmorphism, modern typography, and dynamic visual indicators.
 
 ---
 
@@ -1041,11 +1043,21 @@ cd frontend && npm run test
 | Job match formula? | `features/career_matching.py` — §9.4 |
 | Learning videos? | `learning/youtube_api.py` + crew in `learning/agents/crew/` |
 | Routes (API)? | `backend/app/api/router.py` + `features/ats/routes.py` + improvement routes |
-| Routes (UI)? | `frontend/src/app/` |
-| Schema? | `db/schema.sql` |
+| Routes (UI) | `frontend/src/App.tsx` and `frontend/src/shared/router.ts` |
+| Database setup? | `FIREBASE_SETUP.md` |
 | Env template? | `.env.example` |
 | Agent inventory at runtime? | `GET /api/v1/agents/status` |
 
 ---
 
-*This README matches the current codebase: local SQLite career workspace, Docling PDF extraction, product ATS as evidence-backed keyword coverage (`evidence-keyword-coverage-v3`), optional structured LLM ATS library with domain gate + composite weights, YouTube Data API learning paths, mock interviews without AI grading, profile/jobs/settings, BFF-proxied JWT auth, and no in-app post-ATS resume editor. Prefer `/health` and `/agents/status` at runtime over assumptions about which keys are configured.*
+*This README matches the current codebase: Firebase Firestore career workspace, Docling PDF extraction, product ATS as evidence-backed keyword coverage (`evidence-keyword-coverage-v3`), optional structured LLM ATS library with domain gate + composite weights, YouTube Data API learning paths, mock interviews without AI grading, profile/jobs/settings, BFF-proxied JWT auth, and no in-app post-ATS resume editor. Prefer `/health` and `/agents/status` at runtime over assumptions about which keys are configured.*
+
+
+## 19. Scaling Considerations
+
+Career Copilot uses a cloud-backed Firestore workspace. The remaining scaling considerations are:
+
+- **Background Jobs:** Offload heavy tasks (e.g., Docling PDF extraction, ATS scoring, and LLM calls) to a background worker system like Celery or Redis Queue (RQ) to prevent blocking the main FastAPI thread.
+- **Storage:** Move local file storage for resumes and generated assets to cloud object storage (e.g., AWS S3, Google Cloud Storage) for durability and horizontal scaling of backend nodes.
+- **Caching:** Introduce a caching layer (e.g., Redis) for frequent queries, such as job browsing, profile data, or YouTube Data API responses, to reduce latency and API quota usage.
+- **Load Balancing:** Deploy behind a load balancer to distribute traffic across multiple backend and frontend instances.

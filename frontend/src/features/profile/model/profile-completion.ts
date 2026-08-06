@@ -1,9 +1,4 @@
-/**
- * Profile completion helpers — keep toast, dashboard, and settings in sync
- * with the backend recalculation (no client-side invention of missing fields).
- *
- * Resume is not part of profile completion (server checklist only).
- */
+
 
 export type ProfileMissingItem = {
   key: string;
@@ -22,7 +17,6 @@ export type ProfileCompletionDetails = {
   missing_points?: number;
 };
 
-/** Fired after any profile mutation so workspace toast/shell can refresh. */
 export const PROFILE_UPDATED_EVENT = "career-copilot:profile-updated";
 
 export type ProfileUpdatedDetail = {
@@ -31,7 +25,6 @@ export type ProfileUpdatedDetail = {
   profile_completion_details?: ProfileCompletionDetails | null;
 };
 
-/** Dropped criteria (e.g. old resume weight) — never show in toast/UI. */
 const RETIRED_MISSING_KEYS = new Set(["resume"]);
 
 export function notifyProfileUpdated(detail?: ProfileUpdatedDetail): void {
@@ -39,7 +32,7 @@ export function notifyProfileUpdated(detail?: ProfileUpdatedDetail): void {
   try {
     window.dispatchEvent(new CustomEvent(PROFILE_UPDATED_EVENT, { detail: detail || {} }));
   } catch {
-    // ignore (SSR / non-DOM)
+    void 0;
   }
 }
 
@@ -62,11 +55,6 @@ export function clampCompletion(value: unknown): number {
   return Math.max(0, Math.min(100, n));
 }
 
-/**
- * Prefer backend `details.total`, then stored percentage.
- * If only a missing list with points is available, derive 100 - missing_points
- * (never invents checklist items).
- */
 export function resolveCompletion(
   stored: unknown,
   details?: ProfileCompletionDetails | null,
@@ -85,7 +73,7 @@ export function resolveCompletion(
     if (missingPts >= 0 && missingPts <= 100) {
       const derived = clampCompletion(100 - missingPts);
       const fromStored = clampCompletion(stored);
-      // Prefer derived when it is consistent, or when stored looks empty/stale.
+
       if (fromStored === 0 && derived > 0) return derived;
       if (Math.abs(fromStored + missingPts - 100) <= 1) return fromStored;
       return derived;

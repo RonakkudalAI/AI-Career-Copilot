@@ -1,11 +1,9 @@
-import { createClient as createAuthClient } from "@/features/auth/api/client";
+﻿import { createClient as createAuthClient } from "@/features/auth/api/client";
 import { demoApiRequest, isDemoSession } from "@/features/auth/demo-session";
 import { resolveApiBase } from "@/shared/config";
 
 export type ApiErrorBody = { error?: { code?: string; message?: string; request_id?: string } };
 
-// Share only simultaneous GET requests. Nothing is persisted in sessionStorage,
-// localStorage, or a client-side data cache.
 const inFlightGets = new Map<string, Promise<unknown>>();
 
 export async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -36,11 +34,16 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
       });
     } catch {
       throw new Error(
-        "Could not reach the API. Start the backend (npm run dev) and confirm NEXT_PUBLIC_API_BASE_URL."
+        "Could not reach the API. Start the backend (npm run dev) and confirm VITE_API_BASE_URL or the Vite proxy."
       );
     }
     if (!response.ok) {
       const body = (await response.json().catch(() => ({}))) as ApiErrorBody;
+      if (response.status === 401) {
+        window.localStorage.removeItem("career_copilot_access_token");
+        document.cookie = "career_copilot_session=; Path=/; Max-Age=0; SameSite=Lax";
+        throw new Error(body.error?.message || "Your session has expired. Sign in again.");
+      }
       if (response.status === 503) {
         throw new Error(
           body.error?.message || "The service is temporarily unavailable. Please try again in a moment."

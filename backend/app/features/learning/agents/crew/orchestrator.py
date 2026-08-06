@@ -1,4 +1,3 @@
-"""Sequential CrewAI-compatible learning crew: ATS gaps → YouTube plan → validate."""
 
 from __future__ import annotations
 
@@ -12,11 +11,19 @@ from app.features.learning.agents.crew.tools import (
     tool_validate_and_materialize,
 )
 from app.features.learning.youtube_catalog import ALGORITHM_VERSION
-from app.features.resume_improvement.agents.crew.compat import crew_runtime_mode, official_crewai_installed, try_import_crewai
-from app.features.resume_improvement.agents.crew.models import CrewAgent, CrewRunResult, CrewTask, CrewTaskResult
+from app.features.resume_improvement.agents.crew.compat import (
+    crew_runtime_mode,
+    official_crewai_installed,
+    try_import_crewai,
+)
+from app.features.resume_improvement.agents.crew.models import (
+    CrewAgent,
+    CrewRunResult,
+    CrewTask,
+    CrewTaskResult,
+)
 
 logger = logging.getLogger(__name__)
-
 GAP_ANALYST = CrewAgent(
     role="ATS Gap Analyst",
     goal="List skill/requirement gaps already present in completed ATS evidence only.",
@@ -24,7 +31,6 @@ GAP_ANALYST = CrewAgent(
         "You only read ATS evidence rows. You never invent missing skills or job requirements."
     ),
 )
-
 YOUTUBE_PLANNER = CrewAgent(
     role="YouTube Curriculum Planner",
     goal="Turn each allowed ATS gap into a YouTube study step without inventing video IDs.",
@@ -33,13 +39,11 @@ YOUTUBE_PLANNER = CrewAgent(
         "You only use allowed gaps from the analyst."
     ),
 )
-
 RESOURCE_VALIDATOR = CrewAgent(
     role="Learning Resource Validator",
     goal="Drop any recommendation outside ATS gaps and materialize only safe YouTube URLs.",
     backstory="You are a deterministic gate. Hallucinated gaps or non-YouTube links are rejected.",
 )
-
 LEARNING_CREW_TASKS = [
     CrewTask(
         name="extract_ats_gaps",
@@ -63,8 +67,6 @@ LEARNING_CREW_TASKS = [
         tool_name="validate_and_materialize",
     ),
 ]
-
-
 def learning_crew_capability(settings: Settings) -> dict[str, Any]:
     package_ok, package_reason, _ = try_import_crewai()
     return {
@@ -85,8 +87,6 @@ def learning_crew_capability(settings: Settings) -> dict[str, Any]:
         "llm_configured": bool(settings.groq_configured or settings.nvidia_configured),
         "youtube_api_configured": bool(getattr(settings, "youtube_configured", False)),
     }
-
-
 async def run_learning_youtube_crew(
     settings: Settings,
     *,
@@ -94,11 +94,6 @@ async def run_learning_youtube_crew(
     source_analysis_id: str,
     role_title: str | None = None,
 ) -> tuple[list[dict[str, Any]], CrewRunResult]:
-    """
-    Run the sequential learning crew.
-
-    Returns (learning item dicts with resources, audit trail).
-    """
     package_ok, package_reason, _ = try_import_crewai()
     audit = CrewRunResult(
         process="sequential",
@@ -111,8 +106,6 @@ async def run_learning_youtube_crew(
         "source_analysis_id": source_analysis_id,
         "role_title": role_title,
     }
-
-    # Task 1 — deterministic gap extract
     try:
         gaps_out = tool_extract_ats_gaps(context)
         context.update(gaps_out)
@@ -137,8 +130,6 @@ async def run_learning_youtube_crew(
             )
         )
         return [], audit
-
-    # Task 2 — LLM / deterministic plan
     try:
         plan_out = await tool_plan_youtube_lessons(settings, context)
         context["plan"] = plan_out.get("plan") or {}
@@ -168,8 +159,6 @@ async def run_learning_youtube_crew(
                 error=f"{type(exc).__name__}: {exc}",
             )
         )
-
-    # Task 3 — validate + materialize exact YouTube videos via API
     try:
         final = await tool_validate_and_materialize(settings, context)
         items = list(final.get("items") or [])

@@ -5,10 +5,10 @@ import uuid
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.router import router
 from app.core.config import get_settings
 from app.core.errors import ApiError, api_error_handler, unexpected_error_handler
 from app.features.ats.routes import router as ats_scoring_router
-from app.api.router import router
 
 settings = get_settings()
 logging.basicConfig(
@@ -16,7 +16,6 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
 logger = logging.getLogger("career_copilot.api")
-
 app = FastAPI(
     title="Career Copilot API",
     version="1.0.0",
@@ -32,8 +31,6 @@ app.add_middleware(
 )
 app.add_exception_handler(ApiError, api_error_handler)
 app.add_exception_handler(Exception, unexpected_error_handler)
-
-
 @app.middleware("http")
 async def request_context(request: Request, call_next):
     request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
@@ -52,7 +49,5 @@ async def request_context(request: Request, call_next):
         (time.perf_counter() - started) * 1000,
     )
     return response
-
-
 app.include_router(router, prefix=settings.api_v1_prefix)
 app.include_router(ats_scoring_router, prefix=settings.api_v1_prefix)

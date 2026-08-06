@@ -1,4 +1,4 @@
-export type PinLifecycleState = {
+﻿export type PinLifecycleState = {
   t: number;
   opacity: number;
   offset: number;

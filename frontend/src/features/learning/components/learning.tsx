@@ -1,7 +1,6 @@
-"use client";
 
-import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { Link } from "@/shared/ui/router-link";
+import { useNavigate } from "react-router-dom";
 import { useCallback, useEffect, useState } from "react";
 import {
   BookOpenCheck,
@@ -15,6 +14,10 @@ import {
 } from "lucide-react";
 import { apiRequest } from "@/shared/api/client";
 import { Badge, Button, Card, EmptyState, PageHeader, Progress } from "@/shared/ui/primitives";
+
+
+
+
 
 type Resource = {
   id: string;
@@ -161,7 +164,7 @@ export function LearningHome() {
                   <span className="eyebrow">{path.status}</span>
                   <h2>{path.title}</h2>
                 </div>
-                <Badge tone={path.progress_percentage === 100 ? "success" : "info"}>
+                <Badge variant={path.progress_percentage === 100 ? "default" : "secondary"}>
                   {path.progress_percentage}%
                 </Badge>
               </div>
@@ -171,7 +174,7 @@ export function LearningHome() {
               </p>
               <Progress value={path.progress_percentage} label="Path progress" />
               <div className="cluster" style={{ marginTop: 12 }}>
-                <Badge tone="ai">YouTube steps</Badge>
+                <Badge variant="secondary">YouTube steps</Badge>
                 {(path.items || []).length > 0 && (
                   <span className="muted">{path.items?.length} items</span>
                 )}
@@ -181,7 +184,7 @@ export function LearningHome() {
                   Open path & track progress
                 </Link>
                 <Button
-                  variant="danger"
+                  variant="destructive"
                   disabled={deletingId === path.id || busy}
                   onClick={() => void deletePath(path)}
                   aria-label={`Delete learning path ${path.title}`}
@@ -199,7 +202,7 @@ export function LearningHome() {
 }
 
 export function LearningPath({ pathId }: { pathId: string }) {
-  const router = useRouter();
+  const navigate = useNavigate();
   const [path, setPath] = useState<Path | null>(null);
   const [error, setError] = useState("");
   const [updatingId, setUpdatingId] = useState<string | null>(null);
@@ -226,8 +229,8 @@ export function LearningPath({ pathId }: { pathId: string }) {
     setError("");
     try {
       await apiRequest(`/learning-paths/${pathId}`, { method: "DELETE" });
-      router.push("/learning");
-      router.refresh();
+      navigate("/learning");
+      ;
     } catch (e) {
       setError((e as Error).message);
       setDeleting(false);
@@ -270,7 +273,7 @@ export function LearningPath({ pathId }: { pathId: string }) {
         }
         action={
           path ? (
-            <Button variant="danger" disabled={deleting || Boolean(updatingId)} onClick={() => void deletePath()}>
+            <Button variant="destructive" disabled={deleting || Boolean(updatingId)} onClick={() => void deletePath()}>
               <Trash2 size={17} aria-hidden />
               {deleting ? "Deleting…" : "Delete path"}
             </Button>
@@ -300,7 +303,7 @@ export function LearningPath({ pathId }: { pathId: string }) {
               </p>
               <Progress value={path.progress_percentage} label="Overall path progress" />
             </div>
-            <Badge tone={path.progress_percentage === 100 ? "success" : "info"}>
+            <Badge variant={path.progress_percentage === 100 ? "default" : "secondary"}>
               {path.progress_percentage}%
             </Badge>
           </div>
@@ -328,12 +331,12 @@ export function LearningPath({ pathId }: { pathId: string }) {
                       <strong>{item.title}</strong>
                     </div>
                     <Badge
-                      tone={
+                      variant={
                         item.status === "completed"
-                          ? "success"
+                          ? "default"
                           : item.status === "in_progress"
-                            ? "warning"
-                            : "info"
+                            ? "outline"
+                            : "secondary"
                       }
                     >
                       {item.status.replace("_", " ")}
@@ -342,8 +345,8 @@ export function LearningPath({ pathId }: { pathId: string }) {
                   <p>{item.objective}</p>
                   <div className="cluster">
                     <span className="muted">{item.estimated_minutes || 0} minutes</span>
-                    {item.difficulty && <Badge tone="info">{item.difficulty}</Badge>}
-                    <Badge tone="ai">What to learn</Badge>
+                    {item.difficulty && <Badge variant="secondary">{item.difficulty}</Badge>}
+                    <Badge variant="secondary">What to learn</Badge>
                   </div>
 
                   {(item.learning_resources || []).length > 0 && (
@@ -363,8 +366,7 @@ export function LearningPath({ pathId }: { pathId: string }) {
                             }}
                           >
                             {resource.metadata?.thumbnail_url ? (
-                              // eslint-disable-next-line @next/next/no-img-element
-                              <img
+                                                            <img
                                 src={resource.metadata.thumbnail_url}
                                 alt=""
                                 width={120}
@@ -374,7 +376,7 @@ export function LearningPath({ pathId }: { pathId: string }) {
                             ) : null}
                             <div className="stack" style={{ gap: 6 }}>
                               <div className="cluster">
-                                <Badge tone={isExactYoutubeVideo(resource) ? "success" : "info"}>
+                                <Badge variant={isExactYoutubeVideo(resource) ? "default" : "secondary"}>
                                   {isExactYoutubeVideo(resource) ? "Exact video" : "Search results"}
                                 </Badge>
                                 {resource.provider ? (
@@ -423,7 +425,7 @@ export function LearningPath({ pathId }: { pathId: string }) {
                     </Button>
                     {item.status === "pending" && (
                       <Button
-                        variant="quiet"
+                        variant="ghost"
                         disabled={updatingId === item.id}
                         onClick={() => update(item, "in_progress")}
                       >

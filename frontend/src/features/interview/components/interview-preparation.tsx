@@ -1,9 +1,12 @@
-"use client";
 
-import Link from "next/link";
+import { Link } from "@/shared/ui/router-link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Badge, Button, Card, EmptyState, ErrorState, PageHeader, Progress, Select, Skeleton } from "@/shared/ui/primitives";
+
+
+
+
 import { apiRequest } from "@/shared/api/client";
+import { Badge, Button, Card, EmptyState, ErrorState, PageHeader, Progress, Select, Skeleton } from "@/shared/ui/primitives";
 import {
   createInterviewPreparation,
   type ConfirmedJobDescription,
@@ -13,7 +16,7 @@ import {
 } from "@/features/interview/preparation";
 
 function difficultyTone(difficulty: PreparationQuestion["difficulty"]) {
-  return difficulty === "hard" ? "danger" : difficulty === "medium" ? "warning" : "success";
+  return difficulty === "hard" ? "destructive" : difficulty === "medium" ? "outline" : "default";
 }
 
 function sourceLabel(source: PreparationQuestion["source"]) {
@@ -33,9 +36,9 @@ function QuestionList({ title, description, questions }: { title: string; descri
             <li key={`${item.question}-${index}`} className="suggestion">
               <p style={{ margin: 0 }}>{item.question}</p>
               <div className="cluster" style={{ marginTop: 8 }}>
-                {item.skill ? <Badge tone="info">{item.skill}</Badge> : null}
-                <Badge tone={difficultyTone(item.difficulty)}>{item.difficulty}</Badge>
-                <Badge tone="ai">{sourceLabel(item.source)}</Badge>
+                {item.skill ? <Badge variant="secondary">{item.skill}</Badge> : null}
+                <Badge variant={difficultyTone(item.difficulty)}>{item.difficulty}</Badge>
+                <Badge variant="secondary">{sourceLabel(item.source)}</Badge>
               </div>
             </li>
           ))}
@@ -127,12 +130,12 @@ export function InterviewPreparationHome() {
           </div>
           <div className="grid-2">
             <label className="field-label">Confirmed resume
-              <Select value={resumeVersionId} onChange={(event) => setResumeVersionId(event.target.value)}>
+              <Select value={resumeVersionId} onChange={(event: any) => setResumeVersionId(event.target.value)}>
                 {confirmedResumes.map((resume) => <option key={resume.latest_version?.id} value={resume.latest_version?.id}>{resume.title}{resume.is_active ? " (active)" : ""}</option>)}
               </Select>
             </label>
             <label className="field-label">Confirmed job description
-              <Select value={jobDescriptionId} onChange={(event) => setJobDescriptionId(event.target.value)}>
+              <Select value={jobDescriptionId} onChange={(event: any) => setJobDescriptionId(event.target.value)}>
                 {confirmedJobs.map((job) => <option key={job.id} value={job.id}>{job.role_title || job.title}{job.company ? ` · ${job.company}` : ""}</option>)}
               </Select>
             </label>
@@ -156,17 +159,17 @@ export function InterviewPreparationHome() {
                 <h2 style={{ margin: 0 }}>{data.interview_readiness.score}% evidence coverage</h2>
                 <p className="muted" style={{ marginBottom: 0 }}>{data.interview_readiness.summary}</p>
               </div>
-              <Badge tone={data.interview_readiness.missing_skills.length ? "warning" : "success"}>{data.interview_readiness.source_analysis_id ? "ATS evidence" : "Confirmed documents"}</Badge>
+              <Badge variant={data.interview_readiness.missing_skills.length ? "outline" : "default"}>{data.interview_readiness.source_analysis_id ? "ATS evidence" : "Confirmed documents"}</Badge>
             </div>
             <Progress value={data.interview_readiness.score} label="Preparation readiness" />
             <div className="grid-2">
-              <div className="suggestion"><strong>Matched requirements</strong><div className="cluster" style={{ marginTop: 8 }}>{data.interview_readiness.matched_skills.length ? data.interview_readiness.matched_skills.map((skill) => <Badge key={skill} tone="success">{skill}</Badge>) : <span className="muted">No matched requirements were returned.</span>}</div></div>
-              <div className="suggestion"><strong>Focus areas</strong><div className="cluster" style={{ marginTop: 8 }}>{data.interview_readiness.missing_skills.length ? data.interview_readiness.missing_skills.map((skill) => <Badge key={skill} tone="warning">{skill}</Badge>) : <span className="muted">No not-found requirements were returned.</span>}</div></div>
+              <div className="suggestion"><strong>Matched requirements</strong><div className="cluster" style={{ marginTop: 8 }}>{data.interview_readiness.matched_skills.length ? data.interview_readiness.matched_skills.map((skill) => <Badge key={skill} variant="default">{skill}</Badge>) : <span className="muted">No matched requirements were returned.</span>}</div></div>
+              <div className="suggestion"><strong>Focus areas</strong><div className="cluster" style={{ marginTop: 8 }}>{data.interview_readiness.missing_skills.length ? data.interview_readiness.missing_skills.map((skill) => <Badge key={skill} variant="outline">{skill}</Badge>) : <span className="muted">No not-found requirements were returned.</span>}</div></div>
             </div>
           </Card>
           <Card className="stack">
             <div><h2 style={{ margin: 0 }}>Study plan</h2><p className="muted" style={{ marginBottom: 0 }}>Focus areas are requirements not found in the selected resume evidence.</p></div>
-            {data.study_topics.length ? data.study_topics.map((topic) => <article key={topic.topic} className="suggestion"><div className="row"><strong>{topic.topic}</strong><Badge tone={topic.priority === "high" ? "danger" : topic.priority === "medium" ? "warning" : "info"}>{topic.priority} priority</Badge></div><p className="muted" style={{ margin: "8px 0 0" }}>{topic.reason}</p></article>) : <p className="muted" style={{ margin: 0 }}>No focus areas were identified from the selected evidence.</p>}
+            {data.study_topics.length ? data.study_topics.map((topic) => <article key={topic.topic} className="suggestion"><div className="row"><strong>{topic.topic}</strong><Badge variant={topic.priority === "high" ? "destructive" : topic.priority === "medium" ? "outline" : "secondary"}>{topic.priority} priority</Badge></div><p className="muted" style={{ margin: "8px 0 0" }}>{topic.reason}</p></article>) : <p className="muted" style={{ margin: 0 }}>No focus areas were identified from the selected evidence.</p>}
           </Card>
           <QuestionList title="Resume questions" description="Explain only skills and experience documented in the selected resume." questions={data.resume_questions} />
           {data.project_questions.map((project) => <QuestionList key={project.project_name} title={`${project.project_name} project questions`} description="Discuss your responsibilities, decisions, and next improvements honestly." questions={project.questions} />)}

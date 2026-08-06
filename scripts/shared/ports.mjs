@@ -20,7 +20,7 @@ export function backendPort(env = process.env) {
   if (env.BACKEND_PORT && String(env.BACKEND_PORT).trim()) {
     return String(env.BACKEND_PORT).trim();
   }
-  return portFromUrl(env.PUBLIC_API_BASE_URL || env.NEXT_PUBLIC_API_BASE_URL, "8000");
+  return portFromUrl(env.PUBLIC_API_BASE_URL, "8000");
 }
 
 export function frontendPort(env = process.env) {

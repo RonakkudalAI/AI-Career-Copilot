@@ -1,15 +1,11 @@
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { ensureBackendVenv } from "../shared/backend-venv.mjs";
 import { loadRootEnv } from "../shared/load-env.mjs";
 import { backendPort } from "../shared/ports.mjs";
 
 loadRootEnv();
 
-const backendPython = process.platform === "win32" ? "backend/.venv/Scripts/python.exe" : "backend/.venv/bin/python";
-if (!existsSync(backendPython)) {
-  console.error("Backend dependencies are missing. Run npm install first.");
-  process.exit(1);
-}
+const backendPython = ensureBackendVenv();
 
 const port = backendPort(process.env);
 const child = spawn(

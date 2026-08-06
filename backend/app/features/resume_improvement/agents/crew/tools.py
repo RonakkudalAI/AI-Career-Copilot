@@ -1,31 +1,17 @@
-"""
-Truth-bound tools used by the resume-improvement crew.
-
-These tools ONLY wrap existing Career Copilot logic:
-  - gap analysis from provided ATS context (no invention)
-  - NVIDIA resume suggestions (existing NvidiaClient.generate)
-  - deterministic validation (existing validate_suggestion)
-
-No tool invents experience, employers, metrics, or skills.
-"""
 
 from __future__ import annotations
 
 from typing import Any
 
 from app.agents.providers import NvidiaClient
+from app.api.schemas import ProviderSuggestion, ProviderSuggestionResult
 from app.core.config import Settings
 from app.core.errors import ApiError
 from app.features.resume_management.evidence import build_blocks
 from app.features.resume_management.validation import validate_suggestion
-from app.api.schemas import ProviderSuggestion, ProviderSuggestionResult
 
 
 def tool_analyze_ats_gaps(context: dict[str, Any]) -> dict[str, Any]:
-    """
-    Deterministic gap summary from context already loaded for the improvement run.
-    Does not call an LLM and does not invent missing terms.
-    """
     ats_evidence = context.get("ats_evidence") or []
     missing: list[str] = []
     matched: list[str] = []
@@ -58,7 +44,6 @@ def tool_analyze_ats_gaps(context: dict[str, Any]) -> dict[str, Any]:
                     "match_strength": status,
                 }
             )
-
     selected = context.get("selected_blocks") or []
     return {
         "tool": "analyze_ats_gaps",
@@ -73,12 +58,9 @@ def tool_analyze_ats_gaps(context: dict[str, Any]) -> dict[str, Any]:
             "No new requirements are invented by this tool."
         ),
     }
-
-
 async def tool_generate_resume_suggestions(
     settings: Settings, context: dict[str, Any]
 ) -> ProviderSuggestionResult:
-    """Call the existing NVIDIA resume-improvement generator only."""
     if not settings.nvidia_configured:
         raise ApiError(
             503,
@@ -86,15 +68,8 @@ async def tool_generate_resume_suggestions(
             "AI improvements are not configured. Manual editing and export remain available.",
         )
     return await NvidiaClient(settings).generate(context)
-
-
 def _block_map_from_context(context: dict[str, Any]) -> dict[str, Any]:
-    """
-    Prefer full evidence blocks attached by the pipeline (`context['_blocks']`).
-    Fall back to reconstructing from selected_blocks (same ids when order preserved).
-    """
     from app.features.resume_management.evidence import ResumeBlock, normalize_text, source_hash
-
     raw_blocks = context.get("_blocks")
     if isinstance(raw_blocks, list) and raw_blocks:
         out: dict[str, ResumeBlock] = {}
@@ -111,8 +86,6 @@ def _block_map_from_context(context: dict[str, Any]) -> dict[str, Any]:
                 )
         if out:
             return out
-
-    # Fallback: rebuild section lists from selected_blocks only
     by_section: dict[str, list[str]] = {}
     for item in context.get("selected_blocks") or []:
         if not isinstance(item, dict):
@@ -122,19 +95,12 @@ def _block_map_from_context(context: dict[str, Any]) -> dict[str, Any]:
         if key and text:
             by_section.setdefault(key, []).append(text)
     return {b.block_id: b for b in build_blocks({"sections": by_section})}
-
-
 def tool_validate_suggestions(
     result: ProviderSuggestionResult,
     context: dict[str, Any],
     allowed_sections: set[str],
 ) -> dict[str, Any]:
-    """
-    Run the same evidence validator used by the production improvement pipeline.
-    Returns only suggestions that pass or warn — blocked ones are dropped.
-    """
     block_map = _block_map_from_context(context)
-
     kept: list[ProviderSuggestion] = []
     blocked = 0
     issues_log: list[dict[str, Any]] = []
@@ -159,7 +125,6 @@ def tool_validate_suggestions(
                     "issues": validation.issues,
                 }
             )
-
     return {
         "tool": "validate_suggestions",
         "received": len(result.suggestions),

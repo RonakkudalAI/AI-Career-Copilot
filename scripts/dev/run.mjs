@@ -1,30 +1,20 @@
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { ensureBackendVenv } from "../shared/backend-venv.mjs";
 import { loadRootEnv } from "../shared/load-env.mjs";
 import { backendPort, frontendPort } from "../shared/ports.mjs";
 
 loadRootEnv();
 
-const backendPython = process.platform === "win32" ? "backend/.venv/Scripts/python.exe" : "backend/.venv/bin/python";
-if (!existsSync(backendPython)) {
-  console.error("Backend dependencies are missing. Run npm install first.");
-  process.exit(1);
-}
+const backendPython = ensureBackendVenv();
 
 const frontendDirectory = resolve(process.cwd(), "frontend");
-// Bind to loopback so Next's local HMR websocket advertises the same host
+// Bind to loopback so Vite's local HMR websocket advertises the same host
 // that local browsers use. FRONTEND_HOST remains available for overrides.
 const frontendHost = process.env.FRONTEND_HOST || "127.0.0.1";
 const configuredFrontendPort = frontendPort(process.env);
-const frontendLockPresent = existsSync(resolve(frontendDirectory, ".next", "dev", "lock"));
 const frontendEnvironment = { ...process.env };
-if (frontendLockPresent) {
-  // A lock can remain after a crashed/stopped Next process. Use an isolated
-  // development directory so this invocation still owns a working frontend.
-  frontendEnvironment.NEXT_DIST_DIR = `.next-dev-${process.pid}`;
-  console.log(`[dev] Existing Next lock detected; using ${frontendEnvironment.NEXT_DIST_DIR} for this frontend.`);
-}
+const viteBinary = resolve(frontendDirectory, "node_modules", "vite", "bin", "vite.js");
 
 const commands = [
   {
@@ -38,10 +28,8 @@ const commands = [
     name: "frontend",
     command: process.execPath,
     args: [
-      resolve(frontendDirectory, "node_modules", "next", "dist", "bin", "next"),
-      "dev",
-      "--webpack",
-      "--hostname",
+      viteBinary,
+      "--host",
       frontendHost,
       "--port",
       configuredFrontendPort,
@@ -103,5 +91,5 @@ process.on("exit", () => {
 for (const service of commands) start(service);
 
 console.log(`[dev] Backend logs: inherited from uvicorn on http://127.0.0.1:${backendPort(process.env)}`);
-console.log(`[dev] Frontend logs: inherited from Next on http://localhost:${configuredFrontendPort}`);
+console.log(`[dev] Frontend logs: inherited from Vite on http://localhost:${configuredFrontendPort}`);
 console.log("[dev] Press Ctrl+C once to stop both services.");

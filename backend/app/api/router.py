@@ -155,6 +155,70 @@ def auth_sign_out(response: Response):
     response.delete_cookie("career_copilot_session")
 
 
+@router.post("/auth/firebase")
+def auth_firebase(payload: dict[str, Any] = Body(...), settings: Settings = Depends(get_settings)):
+    """Exchange a verified Firebase ID token for an app JWT."""
+    from firebase_admin import auth as firebase_auth
+
+    from app.database.client import firebase_admin_app
+
+    id_token = str(payload.get("id_token") or "").strip()
+    if not id_token:
+        raise ApiError(400, "invalid_firebase_token", "A Firebase ID token is required.")
+    try:
+        admin_app = firebase_admin_app(settings)
+        decoded = firebase_auth.verify_id_token(
+            id_token,
+            app=admin_app,
+            check_revoked=settings.firebase_check_revoked,
+            clock_skew_seconds=getattr(settings, "firebase_clock_skew_seconds", 10),
+        )
+    except Exception as exc:
+        raise ApiError(401, "invalid_firebase_token", "The Firebase session is invalid or expired.") from exc
+    email = str(decoded.get("email") or "").strip().lower()
+    uid = str(decoded.get("uid") or "").strip()
+    if not uid:
+        raise ApiError(401, "invalid_firebase_token", "Firebase identity is missing a UID.")
+    if not email or "@" not in email:
+        raise ApiError(401, "firebase_email_required", "A verified Firebase email is required.")
+    if decoded.get("email_verified") is not True:
+        raise ApiError(
+            401,
+            "firebase_email_unverified",
+            "Verify your email with the identity provider before signing in.",
+        )
+    client = database_client(settings)
+    rows = client.table("users").select("*").eq("email", email).limit(1).execute().data or []
+    if rows:
+        user = rows[0]
+        existing_fb = str(user.get("firebase_uid") or "").strip()
+        if existing_fb and existing_fb != uid:
+            raise ApiError(
+                409,
+                "firebase_uid_conflict",
+                "This email is already linked to a different identity provider account.",
+            )
+        if not existing_fb:
+            client.table("users").update({"firebase_uid": uid}).eq("id", str(user["id"])).execute()
+            user["firebase_uid"] = uid
+    else:
+        user_id = str(uuid.uuid4())
+        full_name = str((decoded.get("name") or "")).strip()[:120] or None
+        user = client.table("users").insert(
+            {
+                "id": user_id,
+                "email": email,
+                "full_name": full_name,
+                "firebase_uid": uid,
+                "password_hash": "",
+            }
+        ).execute().data[0]
+        client.table("profiles").insert({"id": user_id, "full_name": full_name or ""}).execute()
+        for table in ("candidate_preferences", "notification_preferences", "privacy_preferences"):
+            client.table(table).insert({"user_id": user_id}).execute()
+    return _auth_payload(user, settings)
+
+
 @router.post("/auth/resend")
 def auth_resend():
     return {"message": "Email delivery is not configured for local development."}
@@ -1431,7 +1495,16 @@ async def create_resume(
                 "id": resume_id,
                 "user_id": str(user.id),
                 "title": resume_title,
-                "is_active": not bool(owned_rows(client, "resumes", user)),
+                "is_active": not bool(
+                    client.table("resumes")
+                    .select("id")
+                    .eq("user_id", str(user.id))
+                    .is_("deleted_at", "null")
+                    .limit(1)
+                    .execute()
+                    .data
+                    or []
+                ),
             }
         )
         .execute()
@@ -1955,10 +2028,9 @@ def delete_ats(
     user: CurrentUser = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ):
-    """Delete a candidate-owned ATS analysis (evidence cascades in DB)."""
+    """Delete a candidate-owned ATS analysis and related evidence."""
     client = client_for(settings, user)
     owned_row(client, "ats_analyses", analysis_id, user)
-    # Clear optional FKs that are not ON DELETE CASCADE.
     try:
         client.table("resume_improvement_runs").update({"ats_analysis_id": None}).eq(
             "ats_analysis_id", str(analysis_id)
@@ -1971,6 +2043,9 @@ def delete_ats(
         ).eq("user_id", str(user.id)).execute()
     except Exception:
         pass
+    client.table("ats_evidence").delete().eq("analysis_id", str(analysis_id)).eq(
+        "user_id", str(user.id)
+    ).execute()
     client.table("ats_analyses").delete().eq("id", str(analysis_id)).eq("user_id", str(user.id)).execute()
     write_activity(
         client,
@@ -2299,27 +2374,7 @@ def delete_interview(
     client = client_for(settings, user)
     owned_row(client, "interview_sessions", session_id, user)
 
-    # Best-effort media cleanup before row delete.
-    media_paths: list[str] = []
-    try:
-        responses = (
-            client.table("interview_responses")
-            .select("audio_path,video_path")
-            .eq("session_id", str(session_id))
-            .eq("user_id", str(user.id))
-            .execute()
-            .data
-            or []
-        )
-        for row in responses:
-            for key in ("audio_path", "video_path"):
-                path = row.get(key)
-                if path and str(path).strip():
-                    media_paths.append(str(path).strip())
-        if media_paths:
-            client.storage.from_(settings.interview_bucket).remove(media_paths)
-    except Exception:
-        pass
+    # Media is no longer stored, so no storage cleanup is needed.
 
     client.table("interview_sessions").delete().eq("id", str(session_id)).eq(
         "user_id", str(user.id)
@@ -2491,9 +2546,9 @@ def get_learning(
 ):
     client = client_for(settings, user)
     path = owned_row(client, "learning_paths", path_id, user)
-    path["items"] = (
+    items = (
         client.table("learning_items")
-        .select("*,learning_resources(*)")
+        .select("*")
         .eq("learning_path_id", str(path_id))
         .eq("user_id", str(user.id))
         .order("position")
@@ -2501,6 +2556,25 @@ def get_learning(
         .data
         or []
     )
+    item_ids = [str(item.get("id")) for item in items if item.get("id")]
+    resources = []
+    if item_ids:
+        resources = (
+            client.table("learning_resources")
+            .select("*")
+            .eq("user_id", str(user.id))
+            .in_("learning_item_id", item_ids)
+            .execute()
+            .data
+            or []
+        )
+    by_item: dict[str, list[dict[str, Any]]] = {}
+    for resource in resources:
+        key = str(resource.get("learning_item_id") or "")
+        by_item.setdefault(key, []).append(resource)
+    for item in items:
+        item["learning_resources"] = by_item.get(str(item.get("id")), [])
+    path["items"] = items
     return path
 
 
@@ -2510,9 +2584,26 @@ def delete_learning_path(
     user: CurrentUser = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ):
-    """Delete a candidate-owned learning path (items and resources cascade in DB)."""
+    """Delete a candidate-owned learning path and cascade items/resources."""
     client = client_for(settings, user)
     owned_row(client, "learning_paths", path_id, user)
+    items = (
+        client.table("learning_items")
+        .select("id")
+        .eq("learning_path_id", str(path_id))
+        .eq("user_id", str(user.id))
+        .execute()
+        .data
+        or []
+    )
+    item_ids = [str(item.get("id")) for item in items if item.get("id")]
+    if item_ids:
+        client.table("learning_resources").delete().eq("user_id", str(user.id)).in_(
+            "learning_item_id", item_ids
+        ).execute()
+    client.table("learning_items").delete().eq("learning_path_id", str(path_id)).eq(
+        "user_id", str(user.id)
+    ).execute()
     client.table("learning_paths").delete().eq("id", str(path_id)).eq("user_id", str(user.id)).execute()
     write_activity(
         client,
@@ -2714,6 +2805,119 @@ def list_jobs(user: CurrentUser = Depends(get_current_user), settings: Settings 
     )
 
 
+_external_sync_lock = __import__("threading").Lock()
+_external_sync_last: dict[str, float] = {}
+_EXTERNAL_SYNC_COOLDOWN_SECONDS = 60.0
+
+
+@router.post("/jobs/external/sync")
+def sync_external_jobs(
+    user: CurrentUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+):
+    import time
+
+    from app.features.adzuna_api import AdzunaClient
+
+    now = time.monotonic()
+    last = _external_sync_last.get(str(user.id), 0.0)
+    if now - last < _EXTERNAL_SYNC_COOLDOWN_SECONDS:
+        raise ApiError(
+            429,
+            "jobs_sync_cooldown",
+            f"Wait {int(_EXTERNAL_SYNC_COOLDOWN_SECONDS - (now - last))}s before syncing external jobs again.",
+        )
+    if not _external_sync_lock.acquire(blocking=False):
+        raise ApiError(429, "jobs_sync_busy", "An external job sync is already running. Try again shortly.")
+    try:
+        client = client_for(settings, user)
+        prefs_rows = (
+            client.table("candidate_preferences")
+            .select("target_roles,preferred_locations")
+            .eq("user_id", str(user.id))
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+        prefs = prefs_rows[0] if prefs_rows else {}
+        target_roles = [str(r).strip() for r in (prefs.get("target_roles") or []) if str(r).strip()]
+        locations = [str(loc).strip() for loc in (prefs.get("preferred_locations") or []) if str(loc).strip()]
+        adzuna = AdzunaClient(
+            settings.adzuna_app_id,
+            settings.adzuna_app_key,
+            settings.adzuna_country,
+            timeout_seconds=settings.adzuna_timeout_seconds,
+        )
+        fetched = adzuna.search_jobs(
+            target_roles=target_roles,
+            locations=locations,
+            results_per_page=settings.adzuna_results_per_page,
+            max_days_old=settings.adzuna_max_days_old,
+        )
+        existing_rows = (
+            client.table("jobs").select("id,external_id").eq("source", "adzuna").execute().data or []
+        )
+        existing_by_external = {
+            str(row.get("external_id") or "").strip(): str(row.get("id"))
+            for row in existing_rows
+            if str(row.get("external_id") or "").strip()
+        }
+        created = 0
+        updated = 0
+        stamp = utc_now()
+        for job in fetched:
+            external_id = str(job.get("external_id") or "").strip()
+            if not external_id:
+                continue
+            payload = {
+                "source": "adzuna",
+                "external_id": external_id,
+                "title": job.get("title") or "Unknown Title",
+                "company": job.get("company") or "Unknown Company",
+                "location": job.get("location"),
+                "description": job.get("description") or "",
+                "application_url": job.get("application_url"),
+                "salary_min": job.get("salary_min"),
+                "salary_max": job.get("salary_max"),
+                "published_at": job.get("published_at") or stamp,
+                "latitude": job.get("latitude"),
+                "longitude": job.get("longitude"),
+                "is_active": True,
+                "requirements": job.get("requirements") or [],
+                "updated_at": stamp,
+            }
+            existing_id = existing_by_external.get(external_id)
+            if existing_id:
+                client.table("jobs").update(payload).eq("id", existing_id).execute()
+                updated += 1
+            else:
+                new_id = str(uuid.uuid4())
+                client.table("jobs").insert({**payload, "id": new_id, "created_at": stamp}).execute()
+                existing_by_external[external_id] = new_id
+                created += 1
+        _external_sync_last[str(user.id)] = time.monotonic()
+        write_activity(
+            client,
+            user,
+            "jobs_external_synced",
+            f"Synced {created + updated} external jobs ({created} new, {updated} updated)",
+            "jobs",
+            None,
+        )
+        return {
+            "provider": "adzuna",
+            "configured": adzuna.configured,
+            "fetched": len(fetched),
+            "created": created,
+            "updated": updated,
+            "roles": target_roles,
+            "locations": locations,
+        }
+    finally:
+        _external_sync_lock.release()
+
+
 @router.get("/jobs/{job_id}")
 def get_job(
     job_id: UUID, user: CurrentUser = Depends(get_current_user), settings: Settings = Depends(get_settings)
@@ -2765,11 +2969,40 @@ def generate_job_recommendations(
         version = versions[0]
     resume = owned_row(client, "resumes", version["resume_id"], user)
     skills, evidence_text = candidate_skill_evidence(client, str(user.id), resume, version)
-    jobs = client.table("jobs").select("*").eq("is_active", True).order("published_at", desc=True).limit(200).execute().data or []
-    ranked = sorted((score_job(job, skills, evidence_text) for job in jobs), key=lambda row: row["match_score"], reverse=True)[:payload.limit]
-    client.table("job_recommendations").delete().eq("user_id", str(user.id)).eq("resume_version_id", str(version["id"])).execute()
+    jobs = (
+        client.table("jobs")
+        .select("*")
+        .eq("is_active", True)
+        .order("published_at", desc=True)
+        .limit(500)
+        .execute()
+        .data
+        or []
+    )
+    if payload.location:
+        needle = payload.location.casefold()
+        jobs = [job for job in jobs if needle in str(job.get("location") or "").casefold()]
+    if payload.work_mode:
+        needle = payload.work_mode.casefold()
+        jobs = [job for job in jobs if needle in str(job.get("work_mode") or "").casefold()]
+    if payload.salary_min is not None:
+        jobs = [
+            job
+            for job in jobs
+            if job.get("salary_max") is not None and float(job.get("salary_max") or 0) >= float(payload.salary_min)
+        ]
+    ranked = sorted(
+        (score_job(job, skills, evidence_text) for job in jobs),
+        key=lambda row: row["match_score"],
+        reverse=True,
+    )
+    page = ranked[payload.offset : payload.offset + payload.limit]
+    if payload.offset == 0:
+        client.table("job_recommendations").delete().eq("user_id", str(user.id)).eq(
+            "resume_version_id", str(version["id"])
+        ).execute()
     recommendations = []
-    for row in ranked:
+    for row in page:
         stored = client.table("job_recommendations").insert({
             "user_id": str(user.id),
             "job_id": row["job"]["id"],
@@ -2792,16 +3025,22 @@ def generate_job_recommendations(
 def list_saved_jobs(
     user: CurrentUser = Depends(get_current_user), settings: Settings = Depends(get_settings)
 ):
-    return (
-        client_for(settings, user)
-        .table("saved_jobs")
-        .select("*,jobs(*)")
+    client = client_for(settings, user)
+    rows = (
+        client.table("saved_jobs")
+        .select("*")
         .eq("user_id", str(user.id))
         .order("saved_at", desc=True)
         .execute()
         .data
         or []
     )
+    job_ids = [str(row.get("job_id")) for row in rows if row.get("job_id")]
+    jobs = (
+        client.table("jobs").select("*").in_("id", job_ids).execute().data if job_ids else []
+    )
+    by_id = {str(job["id"]): job for job in (jobs or [])}
+    return [{**row, "jobs": by_id.get(str(row.get("job_id")))} for row in rows]
 
 
 @router.post("/saved-jobs/{job_id}", status_code=201)
@@ -2908,22 +3147,24 @@ def delete_account(
     Permanently delete the signed-in candidate account and all owned data.
 
     Confirmation (required): body.confirmation or header X-Confirm-Delete must equal
-    "DELETE MY ACCOUNT". Optional body.email must match the account email when provided.
-
-    Steps:
-    1) Collect storage paths from rows scoped by the authenticated user_id
-      2) Purge storage objects (admin client)
-      3) Delete the local users row; public tables cascade via ON DELETE CASCADE
+    "DELETE MY ACCOUNT". Body email must match the account email.
     """
-    confirmation = (payload.confirmation if payload else None) or x_confirm_delete
+    from app.features.auth.account_deletion import delete_user_owned_records
+
+    if payload is None:
+        raise ApiError(
+            400,
+            "account_deletion_confirmation_required",
+            f"Explicit confirmation and account email are required. Type exactly: {CONFIRM_PHRASE}",
+        )
+    confirmation = payload.confirmation or x_confirm_delete
     if not confirmation_is_valid(confirmation):
         raise ApiError(
             400,
             "account_deletion_confirmation_required",
-            f'Explicit confirmation is required. Type exactly: {CONFIRM_PHRASE}',
+            f"Explicit confirmation is required. Type exactly: {CONFIRM_PHRASE}",
         )
-    provided_email = payload.email if payload else None
-    if not email_matches_account(provided_email, user.email):
+    if not email_matches_account(payload.email, user.email):
         raise ApiError(
             400,
             "account_deletion_email_mismatch",
@@ -2937,9 +3178,9 @@ def delete_account(
     try:
         purge_user_storage(admin, settings, user, storage_paths)
     except Exception:
-        # Continue: auth delete still cascades DB rows; storage is best-effort.
-        pass
+        logger.exception("account_delete_storage_purge_failed user_id=%s", user.id)
 
+    delete_user_owned_records(admin, user)
     try:
         admin.table("users").delete().eq("id", str(user.id)).execute()
     except Exception as exc:

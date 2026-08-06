@@ -2,7 +2,6 @@ from __future__ import annotations
 
 
 def reconcile_sections(sections: dict[str, list[str]]) -> tuple[dict[str, list[str]], int]:
-    """Deterministically remove exact duplicate entries within and across sections."""
     result: dict[str, list[str]] = {}
     seen_global: set[str] = set()
     duplicates = 0

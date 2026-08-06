@@ -1,10 +1,8 @@
-"use client";
 
-import Link from "next/link";
-import dynamic from "next/dynamic";
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { Link } from "@/shared/ui/router-link";
+import { lazy, Suspense, useCallback, useEffect, useId, useRef, useState } from "react";
 import { ArrowRight, Menu, ShieldCheck, X } from "lucide-react";
-import { ButtonLink } from "@/shared/ui/primitives";
+
 import { JobTicker } from "@/shared/ui/job-ticker";
 import { CareerJourney } from "./sections/career-journey";
 import { ResumeIntelligence } from "./sections/resume-intelligence";
@@ -12,11 +10,9 @@ import { AtsComparison } from "./sections/ats-comparison";
 import { InterviewSimulation } from "./sections/interview-simulation";
 import { LivingProfile } from "./sections/living-profile";
 import { ParallaxLayer } from "@/shared/ui/parallax-layer";
+import { ButtonLink } from "@/shared/ui/primitives";
 
-const Globe = dynamic(() => import("@/components/ui/globe").then((module) => module.Globe), {
-  ssr: false,
-  loading: () => <div className="globe-loading" aria-hidden="true" />,
-});
+const Globe = lazy(() => import("@/features/jobs/components/career-globe"));
 
 
 const FOCUSABLE_SELECTOR =
@@ -210,7 +206,9 @@ export function LandingPage() {
             </p>
           </div>
           <div className="globe-frame">
-            <Globe />
+            <Suspense fallback={<div className="globe-loading" data-testid="mock-globe">Loading map...</div>}>
+              <Globe />
+            </Suspense>
           </div>
         </section>
 

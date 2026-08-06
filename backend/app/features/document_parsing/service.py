@@ -1,9 +1,3 @@
-"""
-Document validation helpers + re-exports of source-true parsers.
-
-Parsing lives in app.features.document_parsing.parsing (text extraction + section boundaries).
-This module keeps the document service boundary stable for routes and tests.
-"""
 
 from __future__ import annotations
 
@@ -12,7 +6,6 @@ import io
 import re
 import zipfile
 from pathlib import Path
-from typing import Any
 
 from app.core.errors import ApiError
 from app.features.document_parsing.parsing.llm_sections import extract_sections_enriched
@@ -24,8 +17,6 @@ from app.features.document_parsing.parsing.sections import (
 from app.features.document_parsing.parsing.text_extract import DOCX_MIME, PDF_MIME, extract_text
 
 ALLOWED_SUFFIXES = {".pdf": PDF_MIME, ".docx": DOCX_MIME}
-
-# Re-export parsers through the document service boundary.
 __all__ = [
     "PDF_MIME",
     "DOCX_MIME",
@@ -42,17 +33,11 @@ __all__ = [
     "infer_job_metadata",
     "extract_skill_candidates",
 ]
-
-
 def safe_filename(filename: str) -> str:
     name = Path(filename).name
     return re.sub(r"[^A-Za-z0-9._-]", "_", name)[:180] or "document"
-
-
 def sha256_bytes(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
-
-
 def validate_document(filename: str, declared_mime: str | None, content: bytes, max_bytes: int) -> str:
     if not content:
         raise ApiError(400, "empty_document", "The selected document is empty.")
@@ -76,33 +61,21 @@ def validate_document(filename: str, declared_mime: str | None, content: bytes, 
         except zipfile.BadZipFile as exc:
             raise ApiError(415, "invalid_docx_archive", "The selected DOCX file is corrupted.") from exc
     return expected
-
-
 def infer_resume_title(filename: str | None) -> str:
-    """Derive a resume library title from the uploaded filename."""
     stem = Path(filename or "Resume").stem
     cleaned = re.sub(r"[_\-]+", " ", stem).strip()
     cleaned = re.sub(r"\s+", " ", cleaned)
     return (cleaned or "Resume")[:200]
-
-
 _ROLE_HINT = re.compile(
     r"\b(engineer|developer|analyst|manager|designer|scientist|architect|specialist|"
     r"lead|intern|consultant|administrator|officer|coordinator|executive|director)\b",
     re.I,
 )
-
-
 def infer_job_metadata(text: str) -> dict[str, str | None]:
-    """
-    Infer title, role, and company from job-description text so candidates
-    do not need to type those fields manually. Uses only text present in the JD.
-    """
     lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
     role: str | None = None
     company: str | None = None
     confidence = "low"
-
     for line in lines[:60]:
         for label in (
             "job title",
@@ -123,7 +96,6 @@ def infer_job_metadata(text: str) -> dict[str, str | None]:
             match = re.match(rf"^{re.escape(label)}\s*[:\-–]\s*(.+)$", line, re.I)
             if match and not company:
                 company = match.group(1).strip()[:200]
-
         looking = re.search(
             r"(?:we are (?:hiring|looking for|seeking)|hiring a[n]?|looking for a[n]?)\s+(.+)$",
             line,
@@ -132,7 +104,6 @@ def infer_job_metadata(text: str) -> dict[str, str | None]:
         if looking and not role:
             role = looking.group(1).strip(" .,:;-")[:200]
             confidence = "medium"
-
     if not role:
         for line in lines[:12]:
             if len(line) > 90 or re.search(r"https?://|www\.|@", line, re.I):
@@ -146,7 +117,6 @@ def infer_job_metadata(text: str) -> dict[str, str | None]:
         if len(first) <= 100 and not re.search(r"https?://|www\.|@", first, re.I):
             role = first[:200]
             confidence = "low"
-
     if role and company:
         title = f"{role} · {company}"[:200]
     elif role:
@@ -155,21 +125,13 @@ def infer_job_metadata(text: str) -> dict[str, str | None]:
         title = f"{company} role"[:200]
     else:
         title = "Job description"
-
     return {
         "title": title,
         "role_title": role,
         "company": company,
         "confidence": confidence,
     }
-
-
 def extract_skill_candidates(text: str, limit: int = 20) -> list[str]:
-    """
-    Extract skill-like tokens from free text without a fixed vocabulary.
-
-    Prefer commas/pipes/bullets and short token-like fragments that appear in the source.
-    """
     found: list[str] = []
     seen: set[str] = set()
     for raw_line in (text or "").splitlines():
@@ -183,7 +145,6 @@ def extract_skill_candidates(text: str, limit: int = 20) -> list[str]:
                 payload = right
         parts = [p.strip() for p in re.split(r"[,;|/]|·|•", payload) if p.strip()]
         if len(parts) < 2:
-            # Single fragment lines that look like a skill token (short, no sentence).
             if len(line.split()) <= 4 and len(line) <= 48 and not line.endswith("."):
                 parts = [line]
             else:

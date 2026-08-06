@@ -1,10 +1,13 @@
-"use client";
 
-import Link from "next/link";
+import { Link } from "@/shared/ui/router-link";
 import { useEffect, useState } from "react";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { Button, Card, PageHeader, Textarea } from "@/shared/ui/primitives";
+import { useParams, useNavigate, useSearchParams } from "react-router-dom";
+
+
+
+
 import { apiRequest } from "@/shared/api/client";
+import { Button, Card, PageHeader, Textarea } from "@/shared/ui/primitives";
 
 type Session = {
   id: string;
@@ -103,7 +106,7 @@ export function InterviewHome() {
               Open session
             </Link>
             <Button
-              variant="danger"
+              variant="destructive"
               disabled={deletingId === s.id}
               onClick={() => void deleteSession(s)}
             >
@@ -123,8 +126,8 @@ export function InterviewHome() {
 }
 
 export function InterviewSetup() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const resumeVersionId = searchParams.get("resume_version_id") || "";
   const jobDescriptionId = searchParams.get("job_description_id") || "";
   const [mode, setMode] = useState(resumeVersionId && jobDescriptionId ? "resume_and_jd" : "behavioural");
@@ -153,7 +156,7 @@ export function InterviewSetup() {
         }),
       });
       await apiRequest(`/interviews/${s.id}/start`, { method: "POST" });
-      router.push(`/mock-interview/session/${s.id}`);
+      navigate(`/mock-interview/session/${s.id}`);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -172,7 +175,7 @@ export function InterviewSetup() {
         {resumeVersionId && jobDescriptionId ? <p role="status" className="muted" style={{ margin: 0 }}>This session will use the confirmed resume and job description selected in preparation.</p> : null}
         <label className="field-label">
           Mode
-          <select className="field" value={mode} onChange={(e) => setMode(e.target.value)}>
+          <select className="field" value={mode} onChange={(e: any) => setMode(e.target.value)}>
             <option value="behavioural">Behavioural</option>
             <option value="technical">Technical</option>
             <option value="mixed">Mixed</option>
@@ -184,7 +187,7 @@ export function InterviewSetup() {
           <input
             className="field"
             value={targetRole}
-            onChange={(e) => setTargetRole(e.target.value)}
+            onChange={(e: any) => setTargetRole(e.target.value)}
             placeholder="e.g. Backend Engineer"
           />
         </label>
@@ -193,7 +196,7 @@ export function InterviewSetup() {
           <select
             className="field"
             value={questionCount}
-            onChange={(e) => setQuestionCount(Number(e.target.value))}
+            onChange={(e: any) => setQuestionCount(Number(e.target.value))}
           >
             {[3, 4, 5, 6, 8].map((n) => (
               <option key={n} value={n}>
@@ -212,7 +215,7 @@ export function InterviewSetup() {
 }
 
 export function InterviewSession() {
-  const router = useRouter();
+  const navigate = useNavigate();
   const params = useParams();
   const sessionId = String(params?.sessionId || "");
   const [session, setSession] = useState<Session | null>(null);
@@ -304,8 +307,8 @@ export function InterviewSession() {
     setError("");
     try {
       await apiRequest(`/interviews/${sessionId}`, { method: "DELETE" });
-      router.replace("/mock-interview");
-      router.refresh();
+      navigate("/mock-interview");
+
     } catch (e) {
       setError((e as Error).message);
       setDeleting(false);
@@ -350,7 +353,7 @@ export function InterviewSession() {
           <h2 style={{ margin: 0 }}>{current?.question}</h2>
           <label className="field-label">
             Your answer
-            <Textarea value={response} onChange={(e) => setResponse(e.target.value)} />
+            <Textarea value={response} onChange={(e: any) => setResponse(e.target.value)} />
           </label>
           <div className="cluster">
             <Button disabled={saving || !response.trim()} onClick={() => void submitResponse()}>
@@ -373,7 +376,7 @@ export function InterviewSession() {
             <Button variant="secondary" disabled={saving || deleting} onClick={() => void completeSession()}>
               Complete session
             </Button>
-            <Button variant="danger" disabled={saving || deleting} onClick={() => void deleteThisSession()}>
+            <Button variant="destructive" disabled={saving || deleting} onClick={() => void deleteThisSession()}>
               {deleting ? "Deleting…" : "Delete session"}
             </Button>
           </div>
@@ -381,7 +384,7 @@ export function InterviewSession() {
       )}
       {questions.length === 0 ? (
         <div className="cluster" style={{ marginTop: 12 }}>
-          <Button variant="danger" disabled={deleting} onClick={() => void deleteThisSession()}>
+          <Button variant="destructive" disabled={deleting} onClick={() => void deleteThisSession()}>
             {deleting ? "Deleting…" : "Delete session"}
           </Button>
         </div>

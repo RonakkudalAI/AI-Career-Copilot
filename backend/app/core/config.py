@@ -8,23 +8,27 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 ROOT_DIR = Path(__file__).resolve().parents[3]
 ROOT_ENV_FILE = ROOT_DIR / ".env"
-
-
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=ROOT_ENV_FILE, env_file_encoding="utf-8", extra="ignore")
-
     app_name: str
     app_env: str
     api_v1_prefix: str
     public_api_base_url: str
     log_level: str
     frontend_origins: Annotated[list[str], NoDecode]
-    database_path: str
+    firebase_project_id: str = ""
+    firebase_database_id: str = "(default)"
+    firebase_credentials_path: str = ""
+    firebase_clock_skew_seconds: int = Field(default=10, ge=0, le=60)
+    # Revocation checks call Firebase Auth after signature verification. Keep this
+    # opt-in for local development, where the Admin SDK may not have Auth lookup
+    # permissions even though Firestore access is configured correctly.
+    firebase_check_revoked: bool = False
     auth_secret: str
+    jwt_ttl_seconds: int = Field(default=60 * 60 * 24 * 7, ge=60, le=60 * 60 * 24 * 30)
+    llm_allow_repair: bool = True
     local_storage_dir: str
-    crewai_storage_dir: str = Field(default_factory=lambda: str(ROOT_DIR / ".data" / "crewai"))
     document_max_bytes: int = 10 * 1024 * 1024
-    # Profile pictures must stay under 3 MB (enforced in API + storage bucket policy).
     avatar_max_bytes: int = 3 * 1024 * 1024
     interview_media_max_bytes: int = 250 * 1024 * 1024
     document_bucket: str
@@ -38,7 +42,6 @@ class Settings(BaseSettings):
     nvidia_max_output_tokens: int = Field(default=4096, ge=256, le=8192)
     nvidia_temperature: float = Field(default=0.2, ge=0, le=1)
     nvidia_prompt_version: str
-    # Groq — separate provider for interview questions (not an NVIDIA fallback).
     groq_api_key: str = ""
     groq_base_url: str
     groq_model: str
@@ -46,7 +49,6 @@ class Settings(BaseSettings):
     groq_max_retries: int = Field(default=2, ge=0, le=2)
     groq_max_output_tokens: int = Field(default=2048, ge=256, le=8192)
     groq_temperature: float = Field(default=0.4, ge=0, le=1)
-    # Groq Resume Parser Configuration
     groq_resume_parser_enabled: bool = True
     groq_resume_parser_model: str = "openai/gpt-oss-120b"
     groq_resume_parser_fallback_model: str = "llama-3.3-70b-versatile"
@@ -59,26 +61,23 @@ class Settings(BaseSettings):
     improvement_max_source_chars: int = Field(default=30_000, ge=1_000, le=100_000)
     improvement_max_jd_chars: int = Field(default=12_000, ge=1_000, le=50_000)
     export_signed_url_seconds: int = Field(default=300, ge=30, le=3600)
-    # YouTube Data API v3 — exact video recommendations for learning paths (server-only).
     youtube_api_key: str = ""
     youtube_api_base_url: str = "https://www.googleapis.com/youtube/v3"
     youtube_search_max_results: int = Field(default=3, ge=1, le=5)
     youtube_timeout_seconds: float = Field(default=20.0, gt=0, le=60)
-
+    llm_rpm_limit: float = Field(default=40.0, ge=1.0, le=600.0)
+    adzuna_app_id: str = ""
+    adzuna_app_key: str = ""
+    adzuna_country: str = "us"
+    adzuna_timeout_seconds: float = Field(default=15.0, gt=0, le=60)
+    adzuna_results_per_page: int = Field(default=50, ge=1, le=50)
+    adzuna_max_days_old: int | None = Field(default=30, ge=1, le=365)
     @field_validator("frontend_origins", mode="before")
     @classmethod
     def parse_origins(cls, value: object) -> object:
         if isinstance(value, str):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
-
-    @field_validator("crewai_storage_dir", mode="before")
-    @classmethod
-    def normalize_crewai_storage_dir(cls, value: object) -> str:
-        if value is None or not str(value).strip():
-            return str(ROOT_DIR / ".data" / "crewai")
-        return str(value).strip()
-
     @field_validator("nvidia_base_url", "groq_base_url")
     @classmethod
     def validate_server_url(cls, value: str) -> str:
@@ -88,7 +87,6 @@ class Settings(BaseSettings):
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise ValueError("must be an absolute HTTP or HTTPS URL")
         return value.rstrip("/")
-
     @field_validator("frontend_origins")
     @classmethod
     def validate_origins(cls, value: list[str]) -> list[str]:
@@ -99,7 +97,6 @@ class Settings(BaseSettings):
             if parsed.scheme not in {"http", "https"} or not parsed.netloc:
                 raise ValueError("contains an invalid frontend origin")
         return value
-
     @model_validator(mode="after")
     def validate_provider_pair(self) -> "Settings":
         if self.nvidia_api_key and not self.nvidia_model:
@@ -112,19 +109,19 @@ class Settings(BaseSettings):
             if not self.groq_resume_parser_fallback_model:
                 raise ValueError("GROQ_RESUME_PARSER_FALLBACK_MODEL is required when Groq resume parser is enabled")
         return self
-
     @property
     def database_configured(self) -> bool:
-        return bool(self.database_path)
+        return self.firebase_configured
 
+    @property
+    def firebase_configured(self) -> bool:
+        return bool(self.firebase_project_id and self.firebase_credentials_path)
     @property
     def nvidia_configured(self) -> bool:
         return bool(self.nvidia_api_key and self.nvidia_model and self.nvidia_base_url)
-
     @property
     def groq_configured(self) -> bool:
         return bool(self.groq_api_key and self.groq_model and self.groq_base_url)
-
     @property
     def groq_resume_parser_configured(self) -> bool:
         return bool(
@@ -133,13 +130,13 @@ class Settings(BaseSettings):
             and self.groq_resume_parser_model
             and self.groq_base_url
         )
-
     @property
     def youtube_configured(self) -> bool:
         return bool(self.youtube_api_key and self.youtube_api_base_url)
 
-
-
+    @property
+    def adzuna_configured(self) -> bool:
+        return bool(self.adzuna_app_id and self.adzuna_app_key)
 @lru_cache
 def get_settings() -> Settings:
     return Settings()

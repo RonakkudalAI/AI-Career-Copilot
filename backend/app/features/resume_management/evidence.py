@@ -11,32 +11,22 @@ class ResumeBlock:
     section_key: str
     text: str
     source_hash: str
-
-
 @dataclass(frozen=True)
 class ResumeFact:
     fact_type: str
     normalized_value: str
     display_value: str
     source_block_id: str
-
-
 def normalize_text(value: str) -> str:
     return " ".join(value.split())
-
-
 def source_hash(value: str) -> str:
     return sha256_bytes(normalize_text(value).encode("utf-8"))
-
-
 def _section_lines(value: Any) -> list[str]:
     if isinstance(value, str):
         return [value] if value.strip() else []
     if isinstance(value, list):
         return [str(item) for item in value if str(item).strip()]
     return []
-
-
 def build_blocks(structured_content: dict[str, Any]) -> list[ResumeBlock]:
     sections = structured_content.get("sections")
     if not isinstance(sections, dict):
@@ -55,8 +45,6 @@ def build_blocks(structured_content: dict[str, Any]) -> list[ResumeBlock]:
                 )
             )
     return blocks
-
-
 def _fact_values(block: ResumeBlock) -> list[tuple[str, str]]:
     values: list[tuple[str, str]] = []
     if block.section_key == "skills":
@@ -71,8 +59,6 @@ def _fact_values(block: ResumeBlock) -> list[tuple[str, str]]:
     for value in re.findall(r"https?://\S+|[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", block.text):
         values.append(("contact_or_url", value.rstrip(".,;")))
     return values
-
-
 def build_fact_inventory(blocks: list[ResumeBlock]) -> list[ResumeFact]:
     seen: set[tuple[str, str, str]] = set()
     facts: list[ResumeFact] = []
@@ -84,8 +70,6 @@ def build_fact_inventory(blocks: list[ResumeBlock]) -> list[ResumeFact]:
                 seen.add(key)
                 facts.append(ResumeFact(fact_type, normalized, value, block.block_id))
     return facts
-
-
 def evidence_bundle(
     structured_content: dict[str, Any], requested_sections: list[str]
 ) -> tuple[list[ResumeBlock], list[ResumeFact], dict[str, Any]]:

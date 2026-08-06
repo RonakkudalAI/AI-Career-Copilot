@@ -1,7 +1,5 @@
-"use client";
-
-import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { useLocation, useNavigate } from "react-router-dom";
+import { Link } from "@/shared/ui/router-link";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { BookOpenCheck, BriefcaseBusiness, FileSearch, Gauge, Menu, Mic2, PanelLeftClose, PanelLeftOpen, Settings, X } from "lucide-react";
 import { routes } from "@/shared/routes";
@@ -68,8 +66,8 @@ function subscribeDemoMode() {
 }
 
 export function WorkspaceShell({ children }: { children: React.ReactNode }) {
-  const pathname = usePathname();
-  const router = useRouter();
+  const { pathname } = useLocation();
+  const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [profileMenu, setProfileMenu] = useState(false);
@@ -176,13 +174,13 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
   async function logout() {
     if (demoMode) {
       document.cookie = `${DEMO_COOKIE_NAME}=; Max-Age=0; Path=/; SameSite=Lax`;
-      router.replace("/");
-      router.refresh();
+      navigate("/");
+
       return;
     }
     await createClient()?.auth.signOut();
-    router.replace("/");
-    router.refresh();
+    navigate("/");
+
   }
 
   const initials = (bootstrap?.profile?.full_name || "User")
@@ -271,8 +269,7 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
                 aria-haspopup="menu"
               >
                 {avatarUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
+                                    <img
                     src={avatarUrl}
                     alt=""
                     className="avatar-image"

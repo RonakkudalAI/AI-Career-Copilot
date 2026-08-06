@@ -1,4 +1,3 @@
-"""Learning path generation from completed ATS analyses."""
 
 from __future__ import annotations
 
@@ -16,11 +15,6 @@ async def generate_learning_path_from_ats(
     source_analysis_id: str,
     role_title: str | None = None,
 ) -> dict[str, Any]:
-    """
-    Build learning items + YouTube resources from ATS evidence via the learning crew.
-
-    Always returns a structured result; when no gaps exist, items is empty.
-    """
     items, audit = await run_learning_youtube_crew(
         settings,
         evidence_rows=evidence_rows,
@@ -49,7 +43,5 @@ async def generate_learning_path_from_ats(
             "payload": audit.payload,
         },
     }
-
-
 def learning_agent_capability(settings: Settings) -> dict[str, Any]:
     return learning_crew_capability(settings)

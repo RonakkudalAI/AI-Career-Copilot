@@ -1,8 +1,8 @@
-"use client";
 
-import Link from "next/link";
+import { Link } from "@/shared/ui/router-link";
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { Card, PageHeader, Progress } from "@/shared/ui/primitives";
+
+
 import { apiRequest } from "@/shared/api/client";
 import {
   PROFILE_UPDATED_EVENT,
@@ -11,6 +11,7 @@ import {
   type ProfileMissingItem,
 } from "@/features/profile/model/profile-completion";
 import { isDemoSession } from "@/features/auth/demo-session";
+import { Card, PageHeader, Progress } from "@/shared/ui/primitives";
 
 type Activity = {
   id: string;

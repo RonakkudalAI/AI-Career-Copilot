@@ -1,1 +1,0 @@
-import { JobDetail } from "@/features/jobs/components/jobs"; export default async function Page({ params }: { params: Promise<{ jobId: string }> }) { return <JobDetail jobId={(await params).jobId} />; }

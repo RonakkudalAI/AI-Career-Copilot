@@ -75,7 +75,7 @@ def main() -> None:
             "title": "Backend Engineer",
             "company": "Acme",
             "role_title": "Backend Engineer",
-            "raw_text": "We need Docker, Python, PostgreSQL, FastAPI, Kubernetes. Build APIs and deploy with Docker.",
+            "raw_text": "We are looking for a highly skilled Backend Engineer to join our growing team. The ideal candidate will have extensive experience with Python, FastAPI, and PostgreSQL. You must have a deep understanding of containerization using Docker and orchestration with Kubernetes. Experience with cloud platforms such as AWS or GCP is a strong plus. You will be responsible for designing, building, and maintaining scalable APIs and microservices. A strong background in system design, database optimization, and performance tuning is required. You should be familiar with Agile methodologies, CI/CD pipelines, and writing comprehensive unit and integration tests. Excellent communication skills and the ability to work collaboratively in a fast-paced environment are essential.",
         },
         token=token,
     )
@@ -90,7 +90,7 @@ def main() -> None:
     )
     print("ats", ats.get("status"), "score", ats.get("overall_score"))
 
-    learn = req("POST", "/learning-paths/generate", {}, token=token)
+    learn = req("POST", "/learning-paths/generate", {"source_analysis_id": ats["id"]}, token=token)
     items = learn.get("items") or []
     print("learning_items", len(items), "algo", learn.get("algorithm_version"))
     if items:

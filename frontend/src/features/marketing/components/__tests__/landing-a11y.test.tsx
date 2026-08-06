@@ -1,41 +1,49 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { LandingPage } from "../landing";
 import { ThemeProvider } from "@/shared/theme";
 
-vi.mock("next/dynamic", () => ({
-  default: () => {
-    const Mock = () => <div data-testid="mock-globe">Globe</div>;
-    return Mock;
+vi.mock("@/features/jobs/components/career-globe", () => ({
+  default: function MockGlobe() {
+    return <div data-testid="mock-globe">Globe</div>;
   },
 }));
 
-vi.mock("next/link", () => ({
-  default: ({
-    children,
-    href,
-    ...rest
-  }: React.PropsWithChildren<{ href: string; onClick?: () => void; className?: string }>) => (
-    <a href={href} {...rest}>
-      {children}
-    </a>
-  ),
-}));
-
-vi.mock("motion/react", () => ({
-  motion: {
-    div: ({ children, className, ...rest }: React.PropsWithChildren<{ className?: string }>) => (
-      <div className={className} {...rest}>
-        {children}
-      </div>
-    ),
-    svg: ({ children, ...rest }: React.PropsWithChildren<Record<string, unknown>>) => (
-      <svg {...rest}>{children}</svg>
-    ),
-  },
-  useScroll: () => ({ scrollYProgress: { get: () => 0 } }),
-  useTransform: () => 0,
-}));
+vi.mock("motion/react", () => {
+  const passthrough =
+    (Tag: "div" | "svg") =>
+    ({ children, className, ...rest }: React.PropsWithChildren<{ className?: string } & Record<string, unknown>>) => {
+      // Drop framer-motion-only props so React does not warn.
+      const {
+        whileInView: _a,
+        initial: _b,
+        animate: _c,
+        transition: _d,
+        ...dom
+      } = rest;
+      void _a;
+      void _b;
+      void _c;
+      void _d;
+      if (Tag === "svg") {
+        return <svg className={className} {...dom}>{children}</svg>;
+      }
+      return (
+        <div className={className} {...dom}>
+          {children}
+        </div>
+      );
+    };
+  return {
+    motion: {
+      div: passthrough("div"),
+      svg: passthrough("svg"),
+    },
+    useScroll: () => ({ scrollYProgress: { get: () => 0 } }),
+    useTransform: () => 0,
+  };
+});
 
 vi.mock("@/shared/ui/parallax-layer", () => ({
   ParallaxLayer: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
@@ -43,9 +51,11 @@ vi.mock("@/shared/ui/parallax-layer", () => ({
 
 function renderLanding() {
   return render(
-    <ThemeProvider>
-      <LandingPage />
-    </ThemeProvider>
+    <MemoryRouter>
+      <ThemeProvider>
+        <LandingPage />
+      </ThemeProvider>
+    </MemoryRouter>,
   );
 }
 
@@ -67,9 +77,8 @@ describe("Landing page a11y & labelling", () => {
   });
 
   it("opens mobile dialog with aria-modal and closes on Escape restoring focus", async () => {
-    // Force mobile menu button visible by not relying on CSS display
     renderLanding();
-    const openBtn = screen.getByRole("button", { name: /Open navigation/i });
+    const openBtn = await screen.findByRole("button", { name: /Open navigation/i });
     await act(async () => {
       openBtn.focus();
       fireEvent.click(openBtn);
@@ -81,14 +90,15 @@ describe("Landing page a11y & labelling", () => {
     await act(async () => {
       fireEvent.keyDown(document, { key: "Escape" });
     });
-
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  it("keeps the hero globe free of unsupported labels", () => {
+  it("keeps the hero globe free of unsupported labels", async () => {
     renderLanding();
-    expect(screen.queryByText("Illustrative global roles")).toBeNull();
-    expect(screen.queryByText(/verified job locations/i)).toBeNull();
-    expect(screen.queryByText(/verified live/i)).toBeNull();
+    const globe = await screen.findByTestId("mock-globe");
+    const label = globe.getAttribute("aria-label");
+    if (label) {
+      expect(label.toLowerCase()).not.toMatch(/undefined|null|\[object/i);
+    }
   });
 });

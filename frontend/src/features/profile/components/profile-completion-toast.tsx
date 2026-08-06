@@ -1,6 +1,5 @@
-"use client";
 
-import Link from "next/link";
+import { Link } from "@/shared/ui/router-link";
 import { useMemo, useSyncExternalStore } from "react";
 import { X } from "lucide-react";
 import {

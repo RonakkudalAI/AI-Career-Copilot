@@ -1,4 +1,3 @@
-"""Evidence-constrained ATS improvement brief generation."""
 
 from __future__ import annotations
 
@@ -9,23 +8,18 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.agents.providers.groq_client import GroqClient
-from app.agents.providers.nvidia_client import NvidiaClient, PROMPTS_DIR
+from app.agents.providers.nvidia_client import PROMPTS_DIR, NvidiaClient
 from app.core.config import Settings
 
 logger = logging.getLogger(__name__)
 _PROMPT_PATH = PROMPTS_DIR / "ats_improvement_v1.txt"
-
-
 class AtsImprovementBriefResult(BaseModel):
     model_config = ConfigDict(extra="ignore")
-
     overall_inference: str = Field(min_length=20, max_length=6000)
     focus_areas: list[str] = Field(default_factory=list, max_length=12)
     priority_actions: list[str] = Field(default_factory=list, max_length=12)
     section_guidance: list[str] = Field(default_factory=list, max_length=20)
     do_not_claim: list[str] = Field(default_factory=list, max_length=12)
-
-
 def _deterministic_brief(
     *,
     score: float,
@@ -35,7 +29,6 @@ def _deterministic_brief(
     role_title: str | None,
     missing_items: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """Create a structured fallback from the same evidence supplied to the LLM."""
     missing = [m for m in missing if m]
     if not missing:
         return {
@@ -50,7 +43,6 @@ def _deterministic_brief(
             "do_not_claim": ["Do not treat keyword coverage as a hiring prediction."],
             "provider": "deterministic",
         }
-
     role = (role_title or "").strip()
     role_bit = f" for the role '{role}'" if role else ""
     terms = ", ".join(missing[:40])
@@ -82,10 +74,7 @@ def _deterministic_brief(
         ],
         "provider": "deterministic",
     }
-
-
 def _validate_inference(text: str, allowed_items: list[dict[str, Any]]) -> str:
-    """Remove sentences that introduce known technical terms without evidence."""
     allowed = {str(item.get("term", "")).casefold() for item in allowed_items}
     known = {
         "docker", "kubernetes", "python", "javascript", "typescript", "react",
@@ -102,15 +91,12 @@ def _validate_inference(text: str, allowed_items: list[dict[str, Any]]) -> str:
         if not unsupported:
             safe.append(sentence)
     return " ".join(safe).strip()
-
-
 def _grounded_items(
     items: list[str],
     evidence_items: list[dict[str, Any]],
     *,
     generic_prefixes: tuple[str, ...] = (),
 ) -> list[str]:
-    """Keep LLM list items tied to supplied terms or explicit safety rules."""
     terms = {
         str(item.get("term", "")).casefold().strip()
         for item in evidence_items
@@ -125,8 +111,6 @@ def _grounded_items(
         ):
             grounded.append(item)
     return grounded
-
-
 async def generate_ats_improvement_brief(
     settings: Settings,
     *,
@@ -169,7 +153,6 @@ async def generate_ats_improvement_brief(
     prompt = _PROMPT_PATH.read_text(encoding="utf-8") if _PROMPT_PATH.is_file() else (
         "Return the required evidence-constrained JSON fields only."
     )
-
     if settings.nvidia_configured:
         try:
             result = await NvidiaClient(settings).generate_structured(
@@ -204,7 +187,6 @@ async def generate_ats_improvement_brief(
             }
         except Exception as exc:
             logger.warning("ats_brief_nvidia_failed error=%s", exc)
-
     if settings.groq_configured:
         try:
             result = await GroqClient(settings).generate_structured(
@@ -239,7 +221,6 @@ async def generate_ats_improvement_brief(
             }
         except Exception as exc:
             logger.warning("ats_brief_groq_failed error=%s", exc)
-
     brief = _deterministic_brief(
         score=overall_score, missing=missing, matched_count=matched_count,
         total=total_terms, role_title=role_title, missing_items=missing_items,

@@ -1,11 +1,13 @@
-"use client";
 
-import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { Link } from "@/shared/ui/router-link";
+import { useNavigate } from "react-router-dom";
+import { useSearchParams } from "@/shared/router";
 import { useState } from "react";
 import { Eye, MailCheck } from "lucide-react";
-import { Button, Input } from "@/shared/ui/primitives";
+
+
 import { createClient } from "@/features/auth/api/client";
+import { Button, Input } from "@/shared/ui/primitives";
 
 function Shell({ children, title, description }: { children: React.ReactNode; title: string; description: string }) {
   return (
@@ -41,7 +43,7 @@ function authErrorMessage(message: string) {
 }
 
 export function SignInScreen() {
-  const router = useRouter();
+  const navigate = useNavigate();
   const search = useSearchParams();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -69,8 +71,8 @@ export function SignInScreen() {
         setNeedsVerification(normalized.includes("email not confirmed"));
         return setError(authErrorMessage(result.error.message));
       }
-      router.replace(search.get("next") || "/dashboard");
-      router.refresh();
+      navigate(search.get("next") || "/dashboard");
+
     } catch {
       setError("Could not reach authentication. Check your connection and try again.");
     } finally {
@@ -108,8 +110,11 @@ export function SignInScreen() {
         options: { redirectTo: `${location.origin}/auth/callback` },
       });
       if (oauthError) setError(authErrorMessage(oauthError.message));
+      else if (provider === "google") navigate(search.get("next") || "/dashboard");
     } catch {
       setError("Could not reach authentication. Check your connection and try again.");
+    } finally {
+      setBusy(false);
     }
   }
   return (
@@ -121,7 +126,7 @@ export function SignInScreen() {
         </div>
         <label className="field-label">
           Email
-          <Input type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+          <Input type="email" autoComplete="email" required value={email} onChange={(e: any) => setEmail(e.target.value)} />
         </label>
         <label className="field-label">
           Password
@@ -131,7 +136,7 @@ export function SignInScreen() {
               autoComplete="current-password"
               required
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={(e: any) => setPassword(e.target.value)}
             />
             <button
               type="button"
@@ -139,14 +144,14 @@ export function SignInScreen() {
               aria-label="Hold to show password"
               title="Hold to show password"
               tabIndex={-1}
-              onPointerDown={(e) => {
+              onPointerDown={(e: any) => {
                 e.preventDefault();
                 setShowPassword(true);
               }}
               onPointerUp={() => setShowPassword(false)}
               onPointerLeave={() => setShowPassword(false)}
               onPointerCancel={() => setShowPassword(false)}
-              onContextMenu={(e) => e.preventDefault()}
+              onContextMenu={(e: any) => e.preventDefault()}
             >
               <Eye size={18} aria-hidden />
             </button>
@@ -172,7 +177,7 @@ export function SignInScreen() {
         </Button>
         <div className="auth-divider">or</div>
         <div className="grid-2">
-          <Button type="button" variant="secondary" onClick={() => oauth("google")}>
+          <Button type="button" variant="secondary" disabled={busy} onClick={() => { setBusy(true); void oauth("google"); }}>
             Continue with Google
           </Button>
           <Button type="button" variant="secondary" onClick={() => oauth("linkedin_oidc")}>
@@ -191,7 +196,7 @@ export function SignInScreen() {
 }
 
 export function SignUpScreen() {
-  const router = useRouter();
+  const navigate = useNavigate();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -218,8 +223,8 @@ export function SignUpScreen() {
       });
       if (result.error) return setError(authErrorMessage(result.error.message));
       if (result.data.session) {
-        router.replace("/onboarding");
-        router.refresh();
+        navigate("/onboarding");
+
         return;
       }
       setSent(true);
@@ -274,11 +279,11 @@ export function SignUpScreen() {
           <h1>Get started</h1>
           <label className="field-label">
             Full name
-            <Input required minLength={2} value={name} onChange={(e) => setName(e.target.value)} />
+            <Input required minLength={2} value={name} onChange={(e: any) => setName(e.target.value)} />
           </label>
           <label className="field-label">
             Email
-            <Input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+            <Input type="email" required value={email} onChange={(e: any) => setEmail(e.target.value)} />
           </label>
           <label className="field-label">
             Password
@@ -288,7 +293,7 @@ export function SignUpScreen() {
               required
               minLength={8}
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={(e: any) => setPassword(e.target.value)}
             />
           </label>
           <label className="field-label">
@@ -298,7 +303,7 @@ export function SignUpScreen() {
               autoComplete="new-password"
               required
               value={confirm}
-              onChange={(e) => setConfirm(e.target.value)}
+              onChange={(e: any) => setConfirm(e.target.value)}
             />
           </label>
           {error && (
@@ -337,7 +342,7 @@ export function VerifyEmailScreen() {
 }
 
 export function PasswordScreen({ reset = false }: { reset?: boolean }) {
-  const router = useRouter();
+  const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -353,8 +358,8 @@ export function PasswordScreen({ reset = false }: { reset?: boolean }) {
         if (password !== confirm) return setError("Passwords do not match.");
         const result = await authClient.auth.updateUser({ password });
         if (result.error) return setError(authErrorMessage(result.error.message));
-        router.replace("/dashboard");
-        router.refresh();
+        navigate("/dashboard");
+
       } else {
         const result = await authClient.auth.resetPasswordForEmail(email.trim(), {
           redirectTo: `${location.origin}/auth/callback?next=/reset-password`,
@@ -382,18 +387,18 @@ export function PasswordScreen({ reset = false }: { reset?: boolean }) {
                 required
                 minLength={8}
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                onChange={(e: any) => setPassword(e.target.value)}
               />
             </label>
             <label className="field-label">
               Confirm password
-              <Input type="password" required value={confirm} onChange={(e) => setConfirm(e.target.value)} />
+              <Input type="password" required value={confirm} onChange={(e: any) => setConfirm(e.target.value)} />
             </label>
           </>
         ) : (
           <label className="field-label">
             Email
-            <Input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+            <Input type="email" required value={email} onChange={(e: any) => setEmail(e.target.value)} />
           </label>
         )}
         {error && (

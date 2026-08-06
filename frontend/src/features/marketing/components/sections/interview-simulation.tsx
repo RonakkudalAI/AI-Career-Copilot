@@ -1,4 +1,3 @@
-"use client";
 
 import { ParallaxLayer } from "@/shared/ui/parallax-layer";
 import { Mic, Video, Settings, PlaySquare } from "lucide-react";

@@ -4,12 +4,18 @@ from datetime import UTC, datetime
 from difflib import SequenceMatcher
 from typing import Any
 
-from app.features.auth.service import CurrentUser
+from app.agents.providers import GroqClient, NvidiaClient
+from app.agents.registry import agents_status
+from app.api.schemas import ResumeImprovementCreate, ResumeSuggestionDecision
 from app.core.config import Settings
-from app.features.document_parsing.service import DOCX_MIME, sha256_bytes
 from app.core.errors import ApiError
-from app.agents.providers import NvidiaClient
 from app.database.repository import owned_row, write_activity
+from app.features.auth.service import CurrentUser
+from app.features.document_parsing.service import DOCX_MIME, sha256_bytes
+from app.features.resume_improvement.agents.crew import (
+    crew_capability,
+    run_resume_improvement_crew,
+)
 from app.features.resume_management.evidence import ResumeBlock, build_blocks, evidence_bundle
 from app.features.resume_management.exports import render_docx
 from app.features.resume_management.improvement_repository import (
@@ -25,13 +31,6 @@ from app.features.resume_management.improvement_repository import (
     update_run,
 )
 from app.features.resume_management.validation import is_source_stale, validate_suggestion
-from app.api.schemas import ResumeImprovementCreate, ResumeSuggestionDecision
-from app.features.resume_improvement.agents.crew import (
-    crew_capability,
-    run_resume_improvement_crew,
-)
-from app.agents.providers import GroqClient
-from app.agents.registry import agents_status
 
 
 def capabilities(settings: Settings) -> dict[str, Any]:
@@ -53,8 +52,6 @@ def capabilities(settings: Settings) -> dict[str, Any]:
         "crew": crew,
         "orchestration": "crewai_compatible_sequential",
     }
-
-
 async def generate_improvements(
     client, settings: Settings, user: CurrentUser, payload: ResumeImprovementCreate
 ) -> dict[str, Any]:
@@ -67,7 +64,6 @@ async def generate_improvements(
         )
     if sum(len(item["text"]) for item in selected) > settings.improvement_max_source_chars:
         raise ApiError(413, "improvement_source_too_large", "Select fewer or smaller resume sections.")
-
     jd = confirmed_jd(client, payload.job_description_id, user) if payload.job_description_id else None
     ats_evidence: list[dict[str, Any]] = []
     if payload.ats_analysis_id:
@@ -84,7 +80,6 @@ async def generate_improvements(
             }
             for row in ats_rows
         ]
-
     run = create_run(
         client,
         user,
@@ -110,10 +105,8 @@ async def generate_improvements(
             else None
         )
         context["ats_evidence"] = ats_evidence
-        # Full evidence blocks for the crew validator (ids must match model citations).
         from dataclasses import asdict
         context["_blocks"] = [asdict(b) for b in blocks]
-        # CrewAI-compatible sequential multi-agent run (gap → generate → validate).
         result, crew_audit = await run_resume_improvement_crew(
             settings,
             context,
@@ -123,7 +116,6 @@ async def generate_improvements(
         block_map = {block.block_id: block for block in blocks}
         stored: list[dict[str, Any]] = []
         blocked = 0
-        # Final gate: same validator as before (crew already filtered; this is belt-and-suspenders).
         for suggestion in result.suggestions:
             validation = validate_suggestion(suggestion, block_map, set(payload.section_keys))
             if validation.status == "blocked":
@@ -198,8 +190,6 @@ async def generate_improvements(
         raise ApiError(
             500, "improvement_failed", "The resume improvement request could not be completed."
         ) from exc
-
-
 def decide_suggestion(
     client, user: CurrentUser, suggestion_id: str, payload: ResumeSuggestionDecision
 ) -> dict[str, Any]:
@@ -223,8 +213,6 @@ def decide_suggestion(
         .execute()
         .data[0]
     )
-
-
 def _replace_block(structured: dict[str, Any], block: ResumeBlock, value: str) -> None:
     section = (structured.get("sections") or {}).get(block.section_key)
     if not isinstance(section, list):
@@ -233,26 +221,20 @@ def _replace_block(structured: dict[str, Any], block: ResumeBlock, value: str) -
     if index < 0 or index >= len(section):
         raise ApiError(409, "stale_resume_version", "The resume structure changed. Regenerate suggestions.")
     section[index] = value
-
-
 def _plain_text(structured: dict[str, Any]) -> str:
     values = [str(item) for item in structured.get("unclassified_blocks") or []]
     for section, lines in (structured.get("sections") or {}).items():
         values.append(str(section).replace("_", " ").title())
         values.extend(str(line) for line in lines if str(line).strip())
     return "\n".join(values).strip()
-
-
 def _merge_structured_preserve_identity(
     source: dict[str, Any], incoming: dict[str, Any]
 ) -> dict[str, Any]:
-    """Merge edits into the existing resume structure without dropping unknown sections."""
     if not isinstance(incoming.get("sections"), dict):
         raise ApiError(422, "invalid_resume_structure", "The resume must contain structured sections.")
     source_sections = source.get("sections") if isinstance(source.get("sections"), dict) else {}
     incoming_sections = incoming.get("sections") or {}
     merged_sections: dict[str, Any] = {}
-    # Keep original section order where possible, then any new keys the editor added.
     for key in list(source_sections.keys()) + [
         k for k in incoming_sections.keys() if k not in source_sections
     ]:
@@ -260,11 +242,9 @@ def _merge_structured_preserve_identity(
             value = incoming_sections[key]
             lines = [str(item).strip() for item in value] if isinstance(value, list) else [str(value).strip()]
             lines = [line for line in lines if line]
-            # Explicit empty list = user cleared this section on the existing resume.
             if lines:
                 merged_sections[key] = lines
         elif key in source_sections:
-            # Section not present in the payload at all → preserve original identity.
             merged_sections[key] = source_sections[key]
     unclassified = incoming.get("unclassified_blocks")
     if not isinstance(unclassified, list):
@@ -278,8 +258,6 @@ def _merge_structured_preserve_identity(
         "unclassified_blocks": unclassified,
         "warnings": source.get("warnings") or [],
     }
-
-
 def update_existing_resume_content(
     client,
     user: CurrentUser,
@@ -289,12 +267,6 @@ def update_existing_resume_content(
     change_metadata: dict[str, Any] | None = None,
     improvement_run_id: str | None = None,
 ) -> dict[str, Any]:
-    """Patch the same resume version in place (same resume_id + same version id).
-
-    Does not create a new resume or a new version row. Keeps original_filename and
-    storage_path so the candidate's uploaded document identity is preserved; ATS and
-    exports read plain_text / structured_content.
-    """
     source = confirmed_version(client, source_version_id, user)
     merged = _merge_structured_preserve_identity(source.get("structured_content") or {}, structured_content)
     if merged == (source.get("structured_content") or {}):
@@ -340,8 +312,6 @@ def update_existing_resume_content(
         record["id"],
     )
     return record
-
-
 def apply_suggestions(
     client,
     settings: Settings,
@@ -384,7 +354,6 @@ def apply_suggestions(
             else suggestion["suggested_text"]
         )
         _replace_block(updated, block, replacement)
-
     applied_meta = {
         "applied_suggestion_ids": [item["id"] for item in suggestions],
         "candidate_confirmed_edit_ids": [
@@ -392,7 +361,6 @@ def apply_suggestions(
         ],
         "improvement_run_id": run_id,
     }
-
     if apply_mode != "new_version":
         record = update_existing_resume_content(
             client,
@@ -407,7 +375,6 @@ def apply_suggestions(
             "applied_suggestion_ids": [item["id"] for item in suggestions],
             "apply_mode": "in_place",
         }
-
     count = (
         client.table("resume_versions")
         .select("id", count="exact", head=True)
@@ -471,8 +438,6 @@ def apply_suggestions(
         "applied_suggestion_ids": [item["id"] for item in suggestions],
         "apply_mode": "new_version",
     }
-
-
 def compare_versions(client, user: CurrentUser, left_id: str, right_id: str) -> dict[str, Any]:
     left = owned_row(client, "resume_versions", left_id, user)
     right = owned_row(client, "resume_versions", right_id, user)

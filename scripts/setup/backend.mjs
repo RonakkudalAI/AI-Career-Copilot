@@ -36,6 +36,10 @@ function probePython(command, argsPrefix = []) {
   }
 }
 
+function normalizePath(value) {
+  return String(value).trim().replace(/^['"]+|['"]+$/g, "");
+}
+
 function isSupported(info) {
   if (!info) return false;
   // Official crewai: >=3.10,<3.14. Project requires >=3.11.
@@ -47,7 +51,7 @@ function findPython() {
 
   // Explicit env override (recommended for CI / multi-Python machines)
   if (process.env.CAREER_COPILOT_PYTHON) {
-    candidates.push(probePython(process.env.CAREER_COPILOT_PYTHON));
+    candidates.push(probePython(normalizePath(process.env.CAREER_COPILOT_PYTHON)));
   }
 
   if (isWin) {
@@ -80,13 +84,13 @@ function findPython() {
   return null;
 }
 
-console.log("Career Copilot backend setup: selecting Python 3.11–3.13 …");
+console.log("Career Copilot backend setup: selecting Python 3.11–3.14 …");
 const selected = findPython();
 if (!selected) {
   console.error(`
-No suitable Python found (need 3.11, 3.12, or 3.13).
+No suitable Python found (need 3.11, 3.12, 3.13, or 3.14).
 
-Python 3.14+ is not supported for this project (CrewAI and several wheels require <3.14).
+Python 3.15+ is not supported for this project.
 
 Install Python 3.12, then re-run:
   winget install Python.Python.3.12
@@ -101,15 +105,33 @@ console.log(`Using Python ${selected.version}: ${selected.executable}`);
 
 // Recreate venv if missing or built with unsupported / wrong version
 const current = existsSync(venvPython) ? probePython(venvPython) : null;
+const pipCheck = current
+  ? spawnSync(venvPython, ["-m", "pip", "--version"], { stdio: "ignore", shell: false }).status === 0
+  : false;
+const runtimeCheck = current
+  ? spawnSync(
+      venvPython,
+      ["-c", "import dotenv, docx, firebase_admin, fastapi, jwt, pydantic_settings, pypdf, reportlab"],
+      { stdio: "ignore", shell: false },
+    ).status === 0
+  : false;
 const needsRecreate =
   !current ||
   !isSupported(current) ||
+  !pipCheck ||
+  !runtimeCheck ||
   process.env.CAREER_COPILOT_RECREATE_VENV === "1";
 
 if (needsRecreate) {
   if (existsSync(venvDir)) {
     console.log("Removing existing backend/.venv …");
-    rmSync(venvDir, { recursive: true, force: true });
+    try {
+      rmSync(venvDir, { recursive: true, force: true });
+    } catch (error) {
+      console.error("The existing backend/.venv is incomplete but cannot be removed. Close processes using it and retry.");
+      console.error(error instanceof Error ? error.message : String(error));
+      process.exit(1);
+    }
   }
   console.log("Creating backend/.venv …");
   const created = run(selected.executable, ["-m", "venv", venvDir]);
@@ -124,18 +146,35 @@ if (needsRecreate) {
   );
 }
 
-// Ensure pip is recent enough
-run(venvPython, ["-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"]);
+// Some Windows Python installations create pip launchers without installing
+// the pip module. Bootstrap it explicitly before any package command.
+const pipBootstrap = run(venvPython, ["-m", "ensurepip", "--upgrade"]);
+if (pipBootstrap !== 0) {
+  console.error("Backend virtual environment initialization failed: Python could not bootstrap pip.");
+  process.exit(pipBootstrap);
+}
+
+// Ensure pip is recent enough and fail clearly if the venv is still incomplete.
+const pipUpgrade = run(venvPython, ["-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"]);
+if (pipUpgrade !== 0) {
+  console.error("Backend virtual environment initialization failed: pip could not be installed or upgraded.");
+  process.exit(pipUpgrade);
+}
+
+const dotenvRepair = run(venvPython, ["-m", "pip", "install", "--upgrade", "--force-reinstall", "python-dotenv>=1.0,<2"]);
+if (dotenvRepair !== 0) {
+  console.error("Backend virtual environment initialization failed: python-dotenv could not be installed.");
+  process.exit(dotenvRepair);
+}
 
 // Install API package + optional CrewAI (supported on 3.11–3.13)
-console.log("Installing backend package + crewai extra …");
-const installStatus = run(venvPython, ["-m", "pip", "install", "-e", "backend[crewai]"]);
+console.log("Installing backend package + development and crewai extras …");
+const installStatus = run(venvPython, ["-m", "pip", "install", "-e", "backend[dev,crewai]"]);
 if (installStatus !== 0) {
-  console.warn("Install with [crewai] failed; installing core package only …");
-  const core = run(venvPython, ["-m", "pip", "install", "-e", "backend"]);
-  if (core !== 0) process.exit(core);
+  console.warn("Install with [dev,crewai] failed; installing package with development dependencies …");
+  const development = run(venvPython, ["-m", "pip", "install", "-e", "backend[dev]"]);
+  if (development !== 0) process.exit(development);
   console.warn("Core backend installed. CrewAI extra unavailable; compatible orchestrator still works.");
-  process.exit(0);
 }
 
 // Quick import smoke (no network)

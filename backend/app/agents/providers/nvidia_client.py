@@ -1,4 +1,3 @@
-"""NVIDIA Integrate API client (OpenAI-compatible chat completions)."""
 
 from __future__ import annotations
 
@@ -16,21 +15,17 @@ from app.agents.providers.common import (
     provider_error_detail,
     strip_json_fence,
 )
+from app.agents.providers.rate_limit import provider_rpm_limiter
+from app.api.schemas import ProviderSuggestionResult
 from app.core.config import Settings
 from app.core.errors import ApiError
-from app.api.schemas import ProviderSuggestionResult
 
 TRANSIENT_STATUS = {408, 429, 500, 502, 503, 504}
-
-# agents/prompts — shared by all agents
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
-
-
 class NvidiaClient:
     def __init__(self, settings: Settings, transport: httpx.AsyncBaseTransport | None = None):
         self.settings = settings
         self.transport = transport
-
     def capability(self) -> dict[str, Any]:
         return {
             "configured": self.settings.nvidia_configured,
@@ -39,7 +34,6 @@ class NvidiaClient:
             "base_url": self.settings.nvidia_base_url or None,
             "provider": "nvidia",
         }
-
     async def generate(self, context: dict[str, Any]) -> ProviderSuggestionResult:
         if not self.settings.nvidia_configured:
             raise ApiError(
@@ -91,14 +85,11 @@ class NvidiaClient:
                     "invalid_provider_response",
                     "The AI provider returned an invalid structured response.",
                 ) from exc
-
     def _parse(self, content: str) -> ProviderSuggestionResult:
         data = parse_json_object(content)
         return ProviderSuggestionResult.model_validate(data)
-
     def _strip_json_fence(self, content: str) -> str:
         return strip_json_fence(content)
-
     async def generate_structured(
         self,
         *,
@@ -108,7 +99,6 @@ class NvidiaClient:
         temperature: float | None = None,
         allow_repair: bool = True,
     ) -> Any:
-        """Call NVIDIA chat/completions and validate JSON against a Pydantic model."""
         if not self.settings.nvidia_configured:
             raise ApiError(
                 503,
@@ -132,16 +122,17 @@ class NvidiaClient:
                 },
             ],
         }
+        repair_allowed = allow_repair and bool(getattr(self.settings, "llm_allow_repair", True))
         raw = await self._request(payload)
         try:
             return schema_model.model_validate(parse_json_object(raw))
         except (json.JSONDecodeError, ValidationError, TypeError, ValueError):
-            if not allow_repair:
+            if not repair_allowed:
                 raise ApiError(
                     502,
                     "invalid_provider_response",
                     "The AI provider returned an invalid structured response.",
-                )
+                ) from None
             repair_prompt = (PROMPTS_DIR / "repair_structured_output_v1.txt").read_text(encoding="utf-8")
             repair_payload = {
                 **payload,
@@ -165,7 +156,6 @@ class NvidiaClient:
                     "invalid_provider_response",
                     "The AI provider returned an invalid structured response.",
                 ) from exc
-
     async def _request(self, payload: dict[str, Any]) -> str:
         headers = {
             "Authorization": f"Bearer {self.settings.nvidia_api_key}",
@@ -173,8 +163,10 @@ class NvidiaClient:
         }
         timeout = httpx.Timeout(self.settings.nvidia_timeout_seconds)
         attempts = self.settings.nvidia_max_retries + 1
+        limiter = await provider_rpm_limiter("nvidia", self.settings.llm_rpm_limit)
         async with httpx.AsyncClient(timeout=timeout, transport=self.transport) as client:
             for attempt in range(attempts):
+                await limiter.acquire()
                 try:
                     response = await client.post(
                         f"{self.settings.nvidia_base_url.rstrip('/')}/chat/completions",

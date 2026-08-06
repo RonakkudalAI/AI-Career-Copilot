@@ -1,13 +1,13 @@
-"""
-CrewAI-compatible multi-agent orchestration for Career Copilot.
 
-- Official `crewai` PyPI package requires Python <3.14; when unavailable we use
-  the built-in sequential orchestrator (same Agent/Task process model).
-- All tools are truth-bound wrappers around existing agents/validators.
-"""
-
-from app.features.resume_improvement.agents.crew.compat import crew_runtime_mode, official_crewai_installed, try_import_crewai
-from app.features.resume_improvement.agents.crew.orchestrator import crew_capability, run_resume_improvement_crew
+from app.features.resume_improvement.agents.crew.compat import (
+    crew_runtime_mode,
+    official_crewai_installed,
+    try_import_crewai,
+)
+from app.features.resume_improvement.agents.crew.orchestrator import (
+    crew_capability,
+    run_resume_improvement_crew,
+)
 
 __all__ = [
     "crew_capability",

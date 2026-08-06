@@ -1,9 +1,9 @@
-import { existsSync, readFileSync } from "node:fs";
+﻿import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /**
- * Load the repository-root .env for scripts that run outside Next.js.
+ * Load the repository-root .env for scripts that run outside Vite.
  * Explicit process environment values win over values from the file.
  */
 export function loadRootEnv() {

@@ -8,14 +8,7 @@ from app.features.document_parsing.source_blocks import SourceBlock
 
 def _normalise(value: str) -> str:
     return re.sub(r"\s+", " ", (value or "").casefold()).strip()
-
-
 def evidence_block_ids(value: str, blocks: Iterable[SourceBlock]) -> list[str]:
-    """
-    Return source blocks that fully contain the value (normalized whitespace).
-
-    Fuzzy token overlap is intentionally NOT used — values must be source quotes.
-    """
     needle = _normalise(value)
     if not needle:
         return []
@@ -27,19 +20,14 @@ def evidence_block_ids(value: str, blocks: Iterable[SourceBlock]) -> list[str]:
         if needle in haystack:
             matched.append(block.block_id)
             continue
-        # Multi-line values: every non-empty line must appear in some block text.
         lines = [ln for ln in (_normalise(part) for part in value.splitlines()) if ln]
         if len(lines) > 1 and all(any(ln in _normalise(b.text) for b in blocks) for ln in lines):
-            # Attach only blocks that contain at least one of those lines.
             if any(ln in haystack for ln in lines):
                 matched.append(block.block_id)
     return matched
-
-
 def ground_sections(
     sections: dict[str, list[str]], blocks: list[SourceBlock]
 ) -> tuple[dict[str, list[str]], dict[str, list[list[str]]], list[str]]:
-    """Drop unsupported section values and attach block IDs for retained values."""
     grounded: dict[str, list[str]] = {}
     evidence: dict[str, list[list[str]]] = {}
     warnings: list[str] = []

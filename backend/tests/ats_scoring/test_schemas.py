@@ -1,6 +1,6 @@
 import unittest
 
-from app.features.ats.scoring.schemas import GateResult, PARAMETER_KEYS, ScoreResult
+from app.features.ats.scoring.schemas import PARAMETER_KEYS, GateResult, ScoreResult
 
 
 class ScoreSchemaTests(unittest.TestCase):
@@ -12,7 +12,6 @@ class ScoreSchemaTests(unittest.TestCase):
                 composite_score=90,
                 reasons={"hard_skill_match": "matched"},
             )
-
     def test_rejected_candidate_must_have_zero_score(self):
         with self.assertRaises(ValueError):
             ScoreResult(

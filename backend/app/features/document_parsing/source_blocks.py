@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from typing import Literal, Sequence
+from collections.abc import Sequence
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 BlockType = Literal[
@@ -14,19 +16,8 @@ BlockType = Literal[
     "code_block",
     "unclassified",
 ]
-
-
 class SourceBlock(BaseModel):
-    """
-    Stable, deterministic source block representation of a document fragment.
-
-    Guarantees:
-    - Block ID format: page-{page}-block-{order:02d}
-    - 1-indexed page and order tracking
-    - Immutability and serializability
-    """
     model_config = ConfigDict(frozen=True, extra="forbid")
-
     block_id: str = Field(
         ...,
         description="Deterministic block identifier, e.g., 'page-1-block-07'.",
@@ -58,7 +49,6 @@ class SourceBlock(BaseModel):
         default=None,
         description="[x0, y0, x1, y1] coordinates in PDF points (72 dpi). None for DOCX.",
     )
-
     @classmethod
     def create(
         cls,
@@ -69,7 +59,6 @@ class SourceBlock(BaseModel):
         heading_context: str | None = None,
         bounding_box: tuple[float, float, float, float] | Sequence[float] | None = None,
     ) -> SourceBlock:
-        """Helper to create a SourceBlock with deterministic ID formatting."""
         formatted_id = f"page-{page}-block-{order:02d}"
         bbox_tuple: tuple[float, float, float, float] | None = None
         if bounding_box is not None:
@@ -90,29 +79,18 @@ class SourceBlock(BaseModel):
             heading_context=heading_context.strip() if heading_context else None,
             bounding_box=bbox_tuple,
         )
-
-
 class SourceBlockCollection(BaseModel):
-    """Collection wrapper providing indexing, lookup, and validation methods."""
     blocks: list[SourceBlock] = Field(default_factory=list)
-
     def get_by_id(self, block_id: str) -> SourceBlock | None:
-        """Lookup block by deterministic ID."""
         for b in self.blocks:
             if b.block_id == block_id:
                 return b
         return None
-
     def get_by_page(self, page: int) -> list[SourceBlock]:
-        """Get all blocks on a specific page sorted by order."""
         return [b for b in self.blocks if b.page == page]
-
     def total_character_count(self) -> int:
-        """Return total character count across all blocks."""
         return sum(len(b.text) for b in self.blocks)
-
     def text_density_per_page(self) -> dict[int, int]:
-        """Map page number to character count."""
         density: dict[int, int] = {}
         for b in self.blocks:
             density[b.page] = density.get(b.page, 0) + len(b.text)

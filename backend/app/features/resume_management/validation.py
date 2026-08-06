@@ -1,8 +1,8 @@
 import re
 from dataclasses import dataclass
 
-from app.features.resume_management.evidence import ResumeBlock, normalize_text, source_hash
 from app.api.schemas import ProviderSuggestion
+from app.features.resume_management.evidence import ResumeBlock, normalize_text, source_hash
 
 NUMBER_PATTERN = re.compile(r"(?<!\w)(?:\d+(?:\.\d+)?%?|(?:19|20)\d{2})(?!\w)")
 CONTACT_PATTERN = re.compile(r"https?://\S+|[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}|\+?\d[\d ()-]{7,}\d")
@@ -24,19 +24,13 @@ COMMON_CAPITALIZED = {
     "Used",
     "Worked",
 }
-
-
 @dataclass(frozen=True)
 class ValidationResult:
     status: str
     issues: list[str]
     source_hash: str
-
-
 def _tokens(value: str) -> set[str]:
     return {token.casefold() for token in re.findall(r"[A-Za-z][A-Za-z0-9.+#-]*", value)}
-
-
 def validate_suggestion(
     suggestion: ProviderSuggestion,
     blocks: dict[str, ResumeBlock],
@@ -53,7 +47,6 @@ def validate_suggestion(
         issues.append("unsupported_section")
     if suggestion.section_key in {"contact", "links"} or CONTACT_PATTERN.search(suggestion.proposed_text):
         issues.append("contact_change_blocked")
-
     cited = [blocks[reference] for reference in suggestion.evidence_references if reference in blocks]
     if len(cited) != len(set(suggestion.evidence_references)) or not cited:
         issues.append("unsupported_evidence_reference")
@@ -62,7 +55,6 @@ def validate_suggestion(
     unsupported_numbers = set(NUMBER_PATTERN.findall(suggestion.proposed_text)) - evidence_numbers
     if unsupported_numbers:
         issues.append("unsupported_number_or_date")
-
     evidence_entities = set(PROPER_TOKEN_PATTERN.findall(evidence_text))
     proposed_entities = set(PROPER_TOKEN_PATTERN.findall(suggestion.proposed_text)) - COMMON_CAPITALIZED
     first_word = re.match(r"\s*([A-Z][\w.+#-]*)", suggestion.proposed_text)
@@ -70,7 +62,6 @@ def validate_suggestion(
         proposed_entities.discard(first_word.group(1))
     if proposed_entities - evidence_entities:
         issues.append("unsupported_entity_or_skill")
-
     source_tokens = _tokens(block.text)
     proposed_tokens = _tokens(suggestion.proposed_text)
     overlap = len(source_tokens & proposed_tokens) / max(1, len(source_tokens))
@@ -78,7 +69,6 @@ def validate_suggestion(
         issues.append("meaning_change_risk")
     if len(suggestion.proposed_text) > max(400, len(block.text) * 3):
         issues.append("excessive_rewrite")
-
     blocking = {
         "source_text_mismatch",
         "unsupported_section",
@@ -91,7 +81,5 @@ def validate_suggestion(
     }
     status = "blocked" if any(issue in blocking for issue in issues) else ("warning" if issues else "passed")
     return ValidationResult(status, issues, current_hash)
-
-
 def is_source_stale(expected_hash: str, current_text: str) -> bool:
     return expected_hash != source_hash(current_text)

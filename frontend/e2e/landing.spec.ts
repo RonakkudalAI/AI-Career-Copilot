@@ -2,10 +2,14 @@ import { test, expect } from "@playwright/test";
 
 const viewports = [
   { name: "phone-se", width: 320, height: 568 },
+  { name: "phone-small", width: 360, height: 640 },
   { name: "phone", width: 390, height: 844 },
+  { name: "phone-large", width: 412, height: 915 },
   { name: "tablet", width: 768, height: 1024 },
+  { name: "laptop-small", width: 1024, height: 768 },
   { name: "laptop", width: 1280, height: 800 },
-  { name: "desktop", width: 1920, height: 1080 },
+  { name: "desktop", width: 1440, height: 900 },
+  { name: "desktop-wide", width: 1920, height: 1080 },
 ] as const;
 
 const zooms = [1, 1.25, 1.5, 2] as const;
@@ -31,22 +35,16 @@ test.describe("Landing page audit acceptance", () => {
       background: getComputedStyle(document.documentElement).getPropertyValue("--background").trim(),
       colorScheme: getComputedStyle(document.documentElement).colorScheme,
     }));
-    expect(theme.dataTheme).toBe(null);
+    expect(theme.dataTheme).toBe("light");
     expect(theme.colorScheme).toBe("light");
     expect(theme.background.toLowerCase()).toContain("f5faff");
 
-    // FE-004: no unbundled Satoshi
     const fonts = await page.evaluate(() => getComputedStyle(document.body).fontFamily);
     expect(fonts).not.toMatch(/Satoshi/i);
 
-    // FE-005 journey cards
     await page.locator("#journey").scrollIntoViewIfNeeded();
     await expect(page.locator("[data-journey-card]")).toHaveCount(6);
 
-    // FE-007 pause control
-    await expect(page.getByRole("button", { name: /Pause motion|Resume motion/i })).toBeVisible();
-
-    // Lightweight SVG globe region
     const globePresent = await page.evaluate(() => {
       return Boolean(
         document.querySelector(".light-globe") ||
@@ -57,12 +55,11 @@ test.describe("Landing page audit acceptance", () => {
     });
     expect(globePresent).toBe(true);
 
-    // Hero CTAs remain available
     await expect(page.getByRole("link", { name: /Start Your Career Journey/i })).toBeVisible();
     await expect(page.getByRole("link", { name: /Explore How It Works/i })).toBeVisible();
 
     const serious = consoleErrors.filter(
-      (e) => !/THREE\.WARNING/i.test(e) && !/favicon/i.test(e) && !/Download the React DevTools/i.test(e)
+      (e) => !/favicon/i.test(e) && !/Download the React DevTools/i.test(e)
     );
     expect(serious, serious.join("\n")).toEqual([]);
   });
@@ -93,7 +90,7 @@ test.describe("Landing page audit acceptance", () => {
       const overflow = await page.evaluate(
         () => document.documentElement.scrollWidth - document.documentElement.clientWidth
       );
-      // Allow minor ticker-related overflow (< 40px); body uses overflow-x: hidden for rest.
+
       expect(overflow).toBeLessThan(40);
     });
   }

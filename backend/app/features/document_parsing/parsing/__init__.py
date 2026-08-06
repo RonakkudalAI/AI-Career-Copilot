@@ -1,9 +1,3 @@
-"""
-Source-true document parsing (resume + JD).
-
-Prefer LLM segregation when configured; structural layout is the offline fallback.
-No invented content: retained segments must appear in the source text.
-"""
 
 from app.features.document_parsing.parsing.llm_sections import extract_sections_enriched
 from app.features.document_parsing.parsing.sections import (

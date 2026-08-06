@@ -1,7 +1,5 @@
-/**
- * Real-browser validation of the marketing landing page.
- * Usage: node scripts/validate-landing.mjs [baseUrl]
- */
+
+
 import { chromium } from "@playwright/test";
 
 const defaultPort = process.env.FRONTEND_PORT || process.env.PORT || "3000";
@@ -30,7 +28,7 @@ function fail(name, detail = "") {
 async function main() {
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({
-    colorScheme: "dark", // exercise FE-002 under dark system preference
+    colorScheme: "dark",
   });
   const page = await context.newPage();
   const consoleErrors = [];
@@ -39,7 +37,6 @@ async function main() {
   });
   page.on("pageerror", (err) => consoleErrors.push(String(err)));
 
-  // --- Load ---
   const response = await page.goto(baseUrl, { waitUntil: "networkidle", timeout: 60000 });
   if (!response || !response.ok()) {
     fail("page-load", `status=${response?.status()}`);
@@ -47,7 +44,6 @@ async function main() {
     pass("page-load", `status=${response.status()}`);
   }
 
-  // --- FE-004: no Satoshi font claim without bundle ---
   const fontFamilies = await page.evaluate(() => {
     const body = getComputedStyle(document.body).fontFamily;
     const root = getComputedStyle(document.documentElement);
@@ -62,7 +58,6 @@ async function main() {
     pass("FE-004-font", fontFamilies.body.slice(0, 80));
   }
 
-  // --- FE-002 / FE-003: explicit light under dark system preference ---
   await page.evaluate(() => {
     localStorage.setItem("career-copilot-theme", "light");
     document.documentElement.setAttribute("data-theme", "light");
@@ -80,21 +75,20 @@ async function main() {
     };
   });
   if (themeState.dataTheme === "light" && themeState.stored === "light") {
-    // Light palette backgrounds are pale (#f5faff family)
+
     const bg = themeState.background.toLowerCase();
     if (bg.includes("f5faff") || bg.includes("245") || bg.startsWith("#f") || bg.includes("rgb(245")) {
       pass("FE-002-light-under-dark-system", JSON.stringify(themeState));
     } else if (themeState.colorScheme === "light") {
       pass("FE-002-light-under-dark-system", `color-scheme=light bg=${themeState.background}`);
     } else {
-      // Still check ink is dark-ish for light theme
+
       pass("FE-002-light-under-dark-system", `data-theme=light persisted; tokens=${JSON.stringify(themeState)}`);
     }
   } else {
     fail("FE-002-light-under-dark-system", JSON.stringify(themeState));
   }
 
-  // Cycle theme via UI and verify persistence
   const themeBtn = page.getByRole("button", { name: /Theme:/i }).first();
   if (await themeBtn.count()) {
     await themeBtn.click();
@@ -112,7 +106,6 @@ async function main() {
     fail("FE-003-theme-persist", "theme toggle button not found");
   }
 
-  // --- FE-008 labelling ---
   const bodyText = await page.locator("body").innerText();
   if (/Illustrative global roles/i.test(bodyText)) {
     pass("FE-008-labelling", "found illustrative wording");
@@ -125,7 +118,6 @@ async function main() {
     pass("FE-008-no-verified-claim");
   }
 
-  // --- FE-007: pause control present ---
   const pause = page.getByRole("button", { name: /Pause motion|Resume motion/i });
   if ((await pause.count()) > 0) {
     pass("FE-007-pause-control");
@@ -133,7 +125,6 @@ async function main() {
     fail("FE-007-pause-control");
   }
 
-  // --- FE-005: journey cards have stable attributes ---
   await page.locator("#journey").scrollIntoViewIfNeeded();
   const cardCount = await page.locator("[data-journey-card]").count();
   if (cardCount >= 6) {
@@ -142,7 +133,6 @@ async function main() {
     fail("FE-005-journey-cards", `count=${cardCount}`);
   }
 
-  // --- FE-001 / WebGL: globe region present ---
   await page.locator(".landing-hero").scrollIntoViewIfNeeded();
   const globeOk = await page.evaluate(() => {
     const canvas = document.querySelector("canvas");
@@ -156,7 +146,6 @@ async function main() {
     fail("FE-001-globe-region", "no globe UI found");
   }
 
-  // --- FE-006: mobile nav dialog ---
   await page.setViewportSize({ width: 390, height: 844 });
   await page.reload({ waitUntil: "networkidle" });
   const openNav = page.getByRole("button", { name: /Open navigation/i });
@@ -180,7 +169,6 @@ async function main() {
     fail("FE-006-mobile-nav", "open navigation button not visible at 390px");
   }
 
-  // --- Multi-viewport smoke ---
   for (const vp of viewports) {
     await page.setViewportSize({ width: vp.width, height: vp.height });
     await page.goto(baseUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
@@ -191,7 +179,7 @@ async function main() {
     if (h1 && !overflowX) {
       pass(`viewport-${vp.name}`, `${vp.width}x${vp.height}`);
     } else if (h1) {
-      // mild horizontal overflow can happen with ticker; note but don't hard-fail if small
+
       const overflowPx = await page.evaluate(
         () => document.documentElement.scrollWidth - document.documentElement.clientWidth
       );
@@ -205,7 +193,6 @@ async function main() {
     }
   }
 
-  // --- Zoom levels 125% / 150% / 200% ---
   await page.setViewportSize({ width: 1280, height: 800 });
   for (const zoom of [1.25, 1.5, 2]) {
     await page.goto(baseUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
@@ -224,7 +211,6 @@ async function main() {
     document.documentElement.style.zoom = "";
   });
 
-  // --- Network / a11y smoke ---
   const failedRequests = [];
   page.on("requestfailed", (req) => failedRequests.push(`${req.method()} ${req.url()} ${req.failure()?.errorText}`));
   await page.goto(baseUrl, { waitUntil: "networkidle", timeout: 60000 });
@@ -252,7 +238,6 @@ async function main() {
     fail("a11y-smoke", JSON.stringify(a11ySmoke));
   }
 
-  // WebGL probe (informational path — either canvas or fallback is acceptable)
   const webglPath = await page.evaluate(() => {
     const canvas = document.querySelector("canvas");
     let webgl = false;
@@ -277,7 +262,6 @@ async function main() {
     fail("webgl-or-fallback", JSON.stringify(webglPath));
   }
 
-  // --- Console errors (filter known noisy 3D warnings if any) ---
   const serious = consoleErrors.filter(
     (e) =>
       !/THREE\.WARNING/i.test(e) &&

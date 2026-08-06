@@ -1,9 +1,3 @@
-"""
-Mock interview question generation via Groq.
-
-This is a dedicated Groq task. It does not use NVIDIA and is not a fallback for
-resume improvement or profile-fill agents.
-"""
 
 from __future__ import annotations
 
@@ -18,24 +12,15 @@ from app.core.config import Settings
 from app.core.errors import ApiError
 
 logger = logging.getLogger(__name__)
-# Prompts are shared provider assets, not feature-local files.  Resolving from
-# ``app`` keeps this path stable when the feature package is reorganized.
 _PROMPT_PATH = Path(__file__).resolve().parents[3] / "agents" / "prompts" / "interview_questions_v1.txt"
-
-
 class InterviewQuestionItem(BaseModel):
     model_config = ConfigDict(extra="ignore")
     question: str = Field(min_length=8, max_length=800)
     question_type: str | None = Field(default=None, max_length=80)
-
-
 class InterviewQuestionsResult(BaseModel):
     model_config = ConfigDict(extra="ignore")
     questions: list[InterviewQuestionItem] = Field(min_length=1, max_length=20)
-
-
 def _template_questions(mode: str, count: int, target_role: str | None) -> list[dict[str, str]]:
-    """Deterministic templates if Groq is unavailable."""
     role = (target_role or "this role").strip() or "this role"
     bank = {
         "behavioural": [
@@ -70,8 +55,6 @@ def _template_questions(mode: str, count: int, target_role: str | None) -> list[
     pool = bank.get(mode, bank["mixed"])
     selected = [pool[i % len(pool)] for i in range(max(1, min(count, 20)))]
     return [{"question": q, "question_type": t} for q, t in selected]
-
-
 async def generate_interview_questions(
     settings: Settings,
     *,
@@ -82,13 +65,8 @@ async def generate_interview_questions(
     difficulty: str | None = None,
     topic: str | None = None,
 ) -> dict[str, Any]:
-    """
-    Generate interview questions.
-    Primary: Groq structured JSON. Fallback: local templates (not NVIDIA).
-    """
     count = max(1, min(int(count or 3), 20))
     mode = (mode or "mixed").strip().lower()
-
     fallback_reason: str | None = None
     if settings.groq_configured:
         try:
@@ -132,7 +110,6 @@ async def generate_interview_questions(
             logger.warning("groq_interview_questions_failed error=%s", exc)
     else:
         fallback_reason = "groq_not_configured"
-
     return {
         "questions": _template_questions(mode, count, target_role),
         "provider": "template",

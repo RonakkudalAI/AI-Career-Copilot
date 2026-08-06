@@ -1,8 +1,8 @@
-/* Demo data mirrors loosely typed API payloads without changing production contracts. */
-/* eslint-disable @typescript-eslint/no-explicit-any */
+
+
 import { isDemoCookiePresent } from "@/shared/config";
 
-type DemoRecord = Record<string, any>;
+type DemoRecord = Record<string, unknown>;
 
 type DemoState = {
   profile: DemoRecord;
@@ -152,19 +152,23 @@ function bootstrap() {
       saved_jobs: state.savedJobs.length,
     },
     workspace: {
-      profile_completion: state.profile.profile_completion || 0,
-      profile_missing: state.profile.profile_completion_details?.missing || [],
+      profile_completion: Number(state.profile.profile_completion || 0),
+      profile_missing:
+        ((state.profile.profile_completion_details as { missing?: Array<{ key: string; label: string }> } | undefined)
+          ?.missing) || [],
       profile_completion_details: state.profile.profile_completion_details || {},
       has_active_resume: Boolean(activeResume),
       has_confirmed_resume: state.resumeVersions.some((version) => version.extraction_status === "confirmed"),
       failed_ats_count: 0,
-      ready_for_ats: state.resumeVersions.some((version) => version.extraction_status === "confirmed") && state.jobDescriptions.length > 0,
+      ready_for_ats:
+        state.resumeVersions.some((version) => version.extraction_status === "confirmed") &&
+        state.jobDescriptions.some((jd) => jd.extraction_status === "confirmed"),
     },
   };
 }
 
 function resumeVersion(resumeId: string) {
-  return state.resumeVersions.find((version) => version.resume_id === resumeId) || null;
+  return state.resumeVersions.find((version) => String(version.resume_id || "") === resumeId) || null;
 }
 
 function parsePath(path: string) {
@@ -229,7 +233,10 @@ export async function demoApiRequest<T>(path: string, init: RequestInit = {}): P
     return { suggested: state.skills.map((skill) => skill.name), created: [], created_count: 0, profile_completion: state.profile.profile_completion } as T;
   }
   if (parts[0] === "resumes" && parts.length === 1 && method === "GET") {
-    return state.resumes.map((resume) => ({ ...resume, latest_version: resumeVersion(resume.id) })) as T;
+    return state.resumes.map((resume) => ({
+      ...resume,
+      latest_version: resumeVersion(String(resume.id || "")),
+    })) as T;
   }
   if (parts[0] === "resumes" && parts.length === 1 && method === "POST") {
     const form = init.body instanceof FormData ? init.body : null;
@@ -237,7 +244,7 @@ export async function demoApiRequest<T>(path: string, init: RequestInit = {}): P
     const resumeId = id("demo-resume");
     const versionId = id("demo-version");
     const resume = { id: resumeId, user_id: DEMO_USER_ID, title: file?.name ? `${file.name} demo` : "Demo resume", is_active: state.resumes.length === 0, created_at: now() };
-    const version = { id: versionId, resume_id: resumeId, user_id: DEMO_USER_ID, version_number: 1, source_type: "uploaded", original_filename: file?.name || "demo-resume.pdf", mime_type: file?.type || "application/pdf", extraction_status: "review_required", created_at: now(), structured_content: { sections: { summary: ["Software engineer with experience building web products."], skills: ["TypeScript", "Python"], experience: ["Software Engineer · Demo Company"] } } };
+    const version = { id: versionId, resume_id: resumeId, user_id: DEMO_USER_ID, version_number: 1, source_type: "uploaded", original_filename: file?.name || "demo-resume.pdf", mime_type: file?.type || "application/pdf", extraction_status: "review_required", created_at: now(), structured_content: { sections: { summary: ["Software engineer with experience building web products."], skills: ["TypeScript", "Python"], experience: ["Software Engineer  -  Demo Company"] } } };
     state.resumes.unshift(resume);
     state.resumeVersions.unshift(version);
     return { resume, version } as T;
@@ -254,7 +261,7 @@ export async function demoApiRequest<T>(path: string, init: RequestInit = {}): P
   }
   if (parts[0] === "resumes" && parts[2] === "preview") {
     const resume = state.resumes.find((item) => item.id === parts[1]);
-    const version = resume ? resumeVersion(resume.id) : null;
+    const version = resume ? resumeVersion(String(resume.id || "")) : null;
     return { resume, version, download_url: null, expires_in: 0, prefer_rendered_pdf: false } as T;
   }
   if (parts[0] === "resume-versions" && parts.length >= 2) {
@@ -351,11 +358,37 @@ export async function demoApiRequest<T>(path: string, init: RequestInit = {}): P
     return undefined as T;
   }
   if (path === "/jobs" && method === "GET") return state.jobs as T;
+  if (path === "/job-recommendations/generate" && method === "POST") {
+    const requested = (body || {}) as DemoRecord;
+    const location = String(requested.location || "").toLowerCase();
+    const workMode = String(requested.work_mode || "").toLowerCase();
+    const recommendations = state.jobs
+      .filter((job) => (!location || String(job.location || "").toLowerCase().includes(location)))
+      .filter((job) => (!workMode || String(job.work_mode || "").toLowerCase() === workMode))
+      .map((job, index) => ({
+        id: `demo-recommendation-${job.id}`,
+        job,
+        match_score: Math.max(0, 82 - index * 7),
+        match_breakdown: { matched_requirements: [], missing_requirements: [] },
+        evidence: { note: "Illustrative demo result; no candidate evidence was scored." },
+      }));
+    return { resume_version_id: null, algorithm_version: "demo", recommendations } as T;
+  }
   if (parts[0] === "jobs" && parts.length === 2 && method === "GET") return state.jobs.find((job) => job.id === parts[1]) as T;
-  if (path === "/saved-jobs" && method === "GET") return state.savedJobs.map((saved) => ({ ...saved, jobs: state.jobs.find((job) => job.id === saved.job_id) })) as T;
+  if (path === "/saved-jobs" && method === "GET") return state.savedJobs.filter((saved) => saved.status === "saved").map((saved) => ({ ...saved, jobs: state.jobs.find((job) => job.id === saved.job_id) })) as T;
   if (parts[0] === "saved-jobs" && parts.length === 2 && method === "POST") {
-    if (!state.savedJobs.some((item) => item.job_id === parts[1])) state.savedJobs.push({ user_id: DEMO_USER_ID, job_id: parts[1], status: "saved", saved_at: now() });
+    const existing = state.savedJobs.find((item) => item.job_id === parts[1]);
+    if (existing) existing.status = "saved";
+    else state.savedJobs.push({ user_id: DEMO_USER_ID, job_id: parts[1], status: "saved", saved_at: now() });
     return state.savedJobs.find((item) => item.job_id === parts[1]) as T;
+  }
+  if (parts[0] === "saved-jobs" && parts.length === 2 && method === "PATCH") {
+    const existing = state.savedJobs.find((item) => item.job_id === parts[1]);
+    if (existing) {
+      existing.status = (body as DemoRecord)?.status || existing.status;
+      existing.notes = (body as DemoRecord)?.notes ?? existing.notes;
+      return existing as T;
+    }
   }
   if (path === "/learning-paths" && method === "GET") return state.learningPaths as T;
   if (path === "/learning-paths/generate" && method === "POST") {
@@ -365,7 +398,7 @@ export async function demoApiRequest<T>(path: string, init: RequestInit = {}): P
     const path = {
       id: pathId,
       user_id: DEMO_USER_ID,
-      title: "YouTube learning path · Demo ATS gaps",
+      title: "YouTube learning path  -  Demo ATS gaps",
       description:
         "Demo path grounded in illustrative ATS gaps with free YouTube search links (no invented video IDs).",
       source_type: "ats_analysis",
@@ -383,7 +416,7 @@ export async function demoApiRequest<T>(path: string, init: RequestInit = {}): P
           learning_resources: [
             {
               id: resourceId,
-              title: "Docker Tutorial for Beginners — Demo",
+              title: "Docker Tutorial for Beginners  -  Demo",
               resource_type: "youtube_video",
               provider: "freeCodeCamp.org",
               url: "https://www.youtube.com/watch?v=fqMOX6JJhGo",
@@ -413,11 +446,11 @@ export async function demoApiRequest<T>(path: string, init: RequestInit = {}): P
   }
   if (parts[0] === "learning-paths" && parts[2] === "items" && method === "PATCH") {
     const path = state.learningPaths.find((item) => item.id === parts[1]);
-    const item = path?.items?.find((row: DemoRecord) => row.id === parts[3]);
+    const items = Array.isArray(path?.items) ? (path?.items as DemoRecord[]) : [];
+    const item = items.find((row) => row.id === parts[3]);
     if (item) {
       item.status = body.status || item.status;
-      const items = path?.items || [];
-      const done = items.filter((row: DemoRecord) => row.status === "completed").length;
+      const done = items.filter((row) => row.status === "completed").length;
       if (path) path.progress_percentage = items.length ? Math.round((done / items.length) * 100) : 0;
       return { ...item, progress_percentage: path?.progress_percentage ?? 0 } as T;
     }

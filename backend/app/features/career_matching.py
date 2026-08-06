@@ -1,17 +1,10 @@
-"""Evidence-grounded learning paths and job recommendations.
-
-The feature deliberately uses candidate-owned resume/ATS evidence and locally
-stored job records. It does not invent skills, jobs, scores, or resource URLs.
-"""
 
 from __future__ import annotations
 
 import re
 from typing import Any
 
-
 ALGORITHM_VERSION = "evidence-keyword-match-v1"
-
 KNOWN_RESOURCE_URLS = {
     "python": ("Python documentation", "documentation", "https://docs.python.org/3/"),
     "javascript": ("MDN JavaScript guide", "documentation", "https://developer.mozilla.org/en-US/docs/Web/JavaScript"),
@@ -25,8 +18,6 @@ KNOWN_RESOURCE_URLS = {
     "deep learning": ("PyTorch tutorials", "documentation", "https://pytorch.org/tutorials/"),
     "nlp": ("Hugging Face NLP course", "course", "https://huggingface.co/learn/nlp-course/chapter1/1"),
 }
-
-
 def _text(value: Any) -> str:
     if isinstance(value, str):
         return value
@@ -35,20 +26,14 @@ def _text(value: Any) -> str:
     if isinstance(value, dict):
         return " ".join(_text(item) for item in value.values())
     return ""
-
-
 def _normal(value: str) -> str:
     return re.sub(r"\s+", " ", value.lower().replace(".js", " js ").strip())
-
-
 def _phrase_present(phrase: str, haystack: str) -> bool:
     phrase = _normal(phrase)
     haystack = _normal(haystack)
     if not phrase:
         return False
     return phrase in haystack
-
-
 def candidate_skill_evidence(client, user_id: str, resume: dict[str, Any], version: dict[str, Any]) -> tuple[set[str], str]:
     rows = client.table("candidate_skills").select("name,normalized_name").eq("user_id", user_id).execute().data or []
     explicit = {_normal(str(row.get("normalized_name") or row.get("name") or "")) for row in rows}
@@ -64,8 +49,6 @@ def candidate_skill_evidence(client, user_id: str, resume: dict[str, Any], versi
     if evidence_text:
         explicit.update(_normal(item) for item in skill_lines for item in re.split(r"[,|;\n]", item) if item.strip())
     return {item for item in explicit if item}, evidence_text
-
-
 def _requirements(job: dict[str, Any]) -> list[str]:
     value = job.get("requirements") or []
     if isinstance(value, str):
@@ -77,8 +60,6 @@ def _requirements(job: dict[str, Any]) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item).strip() for item in value if str(item).strip()]
-
-
 def score_job(job: dict[str, Any], skill_names: set[str], evidence_text: str) -> dict[str, Any]:
     requirements = _requirements(job)
     matched = [item for item in requirements if _normal(item) in skill_names or _phrase_present(item, evidence_text)]
@@ -105,8 +86,6 @@ def score_job(job: dict[str, Any], skill_names: set[str], evidence_text: str) ->
             "note": "Missing terms mean they were not found in the selected resume evidence.",
         },
     }
-
-
 def build_learning_items(evidence_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     gaps: list[str] = []
     for row in evidence_rows:
@@ -136,8 +115,6 @@ def build_learning_items(evidence_rows: list[dict[str, Any]]) -> list[dict[str, 
             "resources": resources,
         })
     return items
-
-
 def progress_percentage(items: list[dict[str, Any]]) -> int:
     if not items:
         return 0

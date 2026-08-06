@@ -1,1 +1,0 @@
-import { LearningPath } from "@/features/learning/components/learning"; export default async function Page({ params }: { params: Promise<{ pathId: string }> }) { return <LearningPath pathId={(await params).pathId} />; }
