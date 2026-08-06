@@ -6,7 +6,9 @@ import { fileURLToPath } from "node:url";
 export default defineConfig(({ mode }) => {
   const frontendDir = path.dirname(fileURLToPath(import.meta.url));
   const env = loadEnv(mode, path.resolve(frontendDir, ".."), "");
-  const apiOrigin = env.PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
+  const apiOrigin =
+    env.PUBLIC_API_BASE_URL ||
+    `http://127.0.0.1:${env.BACKEND_PORT || process.env.BACKEND_PORT || 8000}`;
   return {
     plugins: [react()],
 

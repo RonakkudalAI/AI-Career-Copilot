@@ -6,44 +6,36 @@ Local setup, scripts, environment, testing, and troubleshooting.
 
 ## Prerequisites
 
-| Tool | Version |
-|------|---------|
-| Node.js | 20+ recommended |
-| Python | **3.11–3.13** (repo pin `.python-version` = 3.12) |
-| Firebase project | Firestore + Storage |
-| Service account JSON | Admin SDK path in `FIREBASE_CREDENTIALS_PATH` |
+| Tool | Version / notes |
+|------|-----------------|
+| Node.js | 20+ |
+| Python | **3.11–3.13** (pin `.python-version` = 3.12) |
+| Firebase project | **Firestore** + service-account JSON |
+| Supabase project | Private **Storage** bucket + service role key |
 
-Optional: Groq, NVIDIA, YouTube Data API, Adzuna keys for full AI/jobs features.
+Optional: Groq, NVIDIA, YouTube Data API, Adzuna for full AI/jobs features.
 
 ---
 
 ## First-time setup
 
 ```bash
-# 1. Clone
 cd career-copilot
-
-# 2. Environment
 cp .env.example .env
-# edit AUTH_SECRET, FIREBASE_*, optional LLM/YouTube keys
-
-# 3. Install frontend + backend venv + Firebase check
+# Required: AUTH_SECRET, FIREBASE_*, SUPABASE_*, VITE_FIREBASE_* for Google
 npm run setup
 ```
 
-What `npm run setup` does (`scripts/setup/project.mjs`):
+`npm run setup` (`scripts/setup/project.mjs`):
 
 1. Install root/frontend deps  
-2. Create `backend/.venv` and install `career-copilot-api`  
-3. Run Firebase connectivity checks  
+2. Create `backend/.venv` and install the API package  
+3. Run Firestore connectivity checks  
 
-PDF parsing uses **pypdf** (core). Optional faster backends:
+Optional packages:
 
 ```bash
-# Official CrewAI (Python < 3.14)
 backend\.venv\Scripts\python.exe -m pip install -e "backend/.[crewai]"
-
-# Optional faster PDF backends (PyMuPDF, pdfplumber) before pypdf
 backend\.venv\Scripts\python.exe -m pip install -e "backend/.[pdf-extras]"
 ```
 
@@ -63,32 +55,41 @@ npm run dev
 
 Halves: `npm run dev:frontend` / `npm run dev:backend`.
 
-`npm run dev` runs `scripts/dev/preflight.mjs` first, then `scripts/dev/run.mjs`.
+`npm run dev` runs preflight (Firestore probe) then starts both processes.
+
+### Health checks
+
+```bash
+curl -s http://127.0.0.1:8000/api/v1/health
+curl -s http://127.0.0.1:3000/api/backend/health   # via Vite proxy
+```
+
+Expect `database_status` / `storage_status` of `reachable` when configured.
 
 ---
 
 ## Script catalog
 
-| npm script | Implementation | Purpose |
-|------------|----------------|---------|
-| `setup` | `scripts/setup/project.mjs` | Full install |
-| `dev` | preflight + run | Local stack |
-| `dev:frontend` / `dev:backend` | `scripts/dev/*` | Single process |
-| `firebase:check` | preflight | Firestore check |
-| `check:env` | `diagnostics/verify-environment.mjs` | Required vars |
-| `check:secrets` | `diagnostics/check-secrets.mjs` | Leak scan |
-| `check:boundaries` | `verify-boundaries.mjs` | Import boundaries |
-| `lint` / `typecheck` / `build:frontend` | via `run-frontend.mjs` | Frontend quality |
-| `check:frontend` | full frontend gate | lint+types+test+build |
-| `test:backend` | pytest via venv | Backend tests |
+| npm script | Purpose |
+|------------|---------|
+| `setup` | Full install |
+| `dev` | Local stack |
+| `check:env` | Required env presence (no values dumped) |
+| `check:secrets` | Credential pattern scan |
+| `check:boundaries` | Import boundaries |
+| `check:frontend` | lint + types + test + build |
+| `test:backend` | pytest |
 
-Python diagnostics:
+Python / Node diagnostics:
 
 | Script | Purpose |
 |--------|---------|
-| `scripts/diagnostics/e2e-smoke.py` | API workflow smoke |
-| `scripts/diagnostics/check-firestore.py` | DB probe |
+| `scripts/diagnostics/verify-environment.mjs` | Env key presence |
+| `scripts/diagnostics/check-firestore.py` | Firestore write/read probe |
+| `scripts/diagnostics/_audit_once.py` | Offline stack audit (DB, storage, auth, agents, OpenAPI) |
+| `scripts/diagnostics/e2e-smoke.py` | API workflow smoke (running server) |
 | `scripts/diagnostics/audit-local-api.py` | Local API audit |
+| `scripts/diagnostics/check-secrets.mjs` | Secret leak scan |
 
 ---
 
@@ -96,59 +97,46 @@ Python diagnostics:
 
 Single root `.env` (template: `.env.example`).
 
-| Prefix / key group | Consumed by |
-|--------------------|-------------|
-| `VITE_*` | Vite browser bundle only |
-| `AUTH_SECRET`, `FIREBASE_*`, LLM, YouTube, Adzuna | FastAPI `core/config.py` |
-| `PUBLIC_API_BASE_URL`, ports | Dev proxy + scripts |
-| `FRONTEND_ORIGINS` | CORS allow-list |
+| Group | Consumed by |
+|-------|-------------|
+| `VITE_*` | Vite frontend only |
+| Firebase Admin + `AUTH_SECRET` | FastAPI auth + Firestore |
+| `SUPABASE_*` | FastAPI object storage |
+| `LLM_PROVIDER`, `GROQ_*`, `NVIDIA_*` | Agents |
+| `YOUTUBE_*`, `ADZUNA_*` | Optional features |
+| `OMNIROUTE_*` | Optional sidecar (default off) |
 
-Settings load path: `backend/app/core/config.py` → repo root `.env`.
+**Do not set `VITE_API_BASE_URL` for normal local dev** unless you intentionally bypass the Vite proxy.
 
-> [!IMPORTANT]
-> Never put `GROQ_API_KEY`, `NVIDIA_API_KEY`, `YOUTUBE_API_KEY`, or service-account JSON contents into `VITE_*` variables.
+---
+
+## Frontend ↔ backend connection
+
+```text
+Browser apiRequest → /api/backend + path
+Vite rewrite       → PUBLIC_API_BASE_URL + /api/v1 + path
+```
+
+| Browser path | Upstream |
+|--------------|----------|
+| `/api/backend/*` | `{PUBLIC_API_BASE_URL}/api/v1/*` |
+| `/api/files/*` | `{PUBLIC_API_BASE_URL}/api/v1/files/*` |
+
+Auth: `Authorization: Bearer` from `career_copilot_access_token` (+ optional session cookie).
+
+Demo mode (`career_copilot_demo=1`, **development only**): `apiRequest` uses in-memory mocks. Real sign-in clears the demo cookie.
 
 ---
 
 ## Testing
 
-### Backend
-
 ```bash
 npm run test:backend
-# or
-backend\.venv\Scripts\python.exe -m pytest backend\tests
+cd frontend && npm run test
+cd frontend && npm run typecheck
 ```
 
-Key suites:
-
-| Path | Focus |
-|------|-------|
-| `backend/tests/ats_scoring/` | Product score math / schemas |
-| `backend/tests/document_parsing/` | Sections, validation, performance |
-| `backend/tests/interview/` | Preparation |
-| `backend/tests/learning/` | YouTube crew |
-| `backend/tests/fixtures/resumes/` | Real resume samples |
-
-### Frontend
-
-```bash
-cd frontend
-npm run test          # vitest
-npm run e2e:landing   # playwright
-```
-
----
-
-## Health checks while running
-
-| Check | How |
-|-------|-----|
-| API up | `GET http://127.0.0.1:8000/api/v1/health` |
-| DB | `GET …/health/database` |
-| Agents | `GET …/agents/status` |
-| Env | `npm run check:env` |
-| Secrets in tree | `npm run check:secrets` |
+Key backend suites: ATS scoring/enrichment, document parsing, interview fallbacks, Firestore recency sort, auth helpers.
 
 ---
 
@@ -156,29 +144,34 @@ npm run e2e:landing   # playwright
 
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
-| Backend fails on boot | Missing `AUTH_SECRET` or invalid Settings | Complete `.env`; read pydantic error |
-| Firestore errors | Bad credentials path / project id | `FIREBASE_CREDENTIALS_PATH`, `npm run firebase:check` |
-| PDF parse failed / no text | Bad PDF, encrypted, or image-only | Use a text-based PDF; encrypted files are rejected |
-| CORS errors | Origin not allow-listed | Add exact origin to `FRONTEND_ORIGINS` |
-| UI “Could not reach the API” | Backend down or proxy misconfig | `npm run dev`; check `PUBLIC_API_BASE_URL` |
-| Weak AI features | Keys empty | Set Groq/NVIDIA; confirm `/agents/status` |
-| Learning has only search links | No YouTube key | Set `YOUTUBE_API_KEY` |
-| ATS 409 confirm errors | Resume/JD not confirmed | Complete review → confirm endpoints |
-| Auth always expired | Clock skew / bad secret / deleted user | Re-sign-in; verify `AUTH_SECRET` stable |
+| Dashboard metrics stay `—` | Backend not running or bootstrap 401 | `npm run dev`; sign out/in; check Network for `/me/bootstrap` |
+| Empty resume/ATS lists despite data | Fixed: do not server-`order_by(created_at)` on legacy docs | Deploy/pull latest; restart API |
+| “Could not reach the API” | Proxy or port mismatch | Confirm `PUBLIC_API_BASE_URL` and ports; open `/api/backend/health` |
+| Storage 503 | Supabase misconfigured | Set `SUPABASE_URL`, service role, bucket; bucket private |
+| Google sign-in fails | Firebase Admin / unverified email | Check credentials path; verify email in provider |
+| Agents not ready | Missing GROQ/NVIDIA keys | Set keys or rely on deterministic fallbacks |
+| Demo data instead of real account | Demo cookie still set | Sign in again (clears cookie) or clear `career_copilot_demo` |
+| Health `degraded` | Firestore or storage probe failed | Run `check-firestore.py`; verify Supabase list |
+
+### Firestore timestamp pitfall
+
+Firestore queries that `order_by("created_at")` **omit documents without that field**.  
+The app sorts user-scoped lists in process with fallback timestamps (`started_at`, `completed_at`, …). New records always write `created_at`.
 
 ---
 
-## Security ops notes
+## Production notes
 
-1. Firestore rules deny all client access — do not open them for the product path.  
-2. Service account JSON belongs under `secrets/` and must stay gitignored.  
-3. Account wipe requires exact phrase `DELETE MY ACCOUNT` (`features/auth/account_deletion.py`).  
-4. File download enforces `{user_id}/` path prefix.  
+- Set `APP_ENV=production` (disables OpenAPI docs).  
+- Restrict `FRONTEND_ORIGINS`.  
+- Prefer short-lived secrets rotation for `AUTH_SECRET` and service roles.  
+- Serve the SPA behind a reverse proxy that forwards `/api/backend` and `/api/files` **or** set `VITE_API_BASE_URL` at build time to the public API origin.  
+- Production builds **ignore** the demo cookie.
 
 ---
 
-## Related docs
+## Related
 
 - [Architecture](./architecture.md)  
-- [API reference](./api-reference.md)  
-- Root [README.md](../README.md)  
+- [Data model](./data-model.md)  
+- Root [README](../README.md)  

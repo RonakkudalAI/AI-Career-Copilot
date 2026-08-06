@@ -21,6 +21,8 @@ function token() {
 function saveToken(value: string) {
   window.localStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, value);
   document.cookie = `${SESSION_COOKIE_NAME}=${encodeURIComponent(value)}; Path=/; SameSite=Lax`;
+  // Real sign-in must never stay trapped in demo mode (empty in-memory API).
+  document.cookie = `career_copilot_demo=; Max-Age=0; Path=/; SameSite=Lax`;
 }
 
 async function request(path: string, body?: unknown) {

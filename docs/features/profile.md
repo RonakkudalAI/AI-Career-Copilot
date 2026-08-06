@@ -10,6 +10,7 @@ Maintain the candidate’s structured profile (identity, skills, experience, pre
 |--------|-----|
 | Checklist not raised by resume upload alone | Upload ≠ confirmed profile ownership of facts |
 | Preview → apply for AI fill | Human remains the writer of record |
+| Preferred LLM then deterministic | `LLM_PROVIDER` order; offline mapping always available |
 | Deterministic completion | Stable UX without LLM |
 
 ## File map
@@ -22,7 +23,7 @@ Maintain the candidate’s structured profile (identity, skills, experience, pre
 | `features/profile/agent/pipeline.py` | Fill-from-resume orchestration |
 | `features/profile/agent/deterministic.py` | Non-LLM extraction/merge |
 | `features/profile/agent/normalize.py` | Date/value normalization |
-| `agents/prompts/fill_profile_from_resume_v1.txt` | NVIDIA prompt |
+| `agents/prompts/fill_profile_from_resume_v1.txt` | Fill prompt (preferred LLM) |
 | `database/repository.py` | `CANDIDATE_TABLES`, `recalculate_completion` |
 | `api/router.py` | `/profile*`, `/me/bootstrap` |
 | Frontend settings | `features/settings/components/settings.tsx` |

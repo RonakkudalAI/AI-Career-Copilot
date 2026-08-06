@@ -2,25 +2,20 @@
 
 ## Purpose
 
-Help candidates practice with structured questions and optional preparation packs grounded in resume + JD evidence. **Answers are not AI-graded for hireability.**
-
-## Why no AI grading
-
-Avoids false precision and invented evaluations. The product stores practice artifacts only.
+Practice with structured questions and optional preparation packs grounded in resume + JD evidence. **Answers are not AI-graded for hireability.**
 
 ## File map
 
 | File | Role |
 |------|------|
 | `features/interview/preparation.py` | Evidence-grounded preparation packs |
-| `features/interview/agent/question_generator.py` | Groq structured questions |
-| `features/interview/question_bank.py` | Local templates when LLM off |
+| `features/interview/agent/question_generator.py` | Groq structured questions → template fallback |
+| `features/interview/question_bank.py` | Local templates |
 | `agents/prompts/interview_questions_v1.txt` | Question prompt |
-| `agents/prompts/interview_preparation_v1.txt` | Prep prompt |
 | `api/router.py` | `/interviews*`, `/interview-preparation` |
-| Frontend | `features/interview/components/interview-flow.tsx` |
+| Frontend session UI | `features/interview/components/interview-flow.tsx` |
 | Frontend prep | `features/interview/components/interview-preparation.tsx` |
-| Frontend helpers | `features/interview/preparation.ts` |
+| Voice helpers (pure) | `features/interview/interview-voice.ts` |
 
 ## Flows
 
@@ -28,37 +23,52 @@ Avoids false precision and invented evaluations. The product stores practice art
 
 ```text
 POST /interview-preparation
-  inputs: resume/JD evidence context
-  → preparation.py generates question pack / focus areas
-  → persisted or returned per route contract
+  confirmed resume_version_id + job_description_id
+  → gaps from ATS evidence when available
+  → question banks + optional Groq for missing skills
 ```
 
 ### Mock session
 
 ```text
-POST /interviews                 create session (mode, role, difficulty, counts)
-POST /interviews/{id}/start      generate questions (Groq or templates)
-POST /interviews/{id}/responses  store typed/transcript/media refs
-POST /interviews/{id}/complete   mark completed
-DELETE /interviews/{id}          remove session graph
+POST /interviews
+  mode, target_role, question_count
+  camera_enabled / microphone_enabled (default true)
+POST /interviews/{id}/start
+  → generate_interview_questions (Groq or templates on any failure)
+POST /interviews/{id}/responses
+  typed_response and/or transcript (text only when media max is 0)
+POST /interviews/{id}/complete
+DELETE /interviews/{id}
 ```
 
-Media uploads honor `interview_media_max_bytes` (0 disables media).
+### Browser live practice (frontend)
+
+When mic/camera flags allow:
+
+1. Request camera/mic via `getUserMedia` (preview only; not uploaded when media max is 0).  
+2. Speak question with **Web Speech Synthesis**.  
+3. Capture answer with **Web Speech Recognition** (`continuous` + interim results).  
+4. Show live transcript in the answer box.  
+5. Optional auto mode: silence → save → next question → speak again.  
+
+Unsupported browsers fall back to typing. Recognition requires a secure context (localhost or HTTPS) and typically Chromium.
 
 ## Provider behavior
 
 | Condition | Behavior |
 |-----------|----------|
-| `GROQ_API_KEY` set | Structured questions via Groq client |
-| Groq unavailable | `question_bank.py` templates |
-| NVIDIA | Not used for interview questions (registry documents this) |
+| Groq configured | Structured questions |
+| Groq error / timeout / empty | **Templates** (session still starts) |
+| NVIDIA | Not used for interview questions |
 
 ## Data
 
 Collections: `interview_sessions`, `interview_questions`, `interview_responses`, `interview_reports`.
 
+No AI score fields for grading answers as a hiring decision.
+
 ## Related
 
-- [flows.md §8](../flows.md)  
-- [agents registry](../code-map.md)  
-- Tests: `backend/tests/interview/`  
+- [flows.md](../flows.md)  
+- Tests: `backend/tests/interview/`, `frontend/src/features/interview/__tests__/`  

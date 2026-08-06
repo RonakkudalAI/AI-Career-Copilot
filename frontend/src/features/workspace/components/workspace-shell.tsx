@@ -82,7 +82,8 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
   const fetchGen = useRef(0);
 
   const loadBootstrap = useCallback(() => {
-    if (isDemoSession()) return;
+    // Always call bootstrap — demo mode is served by demoApiRequest in-memory,
+    // real mode hits Firestore. Skipping here left the shell empty forever.
     const gen = ++fetchGen.current;
     apiRequest<Bootstrap>("/me/bootstrap")
       .then((data) => {
@@ -90,9 +91,11 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
         setBootstrap(data);
         setLiveCompletion(null);
       })
-      .catch(() => {
+      .catch((err: Error) => {
         if (gen !== fetchGen.current) return;
         setBootstrap(null);
+        // Surface once in console for diagnosis; dashboard shows the user-facing error.
+        console.warn("[workspace] bootstrap failed:", err?.message || err);
       });
   }, []);
 

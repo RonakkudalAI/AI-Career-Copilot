@@ -1,10 +1,11 @@
 # API reference
 
 Base path: **`/api/v1`** (env `API_V1_PREFIX`).  
-Browser (local Vite): **`/api/backend/...`** rewrites to `/api/v1/...`.
+Browser (local Vite): **`/api/backend/...`** rewrites to `/api/v1/...`.  
+Files in browser: **`/api/files/...`** → `/api/v1/files/...`.
 
-OpenAPI (non-production): `http://127.0.0.1:8000/docs`  
-Implementation: `backend/app/api/router.py` (+ feature routers).
+OpenAPI (non-production): `http://127.0.0.1:8000/docs` (~70+ paths).  
+Implementation: `backend/app/api/router.py`, `backend/app/api/routers/auth.py`, feature routers (`ats/routes`, `resume_improvement/routes`).
 
 ---
 
@@ -73,9 +74,9 @@ Agent definitions: `backend/app/agents/registry.py`.
 
 | Method | Path | Auth | Notes |
 |--------|------|------|-------|
-| GET | `/files/{bucket}/{path}` | Yes | Path must start with `{user_id}/` |
+| GET | `/files/{bucket}/{path}` | Yes | Path must start with `{user_id}/`; streams Supabase Storage |
 
-Logical buckets: document/avatar env prefixes.
+Logical buckets: `DOCUMENT_BUCKET` / `AVATAR_BUCKET` prefixes inside `SUPABASE_STORAGE_BUCKET`.
 
 ---
 
@@ -221,7 +222,7 @@ No endpoint grades answer quality for hiring.
 | Area | Behavior |
 |------|----------|
 | LLM | Process-level RPM via `LLM_RPM_LIMIT` + `agents/providers/rate_limit.py` |
-| List endpoints | Typically return owned rows ordered by `created_at`; not cursor-paginated everywhere |
+| List endpoints | User-owned rows; newest-first via in-process recency sort when timestamps may be missing; not cursor-paginated everywhere |
 | ATS terms | Cap 80 JD terms in scorer |
 | Improvement | `IMPROVEMENT_MAX_SECTIONS`, source/JD char caps |
 

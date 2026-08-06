@@ -13,8 +13,9 @@ Where code lives, what it owns, and how pieces connect. Paths are relative to th
 | `README.md` | Product overview + quick start |
 | `docs/` | This documentation set |
 | `firebase/firestore.rules` | Deny all client Firestore access |
-| `firebase/storage.rules` | Storage security rules |
+| `firebase/storage.rules` | Legacy Firebase Storage rules (product files use Supabase) |
 | `scripts/` | Install, dev orchestration, diagnostics |
+| `scripts/diagnostics/_audit_once.py` | Offline stack audit (DB, storage, auth, agents, OpenAPI) |
 | `secrets/` | Local service-account JSON (**gitignored**; never commit) |
 
 ---
@@ -37,6 +38,7 @@ Where code lives, what it owns, and how pieces connect. Paths are relative to th
 | `scripts/diagnostics/check-firestore.py` | Firestore probe |
 | `scripts/diagnostics/e2e-smoke.py` | API workflow smoke |
 | `scripts/diagnostics/audit-local-api.py` | Local API audit |
+| `scripts/diagnostics/_audit_once.py` | Connection/agent audit |
 | `scripts/verify-boundaries.mjs` | Import boundary checks |
 | `scripts/run-frontend.mjs` | Runs frontend npm tasks from root |
 
@@ -76,7 +78,7 @@ uvicorn app.main:app
 | `backend/app/features/ats/routes.py` | Stateless `POST /ats/score` |
 | `backend/app/features/resume_improvement/routes.py` | Improvement runs, suggestions, exports |
 
-`router.py` calls into features and database helpers; it also contains password scrypt helpers and signup graph creation.
+`api/routers/auth.py` owns password scrypt helpers and signup graph. `router.py` owns the bulk of product HTTP surface.
 
 ---
 
@@ -84,8 +86,8 @@ uvicorn app.main:app
 
 | Path | Role |
 |------|------|
-| `backend/app/database/client.py` | Firestore query adapter, table allow-list, Firebase/Supabase storage objects |
-| `backend/app/database/repository.py` | `owned_row(s)`, activity, profile completion recalculation, `CANDIDATE_TABLES` |
+| `backend/app/database/client.py` | Firestore query adapter, table allow-list, Supabase (product) storage objects |
+| `backend/app/database/repository.py` | `owned_row(s)`, `sort_rows_by_recency`, activity, profile completion, `CANDIDATE_TABLES` |
 | `backend/app/database/activity.py` | Activity prune limits and helpers |
 
 ### Adapter pattern (why)
@@ -96,7 +98,9 @@ Feature code uses:
 client.table("resumes").select("*").eq("user_id", …).execute()
 ```
 
-instead of raw Firestore API. Storage uses logical buckets (`document_bucket`, `avatar_bucket`) as **prefixes** inside the configured cloud bucket.
+instead of raw Firestore API. Storage uses logical prefixes (`DOCUMENT_BUCKET`, `AVATAR_BUCKET`) inside **`SUPABASE_STORAGE_BUCKET`**.
+
+**Recency:** do not rely solely on Firestore `order_by(created_at)` for user lists — docs missing that field are omitted. Prefer fetch + `sort_rows_by_recency`.
 
 ---
 
@@ -105,6 +109,7 @@ instead of raw Firestore API. Storage uses logical buckets (`document_bucket`, `
 | Path | Role |
 |------|------|
 | `backend/app/agents/registry.py` | Agent inventory for `/agents/status` and health |
+| `backend/app/agents/providers/routing.py` | `LLM_PROVIDER` preferred order; optional OmniRoute rewrite |
 | `backend/app/agents/providers/nvidia_client.py` | NVIDIA Integrate API client |
 | `backend/app/agents/providers/groq_client.py` | Groq OpenAI-compatible client |
 | `backend/app/agents/providers/common.py` | Shared completion / JSON helpers |
@@ -131,6 +136,7 @@ instead of raw Firestore API. Storage uses logical buckets (`document_bucket`, `
 
 | Path | Role |
 |------|------|
+| `api/routers/auth.py` | Sign-up/in, Firebase exchange, password endpoints |
 | `features/auth/service.py` | `CurrentUser`, JWT create/decode, `get_current_user` |
 | `features/auth/account_deletion.py` | Confirm phrase, storage path collect, cascade table list |
 

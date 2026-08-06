@@ -1,9 +1,16 @@
 # Data model
 
-System of record: **Firebase Cloud Firestore** (structured data) + **Firebase Storage** (files).  
-Access path: **FastAPI Admin SDK only**. Browser rules deny direct reads/writes (`firebase/firestore.rules`).
+System of record:
 
-Adapter: `backend/app/database/client.py` (allow-listed table names).
+| Store | Role |
+|-------|------|
+| **Cloud Firestore** | Structured candidate data |
+| **Supabase Storage** | Binary objects (resumes, avatars, exports) |
+
+Access path: **FastAPI only** (Admin SDK for Firestore; service role for Supabase).  
+Browser rules deny direct Firestore access (`firebase/firestore.rules`).
+
+Adapter: `backend/app/database/client.py` (allow-listed table names + storage facade).
 
 ---
 
@@ -18,10 +25,10 @@ Almost every candidate row includes:
 
 Helpers in `backend/app/database/repository.py`:
 
-- `owned_row(client, table, id, user)` — 404 `record_not_found` if missing or not owned  
-- `owned_rows(client, table, user)` — list for current user  
+- `owned_row` / `owned_rows` — ownership filters  
+- `sort_rows_by_recency` — newest-first when `created_at` may be missing  
 
-**Why:** Never trust a client-supplied id without ownership filter.
+**Why:** Never trust a client-supplied id without an ownership filter.
 
 ---
 
@@ -29,22 +36,20 @@ Helpers in `backend/app/database/repository.py`:
 
 ### Identity
 
-| Collection | Key fields (conceptual) | Created by |
-|------------|-------------------------|------------|
-| `users` | `id`, `email`, `password_hash`, `full_name` | `POST /auth/sign-up`, Firebase exchange |
-| `profiles` | `id` (= user id), `full_name`, location, role, completion fields | Signup + profile patches |
+| Collection | Key fields | Created by |
+|------------|------------|------------|
+| `users` | `id`, `email`, `password_hash`, `full_name`, optional `firebase_uid` | Sign-up, Firebase exchange |
+| `profiles` | `id` (= user id), completion fields, avatar paths | Signup + profile patches |
 
 ### Preferences
 
 | Collection | Notes |
 |------------|--------|
-| `candidate_preferences` | Target roles, locations, work modes, salary, etc. |
+| `candidate_preferences` | Target roles, locations, work modes, etc. |
 | `notification_preferences` | Notification toggles |
 | `privacy_preferences` | Privacy toggles |
 
 ### Profile content (`CANDIDATE_TABLES`)
-
-Mapped in `repository.py`:
 
 | API resource | Collection |
 |--------------|------------|
@@ -56,52 +61,50 @@ Mapped in `repository.py`:
 | `languages` | `candidate_languages` |
 | `links` | `candidate_links` |
 
-CRUD: `GET/POST/PATCH/DELETE /profile/{resource}` in `api/router.py`.
-
 ### Documents
 
 | Collection | Purpose |
 |------------|---------|
-| `resumes` | Resume parent (title, `is_active`, soft delete) |
-| `resume_versions` | File version: plain text, structured content, extraction status, storage path |
+| `resumes` | Parent (`title`, `is_active`, soft `deleted_at`, `created_at`) |
+| `resume_versions` | File version: text, structured content, extraction status, `storage_path` |
 | `job_descriptions` | JD text/file, metadata, extraction status |
 
-#### Extraction status lifecycle
+#### Extraction status
 
 ```text
 pending → processing → review_required → confirmed
                               ↘ failed
 ```
 
-Only **`confirmed`** resume versions and JDs may enter ATS, learning generation, and recommendation evidence paths.
-
-Typical fields on a version/JD:
+Only **`confirmed`** content may enter ATS, learning generation, and recommendation evidence paths.
 
 | Field | Meaning |
 |-------|---------|
-| `plain_text` / `raw_text` | Source text used for matching |
+| `plain_text` / `raw_text` | Source text for matching |
 | `structured_content` | `{ schema_version, sections, warnings, extraction_method }` |
 | `extraction_status` | Lifecycle above |
-| `candidate_confirmed_at` | Confirm timestamp (used in ATS fingerprint) |
-| `storage_path` | Object path under document bucket |
+| `candidate_confirmed_at` | Confirm timestamp (ATS fingerprint) |
+| `storage_path` | Object key under document prefix |
+| `created_at` | ISO timestamp (always set on new writes) |
 
 ### ATS
 
 | Collection | Purpose |
 |------------|---------|
-| `ats_analyses` | Score run: overall score, breakdown, summary, algorithm version, status |
-| `ats_evidence` | One row per JD term: match status, exact quote or null, contribution |
+| `ats_analyses` | Score run: status, overall score, breakdown, summary, algorithm version, timestamps |
+| `ats_evidence` | One row per JD term: match status, exact quote or null |
 
-Algorithm version (product): `evidence-keyword-coverage-v3` (`features/ats/ats_score.py`).
+Algorithm: `evidence-keyword-coverage-v3`.
 
-**Idempotency / freshness:**  
-`POST /ats-analyses` fingerprints source text + confirm timestamps. Same resume/JD ids with **unchanged** fingerprint returns existing completed analysis; content changes force re-score.
+**List/detail enrichment:** API attaches `resume` and `job_description` objects (filename, title, company, version) from linked ids so history can show what was used even if the parent resume was soft-deleted later.
+
+**Idempotency:** `POST /ats-analyses` fingerprints source text + confirm times. Unchanged fingerprint returns the existing completed analysis (enriched).
 
 ### Resume improvement
 
 | Collection | Purpose |
 |------------|---------|
-| `resume_improvement_runs` | Improvement job metadata |
+| `resume_improvement_runs` | Job metadata |
 | `resume_suggestions` | Accept/reject/edit suggestions |
 | `resume_exports` | Generated export files |
 
@@ -109,39 +112,68 @@ Algorithm version (product): `evidence-keyword-coverage-v3` (`features/ats/ats_s
 
 | Collection | Purpose |
 |------------|---------|
-| `interview_sessions` | Mode, role, difficulty, status |
-| `interview_questions` | Generated questions |
-| `interview_responses` | Candidate answers / media paths |
-| `interview_reports` | Session completion artifacts |
-
-No AI “score” fields for grading answers as a hiring decision.
+| `interview_sessions` | Mode, role, difficulty, camera/mic flags, status |
+| `interview_questions` | Generated questions + source_context |
+| `interview_responses` | Typed text / transcript fields |
+| `interview_reports` | Completion artifacts (no AI scores) |
 
 ### Learning
 
 | Collection | Purpose |
 |------------|---------|
 | `learning_paths` | Path metadata, progress, source analysis id |
-| `learning_items` | Steps (gaps / lessons) |
-| `learning_resources` | YouTube URLs (watch or search) |
+| `learning_items` | Steps |
+| `learning_resources` | YouTube watch or search URLs |
 
-Algorithm version: `ats-youtube-api-v1` (`features/learning/youtube_catalog.py`).
+Algorithm: `ats-youtube-api-v1`.
 
 ### Jobs
 
 | Collection | Purpose |
 |------------|---------|
-| `jobs` | Local job catalog (optionally filled by Adzuna sync) |
-| `job_recommendations` | Ranked matches for user |
+| `jobs` | Local catalog (optional Adzuna fill) |
+| `job_recommendations` | Ranked matches |
 | `saved_jobs` | User bookmarks |
 
-Match algorithm: `evidence-keyword-match-v1` (`features/career_matching.py`).
+Match algorithm: `evidence-keyword-match-v1`.
 
-### Activity / notifications
+### Activity
 
 | Collection | Purpose |
 |------------|---------|
-| `activity_events` | Dashboard recent activity (pruned) |
-| `user_notifications` | In-app notifications (if used) |
+| `activity_events` | Dashboard recent activity (pruned; `created_at` on write) |
+
+---
+
+## Object storage layout
+
+Product engine: **Supabase Storage** bucket `SUPABASE_STORAGE_BUCKET`.
+
+Logical prefixes (env):
+
+| Env | Typical value | Contents |
+|-----|---------------|----------|
+| `DOCUMENT_BUCKET` | `candidate-documents` | Resumes, JDs, exports |
+| `AVATAR_BUCKET` | `candidate-avatars` | Profile images |
+
+```text
+{SUPABASE_STORAGE_BUCKET}/
+  {DOCUMENT_BUCKET}/{user_id}/resumes/...
+  {DOCUMENT_BUCKET}/{user_id}/job-descriptions/...
+  {AVATAR_BUCKET}/{user_id}/avatars/...
+```
+
+Browser download:
+
+```text
+GET /api/v1/files/{bucket}/{path}
+  Authorization: Bearer <JWT>
+  path must start with {user_id}/
+```
+
+Local Vite maps `/api/files/*` → that route.
+
+`APP_ENV=test` uses in-memory object storage (no network).
 
 ---
 
@@ -154,67 +186,13 @@ Phrase required: **`DELETE MY ACCOUNT`**.
 Also:
 
 1. Collect storage paths from resume versions, exports, JDs, avatars.  
-2. Purge Firebase Storage objects.  
+2. Purge objects from configured object storage.  
 3. Delete Firestore rows.  
 
 ---
 
-## File storage
+## Related
 
-Logical buckets (env) become **prefixes** inside `FIREBASE_STORAGE_BUCKET`:
-
-| Env | Default prefix | Use |
-|-----|----------------|-----|
-| `DOCUMENT_BUCKET` | `candidate-documents` | Resumes, JDs, exports |
-| `AVATAR_BUCKET` | `candidate-avatars` | Profile pictures |
-
-Path shape:
-
-```text
-{logical_bucket}/{user_id}/...
-```
-
-Download API:
-
-```text
-GET /api/v1/files/{bucket}/{path}
-```
-
-Must be authenticated; path must start with the current user’s id (`api/router.py`).
-
-Size limits (settings defaults):
-
-| Setting | Default |
-|---------|---------|
-| `document_max_bytes` | 10 MiB |
-| `avatar_max_bytes` | 3 MiB |
-| `interview_media_max_bytes` | 0 (disabled when 0) |
-
----
-
-## Structured resume payload shape
-
-After parse (`document_parsing/pipeline.py`):
-
-```json
-{
-  "schema_version": "resume-extraction-v1",
-  "sections": {
-    "skills": ["…"],
-    "experience": ["…"],
-    "education": ["…"]
-  },
-  "warnings": [],
-  "extraction_method": "…"
-}
-```
-
-Product payloads intentionally omit raw `source_blocks` UI fields; section body text is reconstructed from source lines.
-
----
-
-## Related docs
-
-- [Features — document parsing](./features/document-parsing.md)  
-- [Features — ATS](./features/ats-scoring.md)  
 - [Architecture](./architecture.md)  
+- [Flows](./flows.md)  
+- [Operations](./operations.md)  

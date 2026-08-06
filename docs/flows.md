@@ -29,7 +29,7 @@ UI component
        Depends(get_current_user) → features/auth/service.py
        ▼
   database_client(settings) → database/client.py
-       Firestore Admin / Storage
+       Firestore Admin + Supabase Storage
 ```
 
 | Step | File |
@@ -38,6 +38,7 @@ UI component
 | Base URL / tokens | `frontend/src/shared/config.ts` |
 | Proxy | `frontend/vite.config.mjs` |
 | Auth dependency | `backend/app/features/auth/service.py` |
+| Recency sort | `backend/app/database/repository.py` (`sort_rows_by_recency`) |
 | Errors | `backend/app/core/errors.py` |
 
 ---
@@ -214,16 +215,19 @@ POST /ats-analyses { resume_version_id, job_description_id }
         │  match resume lines (strong/partial/missing)
         │  overall_score = weighted contributions
         │
-  insert ats_analyses (processing → completed)
+  insert ats_analyses (processing) + created_at/started_at
   insert ats_evidence rows (exact quote or null)
         │
   optional generate_ats_improvement_brief
   features/ats/agents/improvement_brief.py
-        │  uses missing/matched lists only
+        │  preferred_llm_providers (LLM_PROVIDER) · capped timeout · deterministic fallback
         │
+  update completed + summary
   write_activity
-  return analysis
+  return _enrich_ats_analysis (resume + job_description labels for UI)
 ```
+
+List history: `GET /ats-analyses` enriches every row; sorts with `sort_rows_by_recency` (not bare Firestore `order_by(created_at)`).
 
 Stateless twin (no DB write): `POST /ats/score` in `features/ats/routes.py` — same `score_resume`.
 
@@ -231,11 +235,12 @@ Stateless twin (no DB write): `POST /ats/score` in `features/ats/routes.py` — 
 
 | Concern | File |
 |---------|------|
-| Persist path | `backend/app/api/router.py` (`create_ats`) |
+| Persist path | `backend/app/api/router.py` (`create_ats`, `_enrich_ats_analysis`) |
 | Formula | `backend/app/features/ats/ats_score.py` |
 | Brief | `backend/app/features/ats/agents/improvement_brief.py` |
+| Provider order | `backend/app/agents/providers/routing.py` |
 | Stateless | `backend/app/features/ats/routes.py` |
-| UI report | `frontend/src/features/resume/components/resume-flow.tsx` |
+| UI report / history | `frontend/src/features/resume/components/resume-flow.tsx` |
 
 ### What is **not** on this path
 

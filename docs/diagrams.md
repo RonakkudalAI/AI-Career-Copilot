@@ -61,15 +61,15 @@ flowchart TB
   subgraph DATA["System of record · Admin SDK only"]
     direction TB
     FS[("Firestore<br/>database/client.py<br/>owned by user_id")]
-    ST[("Firebase Storage<br/>candidate-documents<br/>candidate-avatars")]
+    ST[("Supabase Storage<br/>DOCUMENT_BUCKET · AVATAR_BUCKET")]
     RULES["firestore.rules<br/>deny all client access"]
   end
 
   %% ── External ────────────────────────────────────────────
   subgraph EXT["External services · server secrets only"]
     direction LR
-    XG["Groq API"]
-    XN["NVIDIA Integrate"]
+    XG["Groq API preferred"]
+    XN["NVIDIA Integrate fallback"]
     XY["YouTube Data API v3"]
     XA["Adzuna API"]
   end

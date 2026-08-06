@@ -19,7 +19,8 @@ Identify the candidate, issue a trusted app JWT, and enforce ownership on every 
 |------|----------------|
 | `backend/app/features/auth/service.py` | `CurrentUser`, JWT create/decode, `get_current_user` |
 | `backend/app/features/auth/account_deletion.py` | Confirm phrase, storage purge, cascade tables |
-| `backend/app/api/router.py` | `/auth/*`, scrypt helpers, signup graph, `DELETE /account` |
+| `backend/app/api/routers/auth.py` | `/auth/*` sign-up/in, Firebase exchange, password helpers |
+| `backend/app/api/router.py` | `DELETE /account` and other owned-data routes |
 | `backend/app/core/constants.py` | `JWT_ALGORITHM`, `MIN_PASSWORD_LENGTH` (8) |
 | `frontend/src/features/auth/api/client.ts` | Sign-in/up, token persistence |
 | `frontend/src/features/auth/components/auth-screen.tsx` | Screens |
@@ -30,7 +31,7 @@ Identify the candidate, issue a trusted app JWT, and enforce ownership on every 
 
 ## Password storage
 
-Implemented in `api/router.py`:
+Implemented in `api/routers/auth.py`:
 
 ```text
 scrypt(password, salt, n=2**14, r=8, p=1)

@@ -133,19 +133,22 @@ export function Dashboard() {
   const demoMode = useSyncExternalStore(subscribeDemoMode, readDemoMode, () => false);
 
   useEffect(() => {
-    if (demoMode) return;
     let active = true;
     function load() {
+      setError("");
+      setConfigHint("");
       apiRequest<Bootstrap>("/me/bootstrap")
         .then((payload) => {
-          if (active) setData(payload);
+          if (!active) return;
+          setData(payload);
         })
         .catch((e: Error) => {
           if (!active) return;
-          setError(e.message);
-          if (/configured|session|unavailable|sign-in/i.test(e.message)) {
-            setConfigHint("If this keeps happening, sign out and sign back in, or try again later.");
-          }
+          setData(null);
+          setError(e.message || "Could not load dashboard data from the API.");
+          setConfigHint(
+            "Check that npm run dev is running (frontend + backend), you are signed in, and Firestore is reachable. Open Network for GET /api/backend/me/bootstrap.",
+          );
         });
     }
     load();
@@ -190,7 +193,10 @@ export function Dashboard() {
       {demoMode && (
         <Card>
           <p className="eyebrow">Demo preview</p>
-          <p style={{ margin: 0 }}>You are viewing the dashboard shell without a local authentication session. No account data is loaded or saved.</p>
+          <p style={{ margin: 0 }}>
+            Demo mode uses an in-memory API (not your Firestore account). Sign in with Google or email to load real
+            resumes, ATS runs, and activity.
+          </p>
         </Card>
       )}
       {error && (
@@ -201,28 +207,35 @@ export function Dashboard() {
           {configHint && <p className="muted">{configHint}</p>}
         </Card>
       )}
+      {!data && !error && (
+        <Card>
+          <p style={{ margin: 0 }}>Loading account snapshot from the API…</p>
+        </Card>
+      )}
       <div className="grid-4">
         <Card>
           <span className="mono">Resumes</span>
-          <div className="metric-value">{data?.counts.resumes ?? "—"}</div>
+          <div className="metric-value">{data?.counts?.resumes ?? "—"}</div>
         </Card>
         <Card>
           <span className="mono">ATS analyses</span>
-          <div className="metric-value">{data?.counts.ats_analyses ?? "—"}</div>
+          <div className="metric-value">{data?.counts?.ats_analyses ?? "—"}</div>
           <p>
             {data?.latest_ats_analysis?.overall_score == null
-              ? "Ready for confirmed evidence"
+              ? data
+                ? "No completed score yet"
+                : "—"
               : `${Math.round(Number(data.latest_ats_analysis.overall_score))}% latest score`}
           </p>
         </Card>
         <Card>
           <span className="mono">Interviews</span>
-          <div className="metric-value">{data?.counts.interviews ?? "—"}</div>
-          <p>{data?.capabilities.interview_evaluation === false ? "Practice mode" : "Your sessions"}</p>
+          <div className="metric-value">{data?.counts?.interviews ?? "—"}</div>
+          <p>{data?.capabilities?.interview_evaluation === false ? "Practice mode" : "Your sessions"}</p>
         </Card>
         <Card>
           <span className="mono">Saved jobs</span>
-          <div className="metric-value">{data?.counts.saved_jobs ?? "—"}</div>
+          <div className="metric-value">{data?.counts?.saved_jobs ?? "—"}</div>
           <p>Saved to your account</p>
         </Card>
       </div>

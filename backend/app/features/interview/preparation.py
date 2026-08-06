@@ -134,7 +134,21 @@ async def generate_interview_preparation(
     project_rows = client.table("candidate_projects").select("title,description").eq("user_id", user_id).order("display_order").execute().data or []
     candidate_skills = _candidate_skills(resume, skills_rows)
     job_skills = _job_terms(job)
-    analyses = client.table("ats_analyses").select("id,overall_score").eq("user_id", user_id).eq("resume_version_id", str(resume_version_id)).eq("job_description_id", str(job_description_id)).eq("status", "completed").order("created_at", desc=True).limit(1).execute().data or []
+    # Avoid order_by(created_at): Firestore drops docs missing that field.
+    analyses = (
+        client.table("ats_analyses")
+        .select("id,overall_score,created_at,completed_at,started_at")
+        .eq("user_id", user_id)
+        .eq("resume_version_id", str(resume_version_id))
+        .eq("job_description_id", str(job_description_id))
+        .eq("status", "completed")
+        .execute()
+        .data
+        or []
+    )
+    from app.database.repository import sort_rows_by_recency
+
+    analyses = sort_rows_by_recency(analyses, desc=True, preferred="completed_at")[:1]
     analysis = analyses[0] if analyses else None
     matched: list[str] = []
     missing: list[str] = []

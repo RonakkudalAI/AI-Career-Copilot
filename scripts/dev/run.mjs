@@ -70,6 +70,7 @@ function start(service) {
     console.error(`[dev] ${service.name} stopped (code=${code ?? "none"}, signal=${signal ?? "none"}). Stopping the other service.`);
     stop(code ?? 1);
   });
+  return child;
 }
 
 function stop(code = 0) {
@@ -88,7 +89,31 @@ process.on("exit", () => {
   }
 });
 
-for (const service of commands) start(service);
+async function waitForBackend() {
+  const healthUrl = `http://127.0.0.1:${backendPort(process.env)}/api/v1/health`;
+  const deadline = Date.now() + 30_000;
+  let lastError = "not started";
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(healthUrl, { signal: AbortSignal.timeout(2_000) });
+      if (response.ok) return;
+      lastError = `HTTP ${response.status}`;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error(`Backend did not become ready at ${healthUrl} (${lastError}).`);
+}
+
+try {
+  start(commands[0]);
+  await waitForBackend();
+  start(commands[1]);
+} catch (error) {
+  console.error(`[dev] ${error instanceof Error ? error.message : String(error)}`);
+  stop(1);
+}
 
 console.log(`[dev] Backend logs: inherited from uvicorn on http://127.0.0.1:${backendPort(process.env)}`);
 console.log(`[dev] Frontend logs: inherited from Vite on http://localhost:${configuredFrontendPort}`);

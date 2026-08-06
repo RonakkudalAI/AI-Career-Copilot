@@ -2,58 +2,55 @@
 
 ## Context and goals
 
-Career Copilot is a **private career workspace** for one candidate at a time. It is a monorepo:
+Career Copilot is a **private career workspace** for one candidate at a time.
 
 | Concern | Choice | Why |
 |---------|--------|-----|
-| UI | Vite + React 19 + TypeScript | Fast local DX, feature-folder UI, modern motion/3D on marketing/jobs |
-| API | FastAPI + Pydantic v2 | Typed request/response, dependency injection, async-friendly |
-| Database | Firebase Cloud Firestore | Cloud-backed multi-device workspace without self-hosting Postgres |
-| Files | Firebase Storage (GCS via Admin SDK) | Resumes, avatars, exports under `{user_id}/…` |
-| PDF text | pypdf (+ optional PyMuPDF/pdfplumber) | Fast text extraction without ML document converters |
-| LLM | Groq + NVIDIA Integrate API | OpenAI-compatible chat; optional, with deterministic fallbacks |
-| Secrets | Root `.env` server-only | Browser only sees `VITE_*` and never private keys |
+| UI | Vite + React 19 + TypeScript | Fast local DX, feature folders |
+| API | FastAPI + Pydantic v2 | Typed contracts, DI, async-friendly |
+| Database | Cloud Firestore | Cloud multi-device workspace without self-hosted Postgres |
+| Files | **Supabase Storage** | Private objects; app streams via JWT-owned `/files` |
+| PDF text | pypdf (+ optional faster backends) | Fast extract without ML converters |
+| LLM | Groq preferred, NVIDIA fallback | OpenAI-compatible chat; deterministic fallbacks |
+| Crews | CrewAI package optional | Official package when installed; else compatible sequential tools |
+| Secrets | Root `.env` server-only | Browser only sees `VITE_*` |
 
 ### Product goals
 
-1. **Evidence-grounded ATS** — score resumes against JDs with auditable keyword quotes.  
-2. **Confirm gate** — extraction is reviewable; only confirmed content powers ATS/learning/jobs.  
-3. **Helpful AI without invention** — LLMs plan, draft, and brief; they must not invent experience or video IDs.  
-4. **Owned data lifecycle** — create, list, delete, and full account wipe.
+1. **Evidence-grounded ATS** — auditable keyword quotes.  
+2. **Confirm gate** — only confirmed resume/JD text powers ATS, learning, prep, job match.  
+3. **Helpful AI without invention** — LLMs plan/draft/brief; never invent experience or video IDs.  
+4. **Owned data lifecycle** — create, list, delete, full account wipe.
 
 ### Non-goals
 
-- Multi-tenant org admin / recruiter portal  
+- Multi-tenant recruiter portal  
 - AI hiring decisions or interview grading  
 - Client-side Firestore access  
-- Product path embedding/cosine ATS
+- Product-path embedding/cosine ATS  
 
 ---
 
-## High-level system diagram
-
-> Full Mermaid set (unified + product journey + sequences): **[diagrams.md](./diagrams.md)**.
-
-### Unified view (Mermaid)
+## High-level system
 
 ```mermaid
 flowchart TB
   subgraph CLIENT["Browser (untrusted)"]
-    UI["React app<br/>frontend/src/App.tsx · features/*"]
-    TOK["JWT · localStorage + session cookie"]
-    DEMO{"Demo cookie?"}
+    UI["React app"]
+    TOK["JWT localStorage + cookie"]
+    DEMO{"Demo cookie? (dev only)"}
     MOCK["demo-session mocks"]
   end
 
-  subgraph EDGE["Vite BFF · vite.config.mjs"]
+  subgraph EDGE["Vite BFF"]
     P1["/api/backend → /api/v1"]
     P2["/api/files → /api/v1/files"]
   end
 
-  subgraph API["FastAPI · main.py"]
+  subgraph API["FastAPI"]
     MW["CORS · X-Request-ID · ApiError"]
     AUTH["get_current_user"]
-    RTR["router.py + feature routers"]
+    RTR["api/router + auth router"]
   end
 
   subgraph DOMAIN["features/*"]
@@ -63,15 +60,15 @@ flowchart TB
   end
 
   subgraph AGENTS["agents/*"]
-    A1["registry · Groq · NVIDIA · prompts"]
+    A1["routing · Groq · NVIDIA · prompts"]
   end
 
-  subgraph DATA["Admin SDK only"]
+  subgraph DATA["Server SDKs only"]
     FS[("Firestore")]
-    ST[("Storage")]
+    ST[("Supabase Storage")]
   end
 
-  subgraph EXT["External · server secrets"]
+  subgraph EXT["External"]
     X1["Groq · NVIDIA · YouTube · Adzuna"]
   end
 
@@ -86,190 +83,98 @@ flowchart TB
   DOMAIN --> FS
   DOMAIN --> ST
   AGENTS --> X1
-  F3 --> X1
 ```
 
-### ASCII overview (fallback)
+### ASCII fallback
 
 ```text
-Browser (App.tsx + features/*)
-  JWT localStorage + career_copilot_session
-  demo cookie → in-browser mocks only
-        │ same-origin /api/backend/*  /api/files/*
-        ▼
-Vite BFF (vite.config.mjs) → PUBLIC_API_BASE_URL + /api/v1
-        ▼
-FastAPI (main.py)  CORS · X-Request-ID · ApiError
-  get_current_user → routers → features/*
-        ├─► Firestore + Storage  (database/client.py, Admin SDK)
-        └─► Groq / NVIDIA / YouTube / Adzuna  (server .env only)
+Browser → /api/backend | /api/files
+        → Vite proxy → PUBLIC_API_BASE_URL + /api/v1
+        → FastAPI (JWT ownership)
+              ├─ Firestore (structured)
+              ├─ Supabase Storage (files)
+              └─ Groq / NVIDIA / YouTube / Adzuna
 ```
+
+Full diagram set: [diagrams.md](./diagrams.md).
 
 ---
 
-## Layered backend design
+## Layered backend
 
 ```text
 backend/app/
-├── main.py                 # ASGI app composition only
-├── core/                   # settings, constants, errors (no domain logic)
-├── api/                    # HTTP surface: router.py, schemas.py
+├── main.py                 # ASGI composition, CORS, middleware
+├── core/                   # settings, constants, errors
+├── api/                    # HTTP surface (router, schemas, auth)
 ├── database/               # Firestore + storage adapters, ownership helpers
-├── agents/                 # provider clients, prompt files, agent registry
-└── features/               # domain modules (auth, parsing, ATS, …)
+├── agents/                 # providers, prompts, registry, preferred routing
+└── features/               # domain modules
 ```
 
-### Responsibility split
+### Trust boundaries
 
-| Layer | Owns | Must not own |
-|-------|------|--------------|
-| `main.py` | App wiring, middleware, router mounts | Business rules |
-| `core/` | Env config, constants, error shape | Feature algorithms |
-| `api/router.py` | HTTP mapping, auth deps, orchestration | Low-level PDF math / keyword match details (calls features) |
-| `database/` | Table allow-list, query chain, storage I/O | Feature scoring |
-| `agents/` | LLM clients, rate limits, prompt loading | Product ATS score formula |
-| `features/*` | Domain algorithms and crews | Transport details when possible |
-
-**Why this shape:** `router.py` is large because many endpoints are thin orchestration over Firestore + one feature function. Heavier logic is extracted into `features/` modules so algorithms can be unit-tested without HTTP.
+| Boundary | Rule |
+|----------|------|
+| Browser | Untrusted; never holds service keys |
+| Vite BFF | Dev/preview proxy only; not a second auth system |
+| FastAPI | Authenticates JWT; owns all multi-tenant isolation |
+| Firestore rules | Deny all client SDK access |
+| Storage | Private bucket; bytes only via authenticated file route |
 
 ---
 
-## Trust boundaries
+## Provider routing
 
-```text
-                    UNTRUSTED                         TRUSTED
-┌─────────────────────────────────────┐   ┌─────────────────────────────┐
-│ Browser / public network            │   │ FastAPI process             │
-│ • UI code                           │──►│ • AUTH_SECRET               │
-│ • JWT in localStorage/cookie        │   │ • Firebase service account  │
-│ • VITE_FIREBASE_* (public web cfg)  │   │ • GROQ / NVIDIA / YouTube   │
-│ • Never: LLM keys, service account  │   │ • Ownership checks          │
-└─────────────────────────────────────┘   └──────────────┬──────────────┘
-                                                         │ Admin SDK only
-                                                         ▼
-                                          ┌─────────────────────────────┐
-                                          │ Firestore + Storage         │
-                                          │ Client rules: deny all      │
-                                          │ firebase/firestore.rules    │
-                                          └─────────────────────────────┘
-```
+`backend/app/agents/providers/routing.py`:
 
-**Why deny-all Firestore rules?**  
-The app treats the API as the only data path. Browser Firebase config is for **Auth (Google)** UX only, not for reading candidate rows. Ownership is enforced in Python via `user_id` filters (`database/repository.py`).
+- `preferred_llm_provider(settings)` → `LLM_PROVIDER` (`groq` \| `nvidia`)  
+- `preferred_llm_providers(settings)` → configured providers in preference order  
+
+Agents that can use either provider (improvement brief, profile fill, resume suggestions, document sections) try **preferred first**, then the other, then deterministic behavior where defined.
+
+Interview questions use **Groq only** (templates on failure). Product ATS score uses **no LLM**.
+
+Optional **OmniRoute** (`OMNIROUTE_ENABLED`) can rewrite provider base URL/key when a local OpenAI-compatible sidecar is running; default is off.
 
 ---
 
-## Authentication architecture
+## Data access notes
 
-| Piece | Location | Role |
-|-------|----------|------|
-| Password hash | `api/router.py` (`_password_hash` / `_password_matches`) | scrypt |
-| JWT create/validate | `features/auth/service.py` | HS256, `sub` + `email` + `iat` + `exp` |
-| Current user dep | `get_current_user` | Bearer header, else session cookie |
-| Frontend session | `features/auth/api/client.ts` | save token + cookie |
-| Google path | `features/auth/firebase.ts` → `POST /auth/firebase` | Verify Firebase ID token server-side, issue app JWT |
+### Firestore recency
 
-Algorithm constant: `core/constants.py` → `JWT_ALGORITHM = "HS256"`.  
-Min password length: `MIN_PASSWORD_LENGTH` (currently **8**).
+Firestore **excludes documents missing the `order_by` field**.  
+Legacy rows may lack `created_at` but have `started_at` / `completed_at`.
 
----
+**App rule:** for user-scoped “newest first” lists, fetch without relying solely on server `order_by(created_at)`, then sort with `sort_rows_by_recency` (`database/repository.py`). New writes always set `created_at`.
 
-## Data path architecture
+### Object storage
 
-Firestore is accessed through a **Supabase-like query adapter** in `database/client.py`:
+`ObjectStorage` uses:
 
-```text
-client.table("resumes").select("*").eq("user_id", id).order(...).execute()
-```
+1. In-memory backend when `APP_ENV=test`  
+2. **Supabase Storage** when URL + service role + bucket are set  
+3. Fail closed otherwise  
 
-**Why an adapter?**  
-Feature code and the large router can use a chainable API while the underlying store is Firestore (and storage can be Firebase or legacy Supabase storage depending on config). Table names are allow-listed (`_TABLES`) to prevent arbitrary collection access.
-
-Ownership helpers:
-
-- `owned_row` / `owned_rows` — always filter by `user_id`  
-- `write_activity` / `list_recent_activity` — dashboard feed with prune cap  
+Logical prefixes: `DOCUMENT_BUCKET`, `AVATAR_BUCKET` inside `SUPABASE_STORAGE_BUCKET`.
 
 ---
 
-## AI / agent architecture
-
-```text
-agents/registry.py
-    │  lists capability for GET /agents/status
-    ▼
-agents/providers/
-    nvidia_client.py   groq_client.py   rate_limit.py   common.py
-    │
-    ▼
-feature agents (domain-specific)
-    profile/agent/*          fill profile
-    ats/agents/*             improvement brief
-    interview/agent/*        questions
-    learning/agents/crew/*   YouTube path
-    resume_improvement/agents/crew/*  improve loop
-    document_parsing/parsing/llm_sections.py  section map
-```
-
-Prompts live as versioned text files under `agents/prompts/*.txt`.
-
-**Product ATS is intentionally not an agent.**  
-Scoring is pure Python in `features/ats/ats_score.py`. LLMs only produce optional improvement briefs after the score is known.
-
----
-
-## Frontend architecture
-
-```text
-main.tsx
-  └── App.tsx          # route table + ProtectedRoute
-        ├── marketing  # public landing
-        ├── auth       # sign-in/up, password, verify
-        └── workspace-shell
-              └── lazy feature pages (dashboard, resume, interview, …)
-```
-
-Shared infrastructure:
-
-| Module | Responsibility |
-|--------|----------------|
-| `shared/api/client.ts` | Authenticated `fetch`, GET dedupe, demo short-circuit |
-| `shared/config.ts` | Token keys, demo cookie, API base resolution |
-| `shared/routes.ts` | Canonical path constants |
-| `vite.config.mjs` | `/api/backend` and `/api/files` reverse proxy |
-
----
-
-## Key design decisions and trade-offs
+## Key decisions
 
 | Decision | Trade-off |
 |----------|-----------|
-| Confirm gate before ATS | Extra UX step; prevents scoring unreviewed garbage extraction |
-| Deterministic keyword ATS as product path | Transparent, testable; weaker “semantic” fit than embeddings |
-| Optional LLM composite scorer kept as library | Research path without polluting product persistence |
-| PDF: pypdf with optional fast backends | Lightweight installs; PyMuPDF/pdfplumber when installed |
-| Section LLM assigns **line numbers only** | Model cannot rewrite resume body |
-| YouTube IDs only from API | No hallucinated watch URLs; search-page fallback if key missing |
-| No AI interview grading | Avoids fake “hireability” scores |
-| Large `router.py` | Fast to wire endpoints; domain logic still in features |
-| JWT in localStorage | Simple local app; XSS risk accepted for local-first product |
+| Confirm gate before ATS | Extra step; prevents scoring unreviewed OCR garbage |
+| Deterministic product ATS | Less “smart,” more auditable |
+| Supabase for files, Firestore for rows | Two clouds; clear ownership of each concern |
+| Groq-first agents | Faster/cheaper default; NVIDIA remains fallback |
+| No AI interview grading | Avoids false hiring signals |
+| Demo cookie only in non-PROD | Production never serves empty in-memory mocks as real data |
 
 ---
 
-## Runtime configuration
+## Related
 
-Settings are loaded once via Pydantic Settings from **repo-root** `.env`:
-
-- File: `backend/app/core/config.py`  
-- Root path: `Path(__file__).resolve().parents[3] / ".env"`  
-
-`get_settings()` is cached (`lru_cache`). Provider pair validation: if an API key is set, the matching model name is required.
-
----
-
-## Related docs
-
-- [Code map](./code-map.md) — file-by-file ownership  
-- [Flows](./flows.md) — request sequences  
-- [Data model](./data-model.md) — collections and statuses  
-- [Operations](./operations.md) — run and diagnose  
+- [Data model](./data-model.md)  
+- [Operations](./operations.md)  
+- [Features index](./features/README.md)  

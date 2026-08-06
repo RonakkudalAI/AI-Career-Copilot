@@ -19,13 +19,75 @@ CANDIDATE_TABLES = {
     "languages": "candidate_languages",
     "links": "candidate_links",
 }
+
+# Firestore omits documents that lack the order_by field. Prefer client-side
+# recency sort with fallbacks so legacy rows without created_at still appear.
+_TIME_FALLBACKS = (
+    "created_at",
+    "completed_at",
+    "started_at",
+    "saved_at",
+    "updated_at",
+    "candidate_confirmed_at",
+)
+
+
 def client_for(settings: Settings, user: CurrentUser):
     return database_client(settings)
-def owned_rows(client, table: str, user: CurrentUser, order: str | None = None) -> list[dict[str, Any]]:
-    query = client.table(table).select("*").eq("user_id", str(user.id))
+
+
+def row_recency_key(row: dict[str, Any], preferred: str | None = None) -> str:
+    """Stable sort key for newest-first lists when created_at may be missing.
+
+    Timestamp strings sort lexicographically when ISO-8601. Missing times use a
+    low sentinel so rows *with* timestamps always win under reverse=True.
+    """
+    keys = (preferred,) + _TIME_FALLBACKS if preferred else _TIME_FALLBACKS
+    for key in keys:
+        if not key:
+            continue
+        value = row.get(key)
+        if value not in (None, ""):
+            return f"1:{value}"
+    # Last resort: document id (always sorts below real timestamps).
+    return f"0:{row.get('id') or ''}"
+
+
+def sort_rows_by_recency(
+    rows: list[dict[str, Any]],
+    *,
+    desc: bool = True,
+    preferred: str | None = "created_at",
+) -> list[dict[str, Any]]:
+    return sorted(rows, key=lambda row: row_recency_key(row, preferred), reverse=desc)
+
+
+def owned_rows(
+    client,
+    table: str,
+    user: CurrentUser,
+    order: str | None = None,
+    *,
+    desc: bool = False,
+) -> list[dict[str, Any]]:
+    """List user-owned rows.
+
+    Ordering is applied in-process. Server-side ``order_by(created_at)`` is unsafe
+    on Firestore when some legacy documents omit ``created_at`` (they vanish).
+    """
+    rows = (
+        client.table(table)
+        .select("*")
+        .eq("user_id", str(user.id))
+        .execute()
+        .data
+        or []
+    )
     if order:
-        query = query.order(order)
-    return query.execute().data or []
+        return sort_rows_by_recency(rows, desc=desc, preferred=order)
+    return rows
+
+
 def owned_row(client, table: str, record_id: UUID | str, user: CurrentUser) -> dict[str, Any]:
     rows = (
         client.table(table)
@@ -40,6 +102,8 @@ def owned_row(client, table: str, record_id: UUID | str, user: CurrentUser) -> d
     if not rows:
         raise ApiError(404, "record_not_found", "The requested record was not found.")
     return rows[0]
+
+
 def prune_activity_events(
     client,
     user: CurrentUser,
@@ -49,13 +113,13 @@ def prune_activity_events(
     try:
         rows = (
             client.table("activity_events")
-            .select("id,created_at")
+            .select("id,created_at,started_at")
             .eq("user_id", str(user.id))
-            .order("created_at", desc=True)
             .execute()
             .data
             or []
         )
+        rows = sort_rows_by_recency(rows, desc=True)
         stale_ids = activity_ids_to_delete(rows, keep=keep)
         if not stale_ids:
             return 0
@@ -64,6 +128,8 @@ def prune_activity_events(
     except Exception:
         logger.warning("activity_prune_failed user_id=%s", user.id)
         return 0
+
+
 def list_recent_activity(
     client,
     user: CurrentUser,
@@ -73,16 +139,17 @@ def list_recent_activity(
     fetch_limit = min(max(limit, 0), MAX_ACTIVITY_EVENTS)
     if fetch_limit == 0:
         return []
-    return (
+    rows = (
         client.table("activity_events")
         .select("id,event_type,summary,entity_type,entity_id,created_at")
         .eq("user_id", str(user.id))
-        .order("created_at", desc=True)
-        .limit(fetch_limit)
         .execute()
         .data
         or []
     )
+    return sort_rows_by_recency(rows, desc=True)[:fetch_limit]
+
+
 def write_activity(
     client,
     user: CurrentUser,
@@ -91,6 +158,8 @@ def write_activity(
     entity_type: str | None = None,
     entity_id: str | None = None,
 ) -> None:
+    from datetime import UTC, datetime
+
     try:
         client.table("activity_events").insert(
             {
@@ -99,6 +168,7 @@ def write_activity(
                 "summary": summary,
                 "entity_type": entity_type,
                 "entity_id": entity_id,
+                "created_at": datetime.now(UTC).isoformat(),
             }
         ).execute()
         prune_activity_events(client, user, keep=MAX_ACTIVITY_EVENTS)
