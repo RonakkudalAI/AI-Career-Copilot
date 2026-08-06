@@ -109,6 +109,7 @@ async def run_resume_improvement_crew(
         )
     except Exception as exc:
         logger.exception("crew_analyze_gaps_failed")
+        audit.success = False
         audit.tasks.append(
             CrewTaskResult(
                 name="analyze_gaps",
@@ -118,7 +119,12 @@ async def run_resume_improvement_crew(
                 error=str(exc),
             )
         )
-        gaps = {}
+        # Fail closed: do not invent empty gaps and continue generating ungrounded suggestions.
+        raise ApiError(
+            502,
+            "crew_gap_analysis_failed",
+            "Resume improvement could not analyze ATS gaps. Fix the ATS analysis source and retry.",
+        ) from exc
     try:
         raw = await tool_generate_resume_suggestions(settings, context)
         audit.tasks.append(

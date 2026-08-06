@@ -1,6 +1,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from app.core.config import Settings
@@ -30,7 +31,10 @@ async def parse_document_bytes(
     settings: Settings,
     schema_version: str = "resume-extraction-v1",
 ) -> tuple[str, dict[str, Any]]:
-    plain_text = extract_text(content, mime_type)
+    # PDF/DOCX extraction is synchronous and can initialize CPU-heavy models.
+    # Keep it off the async server event loop so health/auth requests remain
+    # responsive while a document is being parsed.
+    plain_text = await asyncio.to_thread(extract_text, content, mime_type)
     extracted = await extract_sections_enriched(
         plain_text,
         settings,

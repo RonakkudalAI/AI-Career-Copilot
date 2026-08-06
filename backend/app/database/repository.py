@@ -105,7 +105,8 @@ def write_activity(
     except Exception:
         logger.warning("activity_write_failed operation=%s user_id=%s", event_type, user.id)
 def sync_profile_from_auth_metadata(client, user: CurrentUser) -> dict[str, Any]:
-    profile = client.table("profiles").select("*").eq("id", str(user.id)).single().execute().data or {}
+    profile_rows = client.table("profiles").select("*").eq("id", str(user.id)).single().execute().data or []
+    profile = profile_rows[0] if profile_rows else {}
     auth_name = (user.full_name or "").strip()
     existing = str(profile.get("full_name") or "").strip()
     if auth_name and not existing:

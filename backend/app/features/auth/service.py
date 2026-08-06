@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
@@ -85,4 +86,6 @@ async def get_current_user(
     token = parse_bearer_header(authorization) if authorization else career_copilot_session
     if not token:
         raise ApiError(401, "authentication_required", "Authentication is required.")
-    return _user_from_token(token, settings)
+    # Firestore identity verification is synchronous network I/O. Keep it off
+    # the async event loop so auth/session cannot stall unrelated requests.
+    return await asyncio.to_thread(_user_from_token, token, settings)

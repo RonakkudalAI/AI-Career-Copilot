@@ -198,7 +198,9 @@ class SupabaseStorageObject:
         return items
 
     def create_signed_url(self, path: str, expires: int) -> dict[str, str]:
-        self._request("GET", self._url(path))
+        # The application file route enforces ownership and performs the actual
+        # storage read. Do not perform a second remote HEAD/GET just to build a
+        # same-origin URL for every profile/bootstrap request.
         url = f"/api/files/{quote(self.bucket)}/{quote(path, safe='/')}"
         return {"signedURL": url, "authenticated_file_url": url, "expires_in": int(expires)}
 
@@ -268,8 +270,8 @@ class ObjectStorage:
     """Object storage facade.
 
     - APP_ENV=test → in-memory (no network)
-    - Firebase configured → Firebase Storage (GCS)  [product default]
-    - else Supabase Storage service-role (legacy fallback)
+    - Supabase Storage when SUPABASE_URL + service role + bucket are set
+    - otherwise raises ApiError (fail closed — no silent invent of storage)
     """
 
     def __init__(self, settings: Settings):
@@ -277,13 +279,17 @@ class ObjectStorage:
         self._memory = str(settings.app_env).lower() == "test"
 
     def from_(self, bucket: str) -> SupabaseStorageObject | MemoryStorageObject:
+        from app.core.errors import ApiError
+
         if self._memory:
             return MemoryStorageObject(self.settings, bucket)
         if self.settings.supabase_storage_configured:
             return SupabaseStorageObject(self.settings, bucket)
-        raise RuntimeError(
-            "Supabase Storage is not configured. Set SUPABASE_URL, "
-            "SUPABASE_SERVICE_ROLE_KEY, and SUPABASE_STORAGE_BUCKET."
+        raise ApiError(
+            503,
+            "storage_not_configured",
+            "Object storage is not configured. Set SUPABASE_URL, "
+            "SUPABASE_SERVICE_ROLE_KEY, and SUPABASE_STORAGE_BUCKET.",
         )
 
 
@@ -401,7 +407,8 @@ class FirestoreQuery:
         data = [] if self.head else [self._project(document) for document in docs]
         count = len(docs) if self.count_requested else None
         if self.single_row:
-            return FirestoreResult(data[0] if data else None, count)
+            # Always return a list (0 or 1 row) so Result.data has a stable type.
+            return FirestoreResult(data[:1], count)
         return FirestoreResult(data, count)
 
     def _documents(self, collection):
@@ -501,9 +508,13 @@ def firebase_admin_app(settings: Settings):
 
 
 def database_client(settings: Settings):
+    from app.core.errors import ApiError
+
     if not settings.firebase_configured:
-        raise RuntimeError(
-            "Firestore is not configured. Set FIREBASE_PROJECT_ID and FIREBASE_CREDENTIALS_PATH."
+        raise ApiError(
+            503,
+            "database_not_configured",
+            "Firestore is not configured. Set FIREBASE_PROJECT_ID and FIREBASE_CREDENTIALS_PATH.",
         )
     return FirestoreClient(settings)
 

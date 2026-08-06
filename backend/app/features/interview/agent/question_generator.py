@@ -100,21 +100,26 @@ async def generate_interview_questions(
                     "agent": "interview_questions",
                     "fallback": False,
                 }
-            fallback_reason = "groq_returned_no_questions"
-            logger.warning("groq_interview_questions_empty")
-        except ApiError as exc:
-            fallback_reason = exc.code
-            logger.warning("groq_interview_questions_failed code=%s message=%s", exc.code, exc.message)
+            raise ApiError(
+                502,
+                "groq_returned_no_questions",
+                "The interview question provider returned no usable questions. Retry the session start.",
+            )
+        except ApiError:
+            raise
         except Exception as exc:
-            fallback_reason = "groq_unexpected_error"
             logger.warning("groq_interview_questions_failed error=%s", exc)
-    else:
-        fallback_reason = "groq_not_configured"
+            raise ApiError(
+                502,
+                "interview_questions_provider_failed",
+                f"Could not generate interview questions ({type(exc).__name__}).",
+            ) from exc
+    # Groq not configured: templates are the explicit non-AI path, not a silent fallback.
     return {
         "questions": _template_questions(mode, count, target_role),
         "provider": "template",
         "model": None,
         "agent": "interview_questions",
-        "fallback": True,
-        "fallback_reason": fallback_reason,
+        "fallback": False,
+        "fallback_reason": "groq_not_configured",
     }

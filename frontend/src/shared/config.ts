@@ -37,6 +37,8 @@ export function resolveUpstreamApiOrigin(): string {
 }
 
 export function isDemoCookiePresent(cookieSource?: string): boolean {
+  // Production builds never treat demo cookie as active (fail closed).
+  if (import.meta.env.PROD) return false;
   if (typeof document === "undefined" && cookieSource === undefined) return false;
   const raw = cookieSource ?? document.cookie;
   return raw.split("; ").includes(DEMO_COOKIE_PAIR);

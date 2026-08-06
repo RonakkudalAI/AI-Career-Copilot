@@ -107,7 +107,12 @@ function initialState(): DemoState {
 
 let state = initialState();
 
+/**
+ * Demo mode is development-only. Production builds never honor the demo cookie
+ * (no invented ATS scores / offline API shim).
+ */
 export function isDemoSession() {
+  if (import.meta.env.PROD) return false;
   return isDemoCookiePresent();
 }
 

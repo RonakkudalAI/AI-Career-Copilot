@@ -208,11 +208,26 @@ def auth_firebase(payload: dict[str, Any] = Body(...), settings: Settings = Depe
         decoded = firebase_auth.verify_id_token(
             id_token,
             app=admin_app,
-            check_revoked=settings.firebase_check_revoked,
+            check_revoked=settings.effective_firebase_check_revoked,
             clock_skew_seconds=getattr(settings, "firebase_clock_skew_seconds", 10),
         )
+    except ApiError:
+        raise
+    except RuntimeError as exc:
+        # Producer is misconfigured Admin/credentials — not an invalid user token.
+        detail = str(exc)[:200]
+        raise ApiError(
+            503,
+            "firebase_admin_unavailable",
+            f"Firebase Admin is not available: {detail}",
+        ) from exc
     except Exception as exc:
-        raise ApiError(401, "invalid_firebase_token", "The Firebase session is invalid or expired.") from exc
+        detail = f"{type(exc).__name__}: {str(exc)[:120]}"
+        raise ApiError(
+            401,
+            "invalid_firebase_token",
+            f"The Firebase session is invalid or expired ({detail}).",
+        ) from exc
     email = str(decoded.get("email") or "").strip().lower()
     uid = str(decoded.get("uid") or "").strip()
     if not uid:
@@ -350,7 +365,8 @@ def health(settings: Settings = Depends(get_settings)) -> dict[str, Any]:
         "status": "ok" if probe["status"] == "reachable" else "degraded",
         "service": settings.app_name,
         "database_engine": "firestore",
-        "storage_engine": "supabase_storage",
+        "storage_engine": probe.get("storage_engine")
+        or ("supabase_storage" if settings.supabase_storage_configured else "unconfigured"),
         "database_configured": settings.database_configured,
         "storage_configured": settings.storage_configured,
         "firebase_project_id": settings.firebase_project_id or None,
@@ -741,6 +757,8 @@ def _prepare_candidate_payload(
                 data["link_type"] = link_type
             if url:
                 data["url"] = url
+    if resource in {"experiences", "education", "projects", "languages", "links"}:
+        data.setdefault("display_order", 0)
     return data
 
 
@@ -1120,9 +1138,8 @@ def apply_profile_from_resume(
     updated_profile_fields: list[str] = []
 
     # --- profile core fields ---
-    current_profile = (
-        client.table("profiles").select("*").eq("id", uid).single().execute().data or {}
-    )
+    _profile_rows = client.table("profiles").select("*").eq("id", uid).single().execute().data or []
+    current_profile = _profile_rows[0] if _profile_rows else {}
     profile_patch: dict[str, Any] = {}
     allowed = {
         "full_name",
@@ -1402,12 +1419,12 @@ def list_candidate_records(
     table = CANDIDATE_TABLES.get(resource)
     if not table:
         raise ApiError(404, "resource_not_found", "The requested profile resource does not exist.")
-    return owned_rows(
-        client_for(settings, user),
-        table,
-        user,
-        "display_order" if resource not in {"skills", "certifications"} else None,
-    )
+    rows = owned_rows(client_for(settings, user), table, user)
+    if resource not in {"skills", "certifications"}:
+        # Sort after reading so legacy rows without display_order are not
+        # silently excluded by Firestore's order_by behavior.
+        rows.sort(key=lambda row: (row.get("display_order") is None, row.get("display_order") or 0))
+    return rows
 
 
 @router.post("/profile/{resource}", status_code=201)
@@ -1539,21 +1556,20 @@ def list_resumes(user: CurrentUser = Depends(get_current_user), settings: Settin
         .data
         or []
     )
+    version_rows = (
+        client.table("resume_versions")
+        .select("id,resume_id,version_number,original_filename,mime_type,extraction_status,created_at,size_bytes")
+        .eq("user_id", str(user.id))
+        .order("version_number", desc=True)
+        .execute()
+        .data
+        or []
+    )
+    latest_by_resume: dict[str, dict[str, Any]] = {}
+    for version in version_rows:
+        latest_by_resume.setdefault(str(version.get("resume_id")), version)
     for row in rows:
-        versions = (
-            client.table("resume_versions")
-            .select(
-                "id,version_number,original_filename,mime_type,extraction_status,created_at,size_bytes"
-            )
-            .eq("resume_id", row["id"])
-            .eq("user_id", str(user.id))
-            .order("version_number", desc=True)
-            .limit(1)
-            .execute()
-            .data
-            or []
-        )
-        row["latest_version"] = versions[0] if versions else None
+        row["latest_version"] = latest_by_resume.get(str(row["id"]))
     return rows
 
 
@@ -1568,11 +1584,13 @@ async def create_resume(
     resume_id = str(uuid.uuid4())
     profile_name = ""
     try:
-        profile_row = (
-            client.table("profiles").select("full_name").eq("id", str(user.id)).single().execute().data or {}
+        profile_rows = (
+            client.table("profiles").select("full_name").eq("id", str(user.id)).single().execute().data or []
         )
+        profile_row = profile_rows[0] if profile_rows else {}
         profile_name = str(profile_row.get("full_name") or "").strip()
-    except Exception:
+    except Exception as exc:
+        logger.warning("resume_create_profile_lookup_failed type=%s", type(exc).__name__)
         profile_name = ""
     if (title or "").strip():
         resume_title = title.strip()
@@ -2132,18 +2150,23 @@ def delete_ats(
         client.table("resume_improvement_runs").update({"ats_analysis_id": None}).eq(
             "ats_analysis_id", str(analysis_id)
         ).eq("user_id", str(user.id)).execute()
-    except Exception:
-        pass
-    try:
         client.table("resume_suggestions").update({"analysis_id": None}).eq(
             "analysis_id", str(analysis_id)
         ).eq("user_id", str(user.id)).execute()
-    except Exception:
-        pass
-    client.table("ats_evidence").delete().eq("analysis_id", str(analysis_id)).eq(
-        "user_id", str(user.id)
-    ).execute()
-    client.table("ats_analyses").delete().eq("id", str(analysis_id)).eq("user_id", str(user.id)).execute()
+        client.table("ats_evidence").delete().eq("analysis_id", str(analysis_id)).eq(
+            "user_id", str(user.id)
+        ).execute()
+        client.table("ats_analyses").delete().eq("id", str(analysis_id)).eq(
+            "user_id", str(user.id)
+        ).execute()
+    except ApiError:
+        raise
+    except Exception as exc:
+        raise ApiError(
+            503,
+            "ats_delete_failed",
+            "Could not delete the ATS analysis and related rows. Retry the request.",
+        ) from exc
     write_activity(
         client,
         user,
@@ -2814,6 +2837,19 @@ async def generate_learning_path(
         role_title=role_title,
     )
     items = list(generated.get("items") or [])
+    crew_meta = generated.get("crew") if isinstance(generated.get("crew"), dict) else {}
+    if crew_meta.get("success") is False:
+        raise ApiError(
+            502,
+            "learning_path_generation_failed",
+            str(crew_meta.get("message") or "Learning path generation failed. Check ATS evidence and YouTube API configuration."),
+        )
+    if not items:
+        raise ApiError(
+            422,
+            "no_learning_gaps",
+            "No missing or partial ATS requirements were available to build a YouTube learning path.",
+        )
     algorithm_version = str(generated.get("algorithm_version") or CAREER_MATCH_ALGORITHM_VERSION)
     path = client.table("learning_paths").insert({
         "user_id": str(user.id),

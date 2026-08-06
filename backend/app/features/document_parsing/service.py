@@ -42,7 +42,12 @@ def validate_document(filename: str, declared_mime: str | None, content: bytes, 
     if not content:
         raise ApiError(400, "empty_document", "The selected document is empty.")
     if len(content) > max_bytes:
-        raise ApiError(413, "document_too_large", "The selected document exceeds the 10 MB limit.")
+        max_mb = max(1, int(max_bytes / (1024 * 1024)))
+        raise ApiError(
+            413,
+            "document_too_large",
+            f"The selected document exceeds the {max_mb} MB limit.",
+        )
     suffix = Path(filename).suffix.lower()
     expected = ALLOWED_SUFFIXES.get(suffix)
     if not expected:

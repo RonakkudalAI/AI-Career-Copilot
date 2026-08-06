@@ -323,9 +323,13 @@ def update_existing_resume_content(
             client.table("ats_analyses").delete().eq("user_id", str(user.id)).eq(
                 "resume_version_id", str(record["id"])
             ).execute()
-    except Exception:
-        # Best-effort invalidation; create_ats also fingerprints source content.
-        pass
+    except Exception as exc:
+        # Fail closed: success with stale ATS evidence is worse than a hard error.
+        raise ApiError(
+            503,
+            "ats_invalidation_failed",
+            "Resume content was updated but related ATS analyses could not be cleared. Retry the update.",
+        ) from exc
     write_activity(
         client,
         user,

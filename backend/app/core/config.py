@@ -23,10 +23,10 @@ class Settings(BaseSettings):
     supabase_url: str = ""
     supabase_service_role_key: str = ""
     supabase_storage_bucket: str = "career-copilot-files"
-    firebase_clock_skew_seconds: int = Field(default=10, ge=0, le=60)
-    # Revocation checks call Firebase Auth after signature verification. Keep this
-    # opt-in for local development, where the Admin SDK may not have Auth lookup
-    # permissions even though Firestore access is configured correctly.
+    firebase_clock_skew_seconds: int = Field(default=60, ge=0, le=300)
+    # Revocation checks call Firebase Auth after signature verification.
+    # Default False for local Admin setups that lack Auth lookup; production
+    # forces True via model_validator unless explicitly overridden.
     firebase_check_revoked: bool = False
     auth_secret: str
     jwt_ttl_seconds: int = Field(default=60 * 60 * 24 * 7, ge=60, le=60 * 60 * 24 * 30)
@@ -119,6 +119,13 @@ class Settings(BaseSettings):
     @property
     def firebase_configured(self) -> bool:
         return bool(self.firebase_project_id and self.firebase_credentials_path)
+
+    @property
+    def effective_firebase_check_revoked(self) -> bool:
+        """Production always checks revocation; development uses the env flag."""
+        if str(self.app_env).lower() == "production":
+            return True
+        return bool(self.firebase_check_revoked)
 
     @property
     def resolved_supabase_url(self) -> str:

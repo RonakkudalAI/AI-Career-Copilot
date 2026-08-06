@@ -37,11 +37,13 @@ class AvatarStorageTests(unittest.TestCase):
     def tearDown(self) -> None:
         MemoryStorageObject._STORE.clear()
 
-    def test_missing_avatar_file_is_not_exposed_to_the_browser(self) -> None:
-        profile = {"id": "candidate-1", "avatar_path": "candidate-1/avatars/missing.jpg"}
+    def test_missing_avatar_file_keeps_path_without_url(self) -> None:
+        """Storage outage must not invent 'no avatar' by clearing avatar_path."""
+        path = "candidate-1/avatars/missing.jpg"
+        profile = {"id": "candidate-1", "avatar_path": path}
         enriched = attach_avatar_url(profile, self.client, self.settings)
         self.assertIsNotNone(enriched)
-        self.assertIsNone(enriched["avatar_path"])
+        self.assertEqual(enriched["avatar_path"], path)
         self.assertIsNone(enriched["avatar_url"])
 
     def test_existing_avatar_file_receives_same_origin_url(self) -> None:

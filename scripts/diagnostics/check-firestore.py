@@ -16,7 +16,17 @@ def main() -> None:
         client = database_client(settings)
         check_id = str(uuid.uuid4())
         client.table("_setup_checks").insert({"id": check_id, "kind": "startup"}).execute()
-        row = client.table("_setup_checks").select("id,kind").eq("id", check_id).single().execute().data
+        # .single() always returns Result.data as a list of 0..1 rows (stable type).
+        rows = (
+            client.table("_setup_checks")
+            .select("id,kind")
+            .eq("id", check_id)
+            .single()
+            .execute()
+            .data
+            or []
+        )
+        row = rows[0] if rows else None
         if not row or row.get("id") != check_id:
             raise RuntimeError("Firestore read-after-write verification returned the wrong document")
         client.table("_setup_checks").delete().eq("id", check_id).execute()

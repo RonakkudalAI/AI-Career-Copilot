@@ -157,8 +157,17 @@ export function createClient() {
           return { data: { user: null }, error: { message: (error as Error).message } };
         }
       },
-      async updateUser({ password }: { password: string }) {
-        return request("/auth/update-password", { password })
+      async updateUser({
+        password,
+        current_password,
+      }: {
+        password: string;
+        current_password?: string;
+      }) {
+        return request("/auth/update-password", {
+          password,
+          ...(current_password ? { current_password } : {}),
+        })
           .then(() => ({ error: null as AuthError }))
           .catch((error) => ({ error: { message: (error as Error).message } }));
       },

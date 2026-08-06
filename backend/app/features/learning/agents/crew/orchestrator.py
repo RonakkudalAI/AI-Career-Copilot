@@ -148,8 +148,7 @@ async def run_learning_youtube_crew(
         )
     except Exception as exc:
         logger.warning("plan_youtube_lessons failed: %s", exc)
-        context["plan"] = {"recommendations": []}
-        context["planner_provider"] = "failed"
+        audit.success = False
         audit.tasks.append(
             CrewTaskResult(
                 name="plan_youtube_lessons",
@@ -159,6 +158,8 @@ async def run_learning_youtube_crew(
                 error=f"{type(exc).__name__}: {exc}",
             )
         )
+        audit.message = f"YouTube planner failed: {type(exc).__name__}"
+        return [], audit
     try:
         final = await tool_validate_and_materialize(settings, context)
         items = list(final.get("items") or [])

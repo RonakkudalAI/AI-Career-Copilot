@@ -74,7 +74,15 @@ def signed_avatar_url(client, settings: Settings, avatar_path: str | None) -> st
             str(avatar_path), settings.export_signed_url_seconds
         )
         return response.get("signedURL") or response.get("signed_url")
-    except Exception:
+    except Exception as exc:
+        # Do not invent "no avatar" — keep path; surface URL failure via null URL only.
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "avatar_signed_url_failed path=%s type=%s",
+            str(avatar_path)[:80],
+            type(exc).__name__,
+        )
         return None
 def attach_avatar_url(profile: dict[str, Any] | None, client, settings: Settings) -> dict[str, Any] | None:
     if not profile:
@@ -82,8 +90,8 @@ def attach_avatar_url(profile: dict[str, Any] | None, client, settings: Settings
     enriched = dict(profile)
     avatar_url = signed_avatar_url(client, settings, profile.get("avatar_path"))
     enriched["avatar_url"] = avatar_url
-    if profile.get("avatar_path") and not avatar_url:
-        enriched["avatar_path"] = None
+    # Keep avatar_path even when URL generation fails so storage outages do not
+    # look like "user deleted avatar" and do not get written back as null.
     return enriched
 def safe_avatar_filename(filename: str | None) -> str:
     name = Path(filename or "avatar").name

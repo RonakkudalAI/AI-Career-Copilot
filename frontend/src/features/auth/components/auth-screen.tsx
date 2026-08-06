@@ -342,6 +342,7 @@ export function VerifyEmailScreen() {
 export function PasswordScreen({ reset = false }: { reset?: boolean }) {
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
+  const [currentPassword, setCurrentPassword] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [message, setMessage] = useState("");
@@ -354,7 +355,11 @@ export function PasswordScreen({ reset = false }: { reset?: boolean }) {
     try {
       if (reset) {
         if (password !== confirm) return setError("Passwords do not match.");
-        const result = await authClient.auth.updateUser({ password });
+        if (!currentPassword.trim()) return setError("Enter your current password.");
+        const result = await authClient.auth.updateUser({
+          password,
+          current_password: currentPassword,
+        });
         if (result.error) return setError(authErrorMessage(result.error.message));
         navigate("/dashboard");
 
@@ -372,25 +377,46 @@ export function PasswordScreen({ reset = false }: { reset?: boolean }) {
   return (
     <Shell
       title={reset ? "Choose a new password." : "Reset your password."}
-      description={reset ? "Change your password after signing in." : "Password recovery email is not configured for this deployment."}
+      description={
+        reset
+          ? "Confirm your current password, then choose a new one."
+          : "Password recovery email is not configured for this deployment."
+      }
     >
       <form className="auth-card panel stack" onSubmit={submit}>
         <h1>{reset ? "Choose a new password" : "Reset your password"}</h1>
         {reset ? (
           <>
             <label className="field-label">
+              Current password
+              <Input
+                type="password"
+                required
+                autoComplete="current-password"
+                value={currentPassword}
+                onChange={(e: any) => setCurrentPassword(e.target.value)}
+              />
+            </label>
+            <label className="field-label">
               New password
               <Input
                 type="password"
                 required
                 minLength={8}
+                autoComplete="new-password"
                 value={password}
                 onChange={(e: any) => setPassword(e.target.value)}
               />
             </label>
             <label className="field-label">
               Confirm password
-              <Input type="password" required value={confirm} onChange={(e: any) => setConfirm(e.target.value)} />
+              <Input
+                type="password"
+                required
+                autoComplete="new-password"
+                value={confirm}
+                onChange={(e: any) => setConfirm(e.target.value)}
+              />
             </label>
           </>
         ) : (
