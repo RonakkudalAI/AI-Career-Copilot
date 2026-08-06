@@ -1,0 +1,12 @@
+rules_version = '2';
+
+// The application uses the FastAPI server and Firebase Admin SDK as the only
+// Storage data path. Admin SDK calls are authorized by IAM and bypass rules.
+// Deny direct browser access so client credentials cannot bypass API ownership.
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

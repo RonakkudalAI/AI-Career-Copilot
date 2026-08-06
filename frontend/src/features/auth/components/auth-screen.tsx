@@ -7,6 +7,7 @@ import { Eye, MailCheck } from "lucide-react";
 
 
 import { createClient } from "@/features/auth/api/client";
+import { safeRedirectPath } from "@/features/auth/safe-path";
 import { Button, Input } from "@/shared/ui/primitives";
 
 function Shell({ children, title, description }: { children: React.ReactNode; title: string; description: string }) {
@@ -71,7 +72,7 @@ export function SignInScreen() {
         setNeedsVerification(normalized.includes("email not confirmed"));
         return setError(authErrorMessage(result.error.message));
       }
-      navigate(search.get("next") || "/dashboard");
+      navigate(safeRedirectPath(search.get("next"), "/dashboard"));
 
     } catch {
       setError("Could not reach authentication. Check your connection and try again.");
@@ -110,7 +111,7 @@ export function SignInScreen() {
         options: { redirectTo: `${location.origin}/auth/callback` },
       });
       if (oauthError) setError(authErrorMessage(oauthError.message));
-      else if (provider === "google") navigate(search.get("next") || "/dashboard");
+      else if (provider === "google") navigate(safeRedirectPath(search.get("next"), "/dashboard"));
     } catch {
       setError("Could not reach authentication. Check your connection and try again.");
     } finally {
@@ -179,9 +180,6 @@ export function SignInScreen() {
         <div className="grid-2">
           <Button type="button" variant="secondary" disabled={busy} onClick={() => { setBusy(true); void oauth("google"); }}>
             Continue with Google
-          </Button>
-          <Button type="button" variant="secondary" onClick={() => oauth("linkedin_oidc")}>
-            Continue with LinkedIn
           </Button>
         </div>
         <p>
@@ -374,7 +372,7 @@ export function PasswordScreen({ reset = false }: { reset?: boolean }) {
   return (
     <Shell
       title={reset ? "Choose a new password." : "Reset your password."}
-      description="We will email you a secure link when recovery is needed."
+      description={reset ? "Change your password after signing in." : "Password recovery email is not configured for this deployment."}
     >
       <form className="auth-card panel stack" onSubmit={submit}>
         <h1>{reset ? "Choose a new password" : "Reset your password"}</h1>

@@ -56,28 +56,33 @@ export function JobsHome({ savedOnly = false }: { savedOnly?: boolean }) {
       else setIsLoadingMore(true);
       try {
         if (savedOnly) {
-          const rows = await apiRequest<Array<{ jobs?: Job | null }>>("/saved-jobs");
+          const rows = await apiRequest<Array<{ jobs?: Job | null; status?: string }>>("/saved-jobs");
           if (sequence !== requestSequence.current) return;
-          setSaved(new Set(rows.map((row) => row.jobs?.id).filter((id): id is string => Boolean(id))));
-          setJobs(rows.map((row) => row.jobs).filter((job): job is Job => Boolean(job)));
+          // Backend returns all saved_jobs rows including dismissed; only show active saves.
+          const active = rows.filter((row) => (row.status || "saved") === "saved");
+          setSaved(new Set(active.map((row) => row.jobs?.id).filter((id): id is string => Boolean(id))));
+          setJobs(active.map((row) => row.jobs).filter((job): job is Job => Boolean(job)));
           setHasMore(false);
         } else {
           const body: Record<string, string | number> = { limit, offset: currentOffset };
           if (filterLocation) body.location = filterLocation;
           if (filterWorkMode) body.work_mode = filterWorkMode;
-          if (filterSalaryMin) body.salary_min = filterSalaryMin;
+          if (filterSalaryMin !== "" && filterSalaryMin != null && Number(filterSalaryMin) >= 0) {
+            body.salary_min = Number(filterSalaryMin);
+          }
           const [result, savedRows] = await Promise.all([
             apiRequest<{ recommendations: Recommendation[] }>("/job-recommendations/generate", {
               method: "POST",
               body: JSON.stringify(body),
             }),
-            apiRequest<Array<{ jobs?: Job | null }>>("/saved-jobs"),
+            apiRequest<Array<{ jobs?: Job | null; status?: string }>>("/saved-jobs"),
           ]);
           const newRecs = result.recommendations || [];
           const newJobs = newRecs.map((row) => row.job);
           if (sequence !== requestSequence.current) return;
+          const activeSaved = savedRows.filter((row) => (row.status || "saved") === "saved");
           setSaved(
-            new Set(savedRows.map((row) => row.jobs?.id).filter((id): id is string => Boolean(id))),
+            new Set(activeSaved.map((row) => row.jobs?.id).filter((id): id is string => Boolean(id))),
           );
           if (append) {
             setRecommendations((prev) => [...prev, ...newRecs]);
@@ -141,8 +146,16 @@ export function JobsHome({ savedOnly = false }: { savedOnly?: boolean }) {
 
   async function dismissJob(jobId: string, e?: React.MouseEvent) {
     if (e) e.stopPropagation();
-    setJobs((current) => current.filter((j) => j.id !== jobId));
-    setRecommendations((current) => current.filter((r) => r.job.id !== jobId));
+    let removedJob: Job | undefined;
+    let removedRec: Recommendation | undefined;
+    setJobs((current) => {
+      removedJob = current.find((j) => j.id === jobId);
+      return current.filter((j) => j.id !== jobId);
+    });
+    setRecommendations((current) => {
+      removedRec = current.find((r) => r.job.id === jobId);
+      return current.filter((r) => r.job.id !== jobId);
+    });
     if (selectedJob === jobId) setSelectedJob(null);
     try {
       await apiRequest(`/saved-jobs/${jobId}`, { method: "POST" }).catch(() => undefined);
@@ -152,6 +165,15 @@ export function JobsHome({ savedOnly = false }: { savedOnly?: boolean }) {
       });
     } catch (err) {
       setError((err as Error).message);
+      // Rollback optimistic remove on failure (same pattern as toggleSave).
+      if (removedJob) {
+        setJobs((current) => (current.some((j) => j.id === jobId) ? current : [...current, removedJob!]));
+      }
+      if (removedRec) {
+        setRecommendations((current) =>
+          current.some((r) => r.job.id === jobId) ? current : [...current, removedRec!],
+        );
+      }
     }
   }
 

@@ -8,9 +8,12 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
+import httpx
+
 from app.core.config import Settings
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_BUCKET = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _TABLES = {
     "users", "profiles", "candidate_preferences", "candidate_skills", "candidate_experiences",
     "candidate_projects", "candidate_education", "candidate_certifications", "candidate_languages",
@@ -26,64 +29,264 @@ def _identifier(value: str) -> str:
     if not _IDENTIFIER.fullmatch(value):
         raise ValueError(f"Unsafe field identifier: {value}")
     return value
+
+
+def _bucket_name(value: str) -> str:
+    cleaned = (value or "").strip()
+    if not _BUCKET.fullmatch(cleaned):
+        raise ValueError(f"Unsafe storage bucket name: {value}")
+    return cleaned
 class Result:
     def __init__(self, data: list[dict[str, Any]] | None = None, count: int | None = None):
         self.data = data or []
         self.count = count
-class LocalStorageObject:
-    def __init__(self, settings: Settings, bucket: str):
+def _safe_object_key(name: str) -> str:
+    relative = Path(name)
+    if relative.is_absolute() or ".." in relative.parts:
+        raise ValueError("Invalid storage path")
+    cleaned = "/".join(part for part in relative.as_posix().split("/") if part and part != ".")
+    if not cleaned:
+        raise ValueError("Invalid storage path")
+    return cleaned
+
+
+class FirebaseStorageObject:
+    """Object store backed by Firebase Storage (GCS) under a logical bucket prefix."""
+
+    def __init__(self, settings: Settings, logical_bucket: str):
         self.settings = settings
-        self.bucket = bucket
-        self.root = Path(settings.local_storage_dir).resolve() / bucket
-        self.root.mkdir(parents=True, exist_ok=True)
-    def _path(self, name: str) -> Path:
-        relative = Path(name)
-        if relative.is_absolute() or ".." in relative.parts:
-            raise ValueError("Invalid storage path")
-        target = (self.root / relative).resolve()
-        if self.root not in target.parents and target != self.root:
-            raise ValueError("Invalid storage path")
-        return target
+        self.bucket = _bucket_name(logical_bucket)
+
+    def _object_path(self, path: str) -> str:
+        return f"{self.bucket}/{_safe_object_key(path)}"
+
+    def _gcs_bucket(self):
+        from firebase_admin import storage as firebase_storage
+
+        app = firebase_admin_app(self.settings)
+        name = self.settings.resolved_firebase_storage_bucket
+        if not name:
+            raise RuntimeError(
+                "Firebase Storage is not configured. Set FIREBASE_STORAGE_BUCKET "
+                "(for example your-project.appspot.com)."
+            )
+        # Must pass the named Admin app — this project never uses the default app.
+        return firebase_storage.bucket(name, app=app)
+
     def upload(self, path: str, content: bytes, options: dict[str, Any] | None = None) -> dict[str, Any]:
-        target = self._path(path)
-        if target.exists() and (options or {}).get("upsert") not in {True, "true"}:
+        object_path = self._object_path(path)
+        blob = self._gcs_bucket().blob(object_path)
+        if blob.exists() and (options or {}).get("upsert") not in {True, "true"}:
             raise FileExistsError(path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(content)
+        content_type = (options or {}).get("content-type") or (options or {}).get("content_type")
+        blob.upload_from_string(content, content_type=content_type)
         return {"path": path}
+
+    def download(self, path: str) -> bytes:
+        blob = self._gcs_bucket().blob(self._object_path(path))
+        if not blob.exists():
+            raise FileNotFoundError(path)
+        return blob.download_as_bytes()
+
     def remove(self, paths: list[str]) -> list[dict[str, str]]:
-        removed = []
+        removed: list[dict[str, str]] = []
+        bucket = self._gcs_bucket()
         for name in paths:
-            target = self._path(name)
-            if target.exists() and target.is_file():
-                target.unlink()
+            blob = bucket.blob(self._object_path(name))
+            if blob.exists():
+                blob.delete()
                 removed.append({"name": name})
         return removed
-    def list(self, prefix: str = "") -> list[dict[str, Any]]:
-        base = self._path(prefix) if prefix else self.root
-        if not base.exists():
-            return []
-        return [{"name": entry.name, "id": secrets.token_hex(8) if entry.is_file() else None,
-                 "metadata": {"size": entry.stat().st_size} if entry.is_file() else {}}
-                for entry in base.iterdir()]
-    def create_signed_url(self, path: str, _expires: int) -> dict[str, str]:
-        """Return an authenticated app-relative file URL (not a time-limited capability token).
 
-        Access is enforced by JWT + path ownership on /api/files. The expires
-        argument is accepted for API compatibility but is not enforced here.
+    def list(self, prefix: str = "") -> list[dict[str, Any]]:
+        bucket = self._gcs_bucket()
+        base = self.bucket if not prefix else f"{self.bucket}/{_safe_object_key(prefix)}"
+        search = f"{base}/"
+        iterator = bucket.list_blobs(prefix=search, delimiter="/")
+        items: list[dict[str, Any]] = []
+        for blob in iterator:
+            rel = blob.name[len(search) :] if blob.name.startswith(search) else blob.name
+            if not rel or "/" in rel:
+                continue
+            items.append(
+                {
+                    "name": rel,
+                    "id": secrets.token_hex(8),
+                    "metadata": {"size": int(blob.size or 0)},
+                }
+            )
+        for folder in getattr(iterator, "prefixes", []) or []:
+            rel = folder[len(search) :].rstrip("/") if folder.startswith(search) else folder.rstrip("/")
+            if rel and "/" not in rel:
+                items.append({"name": rel, "id": None, "metadata": {}})
+        return items
+
+    def create_signed_url(self, path: str, expires: int) -> dict[str, str]:
+        """Return authenticated app file URL; bytes live in Firebase Storage.
+
+        Browser access stays on /api/files so ownership is enforced with the app JWT.
+        The expires argument is retained for API compatibility; access is session-gated.
         """
-        target = self._path(path)
-        if not target.is_file():
+        blob = self._gcs_bucket().blob(self._object_path(path))
+        if not blob.exists():
             raise FileNotFoundError(path)
-        return {
-            "signedURL": f"/api/files/{quote(self.bucket)}/{quote(path, safe='/')}",
-            "authenticated_file_url": f"/api/files/{quote(self.bucket)}/{quote(path, safe='/')}",
+        url = f"/api/files/{quote(self.bucket)}/{quote(path, safe='/')}"
+        return {"signedURL": url, "authenticated_file_url": url, "expires_in": int(expires)}
+
+
+class SupabaseStorageObject:
+    """Private Supabase Storage bucket used through the server-side service role."""
+
+    def __init__(self, settings: Settings, logical_bucket: str):
+        self.settings = settings
+        self.bucket = _bucket_name(logical_bucket)
+        self.storage_bucket = _bucket_name(settings.supabase_storage_bucket)
+
+    def _url(self, path: str = "") -> str:
+        key = f"{self.bucket}/{_safe_object_key(path)}" if path else self.bucket
+        return f"{self.settings.resolved_supabase_url}/storage/v1/object/{self.storage_bucket}/{quote(key, safe='/')}"
+
+    def _request(self, method: str, url: str, **kwargs) -> httpx.Response:
+        headers = {
+            "apikey": self.settings.supabase_service_role_key,
+            "Authorization": f"Bearer {self.settings.supabase_service_role_key}",
+            **(kwargs.pop("headers", {}) or {}),
         }
-class LocalStorage:
+        response = httpx.request(method, url, headers=headers, timeout=30, **kwargs)
+        if response.status_code == 404:
+            raise FileNotFoundError(url)
+        response.raise_for_status()
+        return response
+
+    def upload(self, path: str, content: bytes, options: dict[str, Any] | None = None) -> dict[str, Any]:
+        content_type = (options or {}).get("content-type") or (options or {}).get("content_type")
+        headers = {"Content-Type": content_type or "application/octet-stream"}
+        if (options or {}).get("upsert") in {True, "true"}:
+            headers["x-upsert"] = "true"
+        self._request("POST", self._url(path), content=content, headers=headers)
+        return {"path": path}
+
+    def download(self, path: str) -> bytes:
+        return self._request("GET", self._url(path)).content
+
+    def remove(self, paths: list[str]) -> list[dict[str, str]]:
+        removed: list[dict[str, str]] = []
+        for path in paths:
+            self._request("DELETE", self._url(path))
+            removed.append({"name": path})
+        return removed
+
+    def list(self, prefix: str = "") -> list[dict[str, Any]]:
+        """Paginate Supabase Storage list (limit 1000 per page) until exhausted."""
+        base_prefix = f"{self.bucket}/{_safe_object_key(prefix)}" if prefix else self.bucket
+        items: list[dict[str, Any]] = []
+        offset = 0
+        page_size = 1000
+        while True:
+            response = self._request(
+                "POST",
+                f"{self.settings.resolved_supabase_url}/storage/v1/object/list/{self.storage_bucket}",
+                json={"prefix": base_prefix, "limit": page_size, "offset": offset},
+            )
+            page = response.json() or []
+            if not isinstance(page, list):
+                break
+            items.extend(page)
+            if len(page) < page_size:
+                break
+            offset += page_size
+        return items
+
+    def create_signed_url(self, path: str, expires: int) -> dict[str, str]:
+        self._request("GET", self._url(path))
+        url = f"/api/files/{quote(self.bucket)}/{quote(path, safe='/')}"
+        return {"signedURL": url, "authenticated_file_url": url, "expires_in": int(expires)}
+
+
+class MemoryStorageObject:
+    """In-process object store for automated tests only (APP_ENV=test)."""
+
+    _STORE: dict[str, dict[str, bytes]] = {}
+
+    def __init__(self, settings: Settings, logical_bucket: str):
+        self.settings = settings
+        self.bucket = _bucket_name(logical_bucket)
+        self._STORE.setdefault(self.bucket, {})
+
+    def upload(self, path: str, content: bytes, options: dict[str, Any] | None = None) -> dict[str, Any]:
+        key = _safe_object_key(path)
+        bucket = self._STORE[self.bucket]
+        if key in bucket and (options or {}).get("upsert") not in {True, "true"}:
+            raise FileExistsError(path)
+        bucket[key] = content
+        return {"path": path}
+
+    def download(self, path: str) -> bytes:
+        key = _safe_object_key(path)
+        try:
+            return self._STORE[self.bucket][key]
+        except KeyError as exc:
+            raise FileNotFoundError(path) from exc
+
+    def remove(self, paths: list[str]) -> list[dict[str, str]]:
+        removed: list[dict[str, str]] = []
+        bucket = self._STORE[self.bucket]
+        for name in paths:
+            key = _safe_object_key(name)
+            if key in bucket:
+                del bucket[key]
+                removed.append({"name": name})
+        return removed
+
+    def list(self, prefix: str = "") -> list[dict[str, Any]]:
+        base = _safe_object_key(prefix) if prefix else ""
+        items: list[dict[str, Any]] = []
+        children: set[str] = set()
+        for key, content in self._STORE[self.bucket].items():
+            if base and not (key == base or key.startswith(base + "/")):
+                continue
+            rest = key[len(base) :].lstrip("/") if base else key
+            if not rest:
+                continue
+            head = rest.split("/", 1)[0]
+            if head in children:
+                continue
+            children.add(head)
+            if "/" in rest:
+                items.append({"name": head, "id": None, "metadata": {}})
+            else:
+                items.append({"name": head, "id": secrets.token_hex(8), "metadata": {"size": len(content)}})
+        return items
+
+    def create_signed_url(self, path: str, expires: int) -> dict[str, str]:
+        self.download(path)
+        url = f"/api/files/{quote(self.bucket)}/{quote(path, safe='/')}"
+        return {"signedURL": url, "authenticated_file_url": url, "expires_in": int(expires)}
+
+
+class ObjectStorage:
+    """Object storage facade.
+
+    - APP_ENV=test → in-memory (no network)
+    - Firebase configured → Firebase Storage (GCS)  [product default]
+    - else Supabase Storage service-role (legacy fallback)
+    """
+
     def __init__(self, settings: Settings):
         self.settings = settings
-    def from_(self, bucket: str) -> LocalStorageObject:
-        return LocalStorageObject(self.settings, bucket)
+        self._memory = str(settings.app_env).lower() == "test"
+
+    def from_(self, bucket: str) -> FirebaseStorageObject | SupabaseStorageObject | MemoryStorageObject:
+        if self._memory:
+            return MemoryStorageObject(self.settings, bucket)
+        if self.settings.supabase_storage_configured:
+            return SupabaseStorageObject(self.settings, bucket)
+        raise RuntimeError(
+            "Supabase Storage is not configured. Set SUPABASE_URL, "
+            "SUPABASE_SERVICE_ROLE_KEY, and SUPABASE_STORAGE_BUCKET."
+        )
+
+
 class FirestoreResult(Result):
     pass
 
@@ -211,14 +414,11 @@ class FirestoreQuery:
             query = query.where(filter=self.client.field_filter(column, operator, value))
         for column, desc in self.orders:
             query = query.order_by(column, direction=self.client.direction(desc))
-        # When soft-delete is applied client-side, over-fetch then filter/limit in memory.
-        fetch_limit = self.max_rows
-        if post_filters and self.max_rows is not None:
-            fetch_limit = max(self.max_rows * 5, 50)
-        if fetch_limit is not None and not post_filters:
-            query = query.limit(fetch_limit)
-        elif fetch_limit is not None and post_filters:
-            query = query.limit(fetch_limit)
+        # Soft-delete (is_null_or_missing) is applied client-side. Never apply a
+        # server-side limit before that filter — soft-deleted docs would consume
+        # the window and hide live rows (e.g. the one active resume among many deleted).
+        if self.max_rows is not None and not post_filters:
+            query = query.limit(self.max_rows)
         docs = list(query.stream())
         if post_filters:
             kept = []
@@ -257,7 +457,7 @@ class FirestoreClient:
     def __init__(self, settings: Settings):
         self.settings = settings
         self.db = _firestore_for(settings)
-        self.storage = LocalStorage(settings)
+        self.storage = ObjectStorage(settings)
 
     @staticmethod
     def field_filter(column: str, operator: str, value: Any):
@@ -282,6 +482,7 @@ def _firestore_for(settings: Settings):
 def firebase_admin_app(settings: Settings):
     import firebase_admin
     from firebase_admin import credentials
+
     credential_path = Path(settings.firebase_credentials_path)
     if not credential_path.is_absolute():
         credential_path = (Path(__file__).resolve().parents[3] / credential_path).resolve()
@@ -292,14 +493,14 @@ def firebase_admin_app(settings: Settings):
     if credential_project and credential_project != settings.firebase_project_id:
         raise RuntimeError("Firebase project mismatch between FIREBASE_PROJECT_ID and service-account credentials")
     app_name = f"career-copilot-{settings.firebase_project_id}-{settings.firebase_database_id}"
+    options: dict[str, str] = {"projectId": settings.firebase_project_id}
+    storage_bucket = settings.resolved_firebase_storage_bucket
+    if storage_bucket:
+        options["storageBucket"] = storage_bucket
     try:
         return firebase_admin.get_app(app_name)
     except ValueError:
-        return firebase_admin.initialize_app(
-            certificate,
-            {"projectId": settings.firebase_project_id},
-            name=app_name,
-        )
+        return firebase_admin.initialize_app(certificate, options, name=app_name)
 
 
 def database_client(settings: Settings):
@@ -308,9 +509,34 @@ def database_client(settings: Settings):
             "Firestore is not configured. Set FIREBASE_PROJECT_ID and FIREBASE_CREDENTIALS_PATH."
         )
     return FirestoreClient(settings)
+
+
 def database_probe(settings: Settings) -> dict[str, Any]:
+    storage_engine = "supabase_storage" if settings.supabase_storage_configured else "unconfigured"
+    storage_bucket = settings.supabase_storage_bucket or None
+    result: dict[str, Any] = {
+        "status": "unreachable",
+        "configured": settings.database_configured,
+        "database": settings.firebase_database_id,
+        "engine": "firestore",
+        "project": settings.firebase_project_id or None,
+        "storage_bucket": storage_bucket,
+        "storage_engine": storage_engine,
+        "database_status": "unreachable",
+        "storage_status": "unreachable",
+    }
     try:
         database_client(settings).db.collection("_setup_checks").limit(1).stream()
-        return {"status": "reachable", "configured": True, "database": settings.firebase_database_id, "engine": "firestore", "project": settings.firebase_project_id}
+        result["database_status"] = "reachable"
     except Exception as exc:
-        return {"status": "unreachable", "configured": settings.database_configured, "engine": "firestore", "error": str(exc)}
+        result["database_error"] = str(exc)
+    try:
+        if not settings.storage_configured:
+            raise RuntimeError("Object storage is not configured")
+        ObjectStorage(settings).from_(settings.document_bucket).list("_setup_checks")
+        result["storage_status"] = "reachable"
+    except Exception as exc:
+        result["storage_error"] = str(exc)
+    if result["database_status"] == "reachable" and result["storage_status"] == "reachable":
+        result["status"] = "reachable"
+    return result

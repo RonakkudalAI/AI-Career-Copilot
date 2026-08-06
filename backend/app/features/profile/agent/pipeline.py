@@ -9,6 +9,7 @@ from typing import Any
 from app.agents.providers import NvidiaClient
 from app.api.schemas import ProfileResumeExtractResult
 from app.core.config import Settings
+from app.core.errors import ApiError
 from app.features.profile.agent.deterministic import build_profile_draft, draft_counts
 from app.features.profile.agent.normalize import extract_explicit_years, normalize_draft
 
@@ -342,6 +343,8 @@ async def build_profile_draft_enriched(
         merged["meta"] = meta
         return merged
     except Exception as exc:
+        if isinstance(exc, ApiError) and exc.code == "nvidia_unavailable":
+            raise
         logger.warning("profile_ai_extract_failed error=%s", exc)
         meta = dict(base.get("meta") or {})
         meta["ai_used"] = False

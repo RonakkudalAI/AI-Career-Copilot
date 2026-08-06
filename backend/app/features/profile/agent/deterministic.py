@@ -28,11 +28,14 @@ _MONTH_NUMBERS = {
     "aug": 8, "august": 8, "sep": 9, "sept": 9, "september": 9, "oct": 10,
     "october": 10, "nov": 11, "november": 11, "dec": 12, "december": 12,
 }
-_DATE_TOKEN = rf"(?:{_MONTH}\.?(?:\s*'?)\d{ 2,4} |(?:19|20)\d{ 2} |\d{ 1,2} [/-]\d{ 2,4} )"
+# Use {{…}} so f-string emits literal regex quantifiers, not Python expressions.
+_DATE_TOKEN = (
+    rf"(?:{_MONTH}\.?(?:\s*'?)?\d{{2,4}}|(?:19|20)\d{{2}}|\d{{1,2}}[/-]\d{{2,4}})"
+)
 _DATE_RANGE_RE = re.compile(
     rf"(?P<start>{_DATE_TOKEN})"
     rf"\s*[-–—to]+\s*"
-    rf"(?P<end>(?:{_MONTH}\.?\s*'?\d{ 2,4} |(?:19|20)\d{ 2} |\d{ 1,2} [/\-.]\d{ 2,4} "
+    rf"(?P<end>(?:{_MONTH}\.?\s*'?\d{{2,4}}|(?:19|20)\d{{2}}|\d{{1,2}}[/\-.]\d{{2,4}}"
     rf"|present|current|now|ongoing|till\s+date|to\s+date))",
     re.I,
 )

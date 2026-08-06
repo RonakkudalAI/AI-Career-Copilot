@@ -19,6 +19,12 @@ class Settings(BaseSettings):
     firebase_project_id: str = ""
     firebase_database_id: str = "(default)"
     firebase_credentials_path: str = ""
+    # GCS bucket for Firebase Storage, e.g. your-project.appspot.com
+    firebase_storage_bucket: str = ""
+    # Supabase Storage is the only production object-storage provider.
+    supabase_url: str = ""
+    supabase_service_role_key: str = ""
+    supabase_storage_bucket: str = "career-copilot-files"
     firebase_clock_skew_seconds: int = Field(default=10, ge=0, le=60)
     # Revocation checks call Firebase Auth after signature verification. Keep this
     # opt-in for local development, where the Admin SDK may not have Auth lookup
@@ -27,13 +33,12 @@ class Settings(BaseSettings):
     auth_secret: str
     jwt_ttl_seconds: int = Field(default=60 * 60 * 24 * 7, ge=60, le=60 * 60 * 24 * 30)
     llm_allow_repair: bool = True
-    local_storage_dir: str
     document_max_bytes: int = 10 * 1024 * 1024
     avatar_max_bytes: int = 3 * 1024 * 1024
-    interview_media_max_bytes: int = 250 * 1024 * 1024
+    interview_media_max_bytes: int = 0
+    # Logical prefixes inside the single Supabase Storage bucket.
     document_bucket: str
     avatar_bucket: str
-    interview_bucket: str
     nvidia_api_key: str = ""
     nvidia_base_url: str
     nvidia_model: str
@@ -116,6 +121,38 @@ class Settings(BaseSettings):
     @property
     def firebase_configured(self) -> bool:
         return bool(self.firebase_project_id and self.firebase_credentials_path)
+
+    @property
+    def resolved_firebase_storage_bucket(self) -> str:
+        """GCS bucket name for Firebase Storage (documents, avatars, exports)."""
+        explicit = (self.firebase_storage_bucket or "").strip()
+        if explicit:
+            return explicit
+        project = (self.firebase_project_id or "").strip()
+        return f"{project}.appspot.com" if project else ""
+
+    @property
+    def resolved_supabase_url(self) -> str:
+        value = (self.supabase_url or "").strip().rstrip("/")
+        if value.endswith("/rest/v1"):
+            return value[: -len("/rest/v1")]
+        return value
+
+    @property
+    def firebase_storage_configured(self) -> bool:
+        return bool(self.firebase_configured and self.resolved_firebase_storage_bucket)
+
+    @property
+    def supabase_storage_configured(self) -> bool:
+        return bool(
+            self.resolved_supabase_url
+            and self.supabase_service_role_key
+            and self.supabase_storage_bucket
+        )
+
+    @property
+    def storage_configured(self) -> bool:
+        return self.supabase_storage_configured
     @property
     def nvidia_configured(self) -> bool:
         return bool(self.nvidia_api_key and self.nvidia_model and self.nvidia_base_url)

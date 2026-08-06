@@ -123,22 +123,29 @@ class AdzunaClient:
             external_id = str(item.get("id") or "").strip()
             if not external_id:
                 continue
-            jobs.append(
-                {
-                    "source": "adzuna",
-                    "external_id": external_id,
-                    "title": str(item.get("title") or "Unknown Title").strip()[:300],
-                    "company": company[:200],
-                    "location": (location or "")[:200] or None,
-                    "description": str(item.get("description") or "")[:20_000],
-                    "application_url": item.get("redirect_url"),
-                    "salary_min": item.get("salary_min"),
-                    "salary_max": item.get("salary_max"),
-                    "published_at": item.get("created"),
-                    "latitude": item.get("latitude"),
-                    "longitude": item.get("longitude"),
-                    "is_active": True,
-                    "requirements": [],
-                }
-            )
+            description = str(item.get("description") or "")[:20_000]
+            # Extract known tech phrases so job matching is not title-only.
+            from app.features.career_matching import _extract_requirement_phrases, _infer_work_mode
+
+            requirements = _extract_requirement_phrases(description)
+            job_row = {
+                "source": "adzuna",
+                "external_id": external_id,
+                "title": str(item.get("title") or "Unknown Title").strip()[:300],
+                "company": company[:200],
+                "location": (location or "")[:200] or None,
+                "description": description,
+                "application_url": item.get("redirect_url"),
+                "salary_min": item.get("salary_min"),
+                "salary_max": item.get("salary_max"),
+                "published_at": item.get("created"),
+                "latitude": item.get("latitude"),
+                "longitude": item.get("longitude"),
+                "is_active": True,
+                "requirements": requirements,
+            }
+            work_mode = _infer_work_mode(job_row)
+            if work_mode:
+                job_row["work_mode"] = work_mode
+            jobs.append(job_row)
         return jobs

@@ -7,9 +7,10 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
+import mimetypes
+
 from fastapi import APIRouter, Body, Depends, File, Form, Header, Response, UploadFile
-from fastapi.responses import FileResponse
-from pathlib import Path
+from fastapi.responses import Response as PlainResponse
 
 from app.features.auth.account_deletion import (
     CONFIRM_PHRASE,
@@ -23,7 +24,12 @@ from app.features.interview.agent import generate_interview_questions
 from app.features.interview.preparation import generate_interview_preparation
 from app.features.profile.agent import build_profile_draft_enriched, profile_draft_response_payload
 from app.agents.registry import agents_status
-from app.features.ats.ats_score import ALGORITHM_VERSION, evidence_match_status, score_resume
+from app.features.ats.ats_score import (
+    ALGORITHM_VERSION,
+    ats_source_fingerprint,
+    evidence_match_status,
+    score_resume,
+)
 from app.features.auth.service import CurrentUser, create_access_token, get_current_user
 from app.features.profile.avatars import (
     attach_avatar_url,
@@ -81,6 +87,7 @@ from app.api.schemas import (
 from app.database.client import database_client, database_probe
 from app.features.career_matching import (
     ALGORITHM_VERSION as CAREER_MATCH_ALGORITHM_VERSION,
+    _infer_work_mode,
     candidate_skill_evidence,
     progress_percentage,
     score_job,
@@ -113,6 +120,37 @@ def _auth_payload(user: dict[str, Any], settings: Settings) -> dict[str, Any]:
     return {"access_token": token, "token_type": "bearer", "user": {"id": str(user["id"]), "email": user["email"], "full_name": user.get("full_name")}}
 
 
+def _create_user_records(client, user: dict[str, Any]) -> dict[str, Any]:
+    """Create the user graph with compensating cleanup if a child write fails."""
+    user_id = str(user["id"])
+    created_children: list[str] = []
+    try:
+        created = client.table("users").insert(user).execute().data or []
+        if not created:
+            raise RuntimeError("The users record was not created")
+        for table, row in (
+            ("profiles", {"id": user_id, "full_name": user.get("full_name") or ""}),
+            ("candidate_preferences", {"user_id": user_id}),
+            ("notification_preferences", {"user_id": user_id}),
+            ("privacy_preferences", {"user_id": user_id}),
+        ):
+            created_children.append(table)
+            client.table(table).insert(row).execute()
+        return created[0]
+    except Exception as exc:
+        for table in reversed(created_children):
+            try:
+                key = "id" if table == "profiles" else "user_id"
+                client.table(table).delete().eq(key, user_id).execute()
+            except Exception:
+                logger.exception("signup_rollback_failed table=%s user_id=%s", table, user_id)
+        try:
+            client.table("users").delete().eq("id", user_id).execute()
+        except Exception:
+            logger.exception("signup_rollback_failed table=users user_id=%s", user_id)
+        raise ApiError(500, "account_creation_incomplete", "The account could not be created completely.") from exc
+
+
 @router.post("/auth/sign-up", status_code=201)
 def auth_sign_up(payload: dict[str, Any] = Body(...), settings: Settings = Depends(get_settings)):
     email = str(payload.get("email") or "").strip().lower()
@@ -127,11 +165,10 @@ def auth_sign_up(payload: dict[str, Any] = Body(...), settings: Settings = Depen
     client = database_client(settings)
     if client.table("users").select("id").eq("email", email).limit(1).execute().data:
         raise ApiError(409, "user_already_exists", "An account with this email already exists.")
-    user_id = str(uuid.uuid4())
-    user = client.table("users").insert({"id": user_id, "email": email, "full_name": full_name, "password_hash": _password_hash(password)}).execute().data[0]
-    client.table("profiles").insert({"id": user_id, "full_name": full_name or ""}).execute()
-    for table in ("candidate_preferences", "notification_preferences", "privacy_preferences"):
-        client.table(table).insert({"user_id": user_id}).execute()
+    user = _create_user_records(
+        client,
+        {"id": str(uuid.uuid4()), "email": email, "full_name": full_name, "password_hash": _password_hash(password)},
+    )
     return _auth_payload(user, settings)
 
 
@@ -199,46 +236,77 @@ def auth_firebase(payload: dict[str, Any] = Body(...), settings: Settings = Depe
                 "This email is already linked to a different identity provider account.",
             )
         if not existing_fb:
+            # Refuse silent link when a local password account already owns this email.
+            # Otherwise an attacker can sign-up with the victim's email, then the real
+            # Google owner inherits (or shares) that attacker-owned account graph.
+            if str(user.get("password_hash") or "").strip():
+                raise ApiError(
+                    409,
+                    "account_exists_password",
+                    "An account with this email already exists. Sign in with email and password.",
+                )
             client.table("users").update({"firebase_uid": uid}).eq("id", str(user["id"])).execute()
             user["firebase_uid"] = uid
     else:
         user_id = str(uuid.uuid4())
         full_name = str((decoded.get("name") or "")).strip()[:120] or None
-        user = client.table("users").insert(
+        user = _create_user_records(
+            client,
             {
                 "id": user_id,
                 "email": email,
                 "full_name": full_name,
                 "firebase_uid": uid,
                 "password_hash": "",
-            }
-        ).execute().data[0]
-        client.table("profiles").insert({"id": user_id, "full_name": full_name or ""}).execute()
-        for table in ("candidate_preferences", "notification_preferences", "privacy_preferences"):
-            client.table(table).insert({"user_id": user_id}).execute()
+            },
+        )
     return _auth_payload(user, settings)
 
 
 @router.post("/auth/resend")
 def auth_resend():
-    return {"message": "Email delivery is not configured for local development."}
+    raise ApiError(
+        503,
+        "email_delivery_not_configured",
+        "Email verification is not enabled. Sign in with the account credentials you created.",
+    )
 
 
 @router.post("/auth/reset-password")
 def auth_reset_password():
-    return {"message": "Password reset email delivery is not configured for local development."}
+    raise ApiError(
+        503,
+        "email_delivery_not_configured",
+        "Password recovery email is not configured. Sign in and change your password from Account settings.",
+    )
 
 
 @router.post("/auth/update-password")
 def auth_update_password(payload: dict[str, Any] = Body(...), user: CurrentUser = Depends(get_current_user), settings: Settings = Depends(get_settings)):
     password = str(payload.get("password") or "")
+    current_password = str(payload.get("current_password") or payload.get("old_password") or "")
     if len(password) < MIN_PASSWORD_LENGTH:
         raise ApiError(
             400,
             "invalid_password",
             f"Password must contain at least {MIN_PASSWORD_LENGTH} characters.",
         )
-    database_client(settings).table("users").update({"password_hash": _password_hash(password)}).eq("id", str(user.id)).execute()
+    client = database_client(settings)
+    rows = client.table("users").select("id,password_hash").eq("id", str(user.id)).limit(1).execute().data or []
+    if not rows:
+        raise ApiError(401, "invalid_user_identity", "The authentication identity is invalid.")
+    stored_hash = str(rows[0].get("password_hash") or "")
+    # Password accounts must prove knowledge of the current password before rotation
+    # (stolen JWT alone must not lock out the owner). Firebase-only accounts (empty
+    # hash) may set a password without a prior local password.
+    if stored_hash:
+        if not current_password or not _password_matches(current_password, stored_hash):
+            raise ApiError(
+                401,
+                "invalid_current_password",
+                "Current password is incorrect.",
+            )
+    client.table("users").update({"password_hash": _password_hash(password)}).eq("id", str(user.id)).execute()
     return {"updated": True}
 
 
@@ -276,15 +344,22 @@ def ensure_preference_row(client, table: str, user_id: str) -> dict[str, Any]:
 @router.get("/health")
 def health(settings: Settings = Depends(get_settings)) -> dict[str, Any]:
     status = agents_status(settings)
+    probe = database_probe(settings)
     return {
-        "status": "ok",
+        "status": "ok" if probe["status"] == "reachable" else "degraded",
         "service": settings.app_name,
+        "database_engine": "firestore",
+        "storage_engine": "supabase_storage",
         "database_configured": settings.database_configured,
+        "storage_configured": settings.storage_configured,
+        "firebase_project_id": settings.firebase_project_id or None,
         "nvidia_configured": settings.nvidia_configured,
         "groq_configured": settings.groq_configured,
         "agent_count": status["agent_count"],
         "agents_ready": status["ready_count"],
         "llm_agents_configured": status["llm_configured_agent_count"],
+        "database_status": probe["database_status"],
+        "storage_status": probe["storage_status"],
     }
 
 
@@ -300,15 +375,24 @@ def health_database(settings: Settings = Depends(get_settings)) -> dict[str, Any
 
 
 @router.get("/files/{bucket}/{path:path}")
-def local_file(bucket: str, path: str, user: CurrentUser = Depends(get_current_user), settings: Settings = Depends(get_settings)):
-    allowed = {settings.document_bucket, settings.avatar_bucket, settings.interview_bucket}
+def authenticated_file(
+    bucket: str,
+    path: str,
+    user: CurrentUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+):
+    """Stream a user-owned object from Firebase Storage after JWT ownership checks."""
+    allowed = {settings.document_bucket, settings.avatar_bucket}
     if bucket not in allowed or not path.startswith(f"{user.id}/"):
         raise ApiError(404, "file_not_found", "The requested file was not found.")
-    root = (Path(settings.local_storage_dir).resolve() / bucket).resolve()
-    target = (root / Path(path)).resolve()
-    if root not in target.parents or not target.is_file():
-        raise ApiError(404, "file_not_found", "The requested file was not found.")
-    return FileResponse(target)
+    try:
+        content = database_client(settings).storage.from_(bucket).download(path)
+    except FileNotFoundError as exc:
+        raise ApiError(404, "file_not_found", "The requested file was not found.") from exc
+    except Exception as exc:
+        raise ApiError(503, "storage_unavailable", "Firebase Storage is temporarily unavailable.") from exc
+    media_type = mimetypes.guess_type(path)[0] or "application/octet-stream"
+    return PlainResponse(content=content, media_type=media_type)
 
 
 @router.get("/me/bootstrap")
@@ -881,7 +965,7 @@ def import_skills_from_resume(
 def _load_resume_version_for_profile_fill(
     client, user: CurrentUser, resume_version_id: UUID | str | None
 ) -> dict[str, Any]:
-    """Load a candidate-owned resume version with extractable text."""
+    """Load a candidate-owned **confirmed** resume version with extractable text."""
     if resume_version_id:
         rows = (
             client.table("resume_versions")
@@ -896,8 +980,13 @@ def _load_resume_version_for_profile_fill(
         if not rows:
             raise ApiError(404, "resume_version_not_found", "The selected resume version was not found.")
         version = rows[0]
+        if version.get("extraction_status") != "confirmed":
+            raise ApiError(
+                409,
+                "confirmed_resume_required",
+                "Confirm the extracted resume before filling the profile from it.",
+            )
     else:
-        # Prefer confirmed, then any version that has text.
         confirmed = (
             client.table("resume_versions")
             .select("id,resume_id,plain_text,structured_content,extraction_status,original_filename,created_at")
@@ -911,24 +1000,10 @@ def _load_resume_version_for_profile_fill(
         )
         version = confirmed[0] if confirmed else None
         if not version:
-            any_rows = (
-                client.table("resume_versions")
-                .select(
-                    "id,resume_id,plain_text,structured_content,extraction_status,original_filename,created_at"
-                )
-                .eq("user_id", str(user.id))
-                .order("created_at", desc=True)
-                .limit(5)
-                .execute()
-                .data
-                or []
-            )
-            version = next((row for row in any_rows if (row.get("plain_text") or "").strip()), None)
-        if not version:
             raise ApiError(
-                404,
-                "resume_required",
-                "Upload a resume first, or pass resume_version_id / a PDF·DOCX file.",
+                409,
+                "confirmed_resume_required",
+                "Confirm a resume extraction before filling the profile, or upload a PDF/DOCX on preview-upload.",
             )
 
     plain = (version.get("plain_text") or "").strip()
@@ -1644,13 +1719,16 @@ def activate_resume(
     resume_id: UUID, user: CurrentUser = Depends(get_current_user), settings: Settings = Depends(get_settings)
 ):
     client = client_for(settings, user)
-    owned_row(client, "resumes", resume_id, user)
+    resume = owned_row(client, "resumes", resume_id, user)
+    if resume.get("deleted_at"):
+        raise ApiError(409, "resume_deleted", "A deleted resume cannot be activated. Restore is not supported; upload a new resume.")
     client.table("resumes").update({"is_active": False}).eq("user_id", str(user.id)).execute()
     result = (
         client.table("resumes")
         .update({"is_active": True})
         .eq("id", str(resume_id))
         .eq("user_id", str(user.id))
+        .is_("deleted_at", "null")
         .execute()
         .data[0]
     )
@@ -1666,7 +1744,9 @@ async def create_resume_version(
     settings: Settings = Depends(get_settings),
 ):
     client = client_for(settings, user)
-    owned_row(client, "resumes", resume_id, user)
+    resume = owned_row(client, "resumes", resume_id, user)
+    if resume.get("deleted_at"):
+        raise ApiError(409, "resume_deleted", "Cannot upload a new version to a deleted resume.")
     content = await file.read()
     return await _upload_resume_version(client, settings, user, str(resume_id), file, content)
 
@@ -2071,6 +2151,21 @@ async def create_ats(
     if job.get("extraction_status") != "confirmed":
         raise ApiError(409, "job_description_not_confirmed", "Confirm the job description before scoring it.")
 
+    structured = version.get("structured_content") or {}
+    structured_sections = structured.get("sections") if isinstance(structured, dict) else None
+    if not isinstance(structured_sections, dict):
+        structured_sections = None
+
+    # Fingerprint of the exact text used for scoring. Same version/job ids after
+    # an in-place edit must re-score, not return a stale completed analysis.
+    source_fp = ats_source_fingerprint(
+        version.get("plain_text"),
+        structured,
+        job.get("raw_text"),
+        resume_confirmed_at=str(version.get("candidate_confirmed_at") or ""),
+        job_confirmed_at=str(job.get("candidate_confirmed_at") or ""),
+    )
+
     existing = (
         client.table("ats_analyses")
         .select("*")
@@ -2086,12 +2181,12 @@ async def create_ats(
         or []
     )
     if existing:
-        return existing[0]
-
-    structured = version.get("structured_content") or {}
-    structured_sections = structured.get("sections") if isinstance(structured, dict) else None
-    if not isinstance(structured_sections, dict):
-        structured_sections = None
+        prior = existing[0]
+        prior_breakdown = prior.get("score_breakdown") if isinstance(prior.get("score_breakdown"), dict) else {}
+        prior_fp = prior_breakdown.get("source_fingerprint") if isinstance(prior_breakdown, dict) else None
+        if prior_fp and prior_fp == source_fp:
+            return prior
+        # Content changed under the same ids — fall through and re-score.
 
     try:
         score = score_resume(
@@ -2109,6 +2204,7 @@ async def create_ats(
     score_breakdown = {
         **score.breakdown,
         "method": scoring_method,
+        "source_fingerprint": source_fp,
     }
     missing_items = [
         {
@@ -2375,17 +2471,20 @@ def delete_interview(
     owned_row(client, "interview_sessions", session_id, user)
 
     # Media is no longer stored, so no storage cleanup is needed.
-
-    client.table("interview_sessions").delete().eq("id", str(session_id)).eq(
-        "user_id", str(user.id)
-    ).execute()
+    # Firestore has no FK cascade — delete children first (same pattern as learning paths).
+    sid = str(session_id)
+    uid = str(user.id)
+    client.table("interview_reports").delete().eq("session_id", sid).eq("user_id", uid).execute()
+    client.table("interview_responses").delete().eq("session_id", sid).eq("user_id", uid).execute()
+    client.table("interview_questions").delete().eq("session_id", sid).eq("user_id", uid).execute()
+    client.table("interview_sessions").delete().eq("id", sid).eq("user_id", uid).execute()
     write_activity(
         client,
         user,
         "interview_deleted",
         "Mock interview session deleted",
         "interview_session",
-        str(session_id),
+        sid,
     )
 
 
@@ -2715,7 +2814,7 @@ async def generate_learning_path(
     stored_items = []
     for item in items:
         resources = item.pop("resources", [])
-        # Ensure JSON-serializable metadata for SQLite layer
+        # Ensure metadata remains a plain JSON-serializable mapping for Firestore.
         metadata = item.get("metadata")
         if isinstance(metadata, dict):
             item = {**item, "metadata": metadata}
@@ -2959,6 +3058,12 @@ def generate_job_recommendations(
     client = client_for(settings, user)
     if payload.resume_version_id:
         version = owned_row(client, "resume_versions", payload.resume_version_id, user)
+        if version.get("extraction_status") != "confirmed":
+            raise ApiError(
+                409,
+                "confirmed_resume_required",
+                "Confirm the extracted resume before generating job recommendations.",
+            )
     else:
         active = client.table("resumes").select("id,title").eq("user_id", str(user.id)).eq("is_active", True).is_("deleted_at", "null").limit(1).execute().data or []
         if not active:
@@ -2968,6 +3073,8 @@ def generate_job_recommendations(
             raise ApiError(409, "confirmed_resume_required", "Confirm the extracted resume before generating job recommendations.")
         version = versions[0]
     resume = owned_row(client, "resumes", version["resume_id"], user)
+    if resume.get("deleted_at"):
+        raise ApiError(409, "resume_deleted", "The selected resume was deleted. Activate another resume first.")
     skills, evidence_text = candidate_skill_evidence(client, str(user.id), resume, version)
     jobs = (
         client.table("jobs")
@@ -2984,7 +3091,11 @@ def generate_job_recommendations(
         jobs = [job for job in jobs if needle in str(job.get("location") or "").casefold()]
     if payload.work_mode:
         needle = payload.work_mode.casefold()
-        jobs = [job for job in jobs if needle in str(job.get("work_mode") or "").casefold()]
+        jobs = [
+            job
+            for job in jobs
+            if needle in str(job.get("work_mode") or _infer_work_mode(job) or "").casefold()
+        ]
     if payload.salary_min is not None:
         jobs = [
             job
@@ -2997,15 +3108,22 @@ def generate_job_recommendations(
         reverse=True,
     )
     page = ranked[payload.offset : payload.offset + payload.limit]
+    # Always clear prior recommendations for this resume version before writing a page
+    # so offset>0 pagination cannot accumulate duplicate (user, resume, job) rows.
     if payload.offset == 0:
         client.table("job_recommendations").delete().eq("user_id", str(user.id)).eq(
             "resume_version_id", str(version["id"])
         ).execute()
     recommendations = []
     for row in page:
+        job_id = str(row["job"]["id"])
+        # Upsert-like: remove any existing row for this job+resume then insert.
+        client.table("job_recommendations").delete().eq("user_id", str(user.id)).eq(
+            "resume_version_id", str(version["id"])
+        ).eq("job_id", job_id).execute()
         stored = client.table("job_recommendations").insert({
             "user_id": str(user.id),
-            "job_id": row["job"]["id"],
+            "job_id": job_id,
             "resume_version_id": str(version["id"]),
             "match_score": row["match_score"],
             "match_breakdown": row["match_breakdown"],
@@ -3174,11 +3292,34 @@ def delete_account(
     user_client = client_for(settings, user)
     storage_paths = collect_user_storage_paths(user_client, user)
 
+    # Capture Firebase UID before we delete the users document.
+    firebase_uid = ""
+    try:
+        user_rows = (
+            user_client.table("users")
+            .select("firebase_uid")
+            .eq("id", str(user.id))
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+        if user_rows:
+            firebase_uid = str(user_rows[0].get("firebase_uid") or "").strip()
+    except Exception:
+        logger.exception("account_delete_firebase_uid_lookup_failed user_id=%s", user.id)
+
     admin = database_client(settings)
+    # Fail closed: do not erase Firestore identity while storage blobs may remain.
     try:
         purge_user_storage(admin, settings, user, storage_paths)
-    except Exception:
+    except Exception as exc:
         logger.exception("account_delete_storage_purge_failed user_id=%s", user.id)
+        raise ApiError(
+            500,
+            "account_deletion_incomplete",
+            "Could not remove all stored account files. Account deletion stopped so data stays consistent.",
+        ) from exc
 
     delete_user_owned_records(admin, user)
     try:
@@ -3189,3 +3330,19 @@ def delete_account(
             "account_deletion_failed",
             "The account could not be deleted from the local database.",
         ) from exc
+
+    # Best-effort: remove the Firebase Auth identity so re-login cannot resurrect a
+    # half-deleted account. Failure here is logged only — Firestore is already gone.
+    if firebase_uid and settings.firebase_configured:
+        try:
+            from firebase_admin import auth as firebase_auth
+
+            from app.database.client import firebase_admin_app
+
+            firebase_auth.delete_user(firebase_uid, app=firebase_admin_app(settings))
+        except Exception:
+            logger.exception(
+                "account_delete_firebase_auth_failed user_id=%s firebase_uid=%s",
+                user.id,
+                firebase_uid,
+            )

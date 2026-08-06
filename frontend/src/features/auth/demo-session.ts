@@ -254,6 +254,13 @@ export async function demoApiRequest<T>(path: string, init: RequestInit = {}): P
     state.resumeVersions = state.resumeVersions.filter((version) => version.resume_id !== parts[1]);
     return undefined as T;
   }
+  // POST /resumes/{id}/activate
+  if (parts[0] === "resumes" && parts[2] === "activate" && method === "POST") {
+    const resume = state.resumes.find((item) => item.id === parts[1]);
+    if (resume) state.resumes.forEach((item) => { item.is_active = item.id === resume.id; });
+    return resume as T;
+  }
+  // Legacy shape still used in older demo paths
   if (parts[0] === "resumes" && parts.length === 2 && method === "POST") {
     const resume = state.resumes.find((item) => item.id === parts[1]);
     if (resume) state.resumes.forEach((item) => { item.is_active = item.id === resume.id; });
@@ -270,6 +277,14 @@ export async function demoApiRequest<T>(path: string, init: RequestInit = {}): P
       version.extraction_status = "confirmed";
       return version as T;
     }
+    // PATCH extraction review (structured_content) before confirm
+    if (parts[2] === "extraction" && method === "PATCH" && version) {
+      if ((body as DemoRecord)?.structured_content) {
+        version.structured_content = (body as DemoRecord).structured_content;
+      }
+      version.extraction_status = "review_required";
+      return version as T;
+    }
     if (method === "GET") return version as T;
   }
   if (path === "/job-descriptions" && method === "GET") return state.jobDescriptions as T;
@@ -282,6 +297,19 @@ export async function demoApiRequest<T>(path: string, init: RequestInit = {}): P
     const record = state.jobDescriptions.find((item) => item.id === parts[1]);
     if (record) record.extraction_status = "confirmed";
     return record as T;
+  }
+  if (parts[0] === "job-descriptions" && parts[2] === "extraction" && method === "PATCH") {
+    const record = state.jobDescriptions.find((item) => item.id === parts[1]);
+    if (record) {
+      if ((body as DemoRecord)?.structured_content) {
+        record.structured_content = (body as DemoRecord).structured_content;
+      }
+      record.extraction_status = "review_required";
+      return record as T;
+    }
+  }
+  if (path === "/jobs/external/sync" && method === "POST") {
+    return { synced: 0, created: 0, updated: 0, message: "Demo mode — external job sync is simulated." } as T;
   }
   if (parts[0] === "job-descriptions" && parts[1] === "upload" && method === "POST") {
     const form = init.body instanceof FormData ? init.body : null;
@@ -390,6 +418,10 @@ export async function demoApiRequest<T>(path: string, init: RequestInit = {}): P
       return existing as T;
     }
   }
+  if (parts[0] === "saved-jobs" && parts.length === 2 && method === "DELETE") {
+    state.savedJobs = state.savedJobs.filter((item) => item.job_id !== parts[1]);
+    return undefined as T;
+  }
   if (path === "/learning-paths" && method === "GET") return state.learningPaths as T;
   if (path === "/learning-paths/generate" && method === "POST") {
     const pathId = id("demo-path");
@@ -460,5 +492,6 @@ export async function demoApiRequest<T>(path: string, init: RequestInit = {}): P
     return undefined as T;
   }
 
-  return {} as T;
+  // Fail closed: unknown demo routes must not return {} (callers treat that as success).
+  throw new Error(`Demo session has no handler for ${method} ${path}`);
 }

@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.agents.providers.groq_client import GroqClient
 from app.agents.providers.nvidia_client import PROMPTS_DIR, NvidiaClient
 from app.core.config import Settings
+from app.core.errors import ApiError
 
 logger = logging.getLogger(__name__)
 _PROMPT_PATH = PROMPTS_DIR / "ats_improvement_v1.txt"
@@ -186,6 +187,8 @@ async def generate_ats_improvement_brief(
                 "model": settings.nvidia_model, "agent": "ats_improvement_brief", "fallback": False,
             }
         except Exception as exc:
+            if isinstance(exc, ApiError) and exc.code == "nvidia_unavailable":
+                raise
             logger.warning("ats_brief_nvidia_failed error=%s", exc)
     if settings.groq_configured:
         try:

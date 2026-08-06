@@ -84,13 +84,13 @@ function findPython() {
   return null;
 }
 
-console.log("Career Copilot backend setup: selecting Python 3.11–3.14 …");
+console.log("Career Copilot backend setup: selecting Python 3.11-3.13...");
 const selected = findPython();
 if (!selected) {
   console.error(`
-No suitable Python found (need 3.11, 3.12, 3.13, or 3.14).
+No suitable Python found (need Python 3.11, 3.12, or 3.13).
 
-Python 3.15+ is not supported for this project.
+Python 3.10 and 3.14+ are not supported for this project.
 
 Install Python 3.12, then re-run:
   winget install Python.Python.3.12

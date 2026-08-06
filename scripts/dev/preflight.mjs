@@ -10,6 +10,6 @@ const result = spawnSync(process.execPath, ["scripts/setup/firebase.mjs"], {
   stdio: "inherit",
 });
 if ((result.status ?? 1) !== 0) {
-  console.error("[dev] Firebase Firestore setup check failed.");
+  console.error("[dev] Firebase setup check failed; the API was not started because Firestore/Storage would not be end-to-end usable.");
   process.exit(1);
 }

@@ -11,6 +11,6 @@ const result = spawnSync(python, ["scripts/diagnostics/check-firestore.py"], {
   stdio: "inherit",
 });
 if ((result.status ?? 1) !== 0) {
-  console.error("Firebase setup check failed. Configure FIREBASE_PROJECT_ID and FIREBASE_CREDENTIALS_PATH first.");
+  console.error("Firebase Firestore + Supabase Storage setup check failed.");
   process.exit(result.status ?? 1);
 }

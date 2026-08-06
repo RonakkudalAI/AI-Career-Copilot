@@ -96,7 +96,7 @@ FastAPI  backend/app/main.py
         â”‚
         â”œâ”€â–º Firestore  FIREBASE_PROJECT_ID + server credentials
         â”‚     backend/app/database/client.py  (collection/document query adapter)
-        â”œâ”€â–º Files      LOCAL_STORAGE_DIR
+        â”œâ”€â–º Files      FIREBASE_STORAGE_BUCKET
         â”‚     buckets: candidate-documents, candidate-avatars, interview-media
         â””â”€â–º Optional server-only services
               NVIDIA Integrate API  → structured LLM tasks
@@ -231,7 +231,7 @@ DELETE /api/v1/account
   confirmation_phrase must be exactly: DELETE MY ACCOUNT
   optional email must match account when provided
   → collect storage paths (resumes, exports, JDs, avatars, interview media)
-  → purge files under LOCAL_STORAGE_DIR
+  → purge user objects from Firebase Storage
   → delete users row (cascade removes owned tables per schema)
 ```
 
@@ -247,7 +247,7 @@ career-copilot/
 â”œâ”€â”€ FIREBASE_SETUP.md         # Firebase project and Firestore setup
 â”œâ”€â”€ firebase/firestore.rules  # Deny direct browser database access
 â”œâ”€â”€ scripts/
-â”‚   â”œâ”€â”€ setup/                # project, backend, local DB migrate
+â”‚   â”œâ”€â”€ setup/                # project, backend, Firebase setup
 â”‚   â”œâ”€â”€ dev/                  # preflight, frontend, backend, run
 â”‚   â”œâ”€â”€ diagnostics/          # env, secrets, e2e-smoke, DB checks
 â”‚   â””â”€â”€ shared/               # load-env, ports
@@ -317,7 +317,7 @@ One root `.env` (copy from `.env.example`). Browser-safe Firebase values use the
 | `LOG_LEVEL` | Logging | INFO |
 | `FIREBASE_PROJECT_ID` | Firebase project ID | required |
 | `FIREBASE_CREDENTIALS_PATH` | Server-only service-account JSON path | required locally |
-| `LOCAL_STORAGE_DIR` | File buckets root | `./.data/storage` |
+| `FIREBASE_STORAGE_BUCKET` | Firebase Storage bucket | `{project}.appspot.com` |
 | `AUTH_SECRET` | JWT signing secret | **required** (set a long random value) |
 | `DOCUMENT_BUCKET` / `AVATAR_BUCKET` / `INTERVIEW_BUCKET` | Storage bucket names | candidate-* |
 | `DOCUMENT_MAX_BYTES` | Max resume/JD upload | 10 MiB |
@@ -923,7 +923,7 @@ In-flight GET dedupe lives in memory only (no client data cache).
 
 ### Files
 
-Under `LOCAL_STORAGE_DIR/{bucket}/{user_id}/...`:
+Under Firebase Storage `{FIREBASE_STORAGE_BUCKET}/{DOCUMENT_BUCKET|AVATAR_BUCKET|INTERVIEW_BUCKET}/{user_id}/...`:
 
 | Bucket env | Typical use |
 |------------|-------------|

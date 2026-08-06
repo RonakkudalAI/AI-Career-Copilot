@@ -12,7 +12,9 @@ def setup_test_environment():
     os.environ["LOG_LEVEL"] = "ERROR"
     os.environ["FRONTEND_ORIGINS"] = "http://localhost:3000"
     os.environ["AUTH_SECRET"] = "test-secret"
-    os.environ["LOCAL_STORAGE_DIR"] = "/tmp/storage"
+    # Product storage is Firebase Storage; unit tests use the in-memory backend via APP_ENV=test.
+    os.environ.pop("LOCAL_STORAGE_DIR", None)
+    os.environ["FIREBASE_STORAGE_BUCKET"] = "test-project.appspot.com"
     os.environ["DOCUMENT_BUCKET"] = "candidate-documents"
     os.environ["AVATAR_BUCKET"] = "candidate-avatars"
     os.environ["INTERVIEW_BUCKET"] = "interview-media"

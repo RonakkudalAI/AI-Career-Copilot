@@ -1159,7 +1159,11 @@ export function AtsReport() {
     <div className="stack">
       <PageHeader
         eyebrow="ATS keyword coverage"
-        title={`${Math.round(Number(analysis.overall_score ?? 0))}%`}
+        title={
+          analysis.overall_score == null
+            ? "No score"
+            : `${Math.round(Number(analysis.overall_score))}%`
+        }
         description="Simple keyword coverage: each hit quotes an exact line from your confirmed resume. Nothing is invented."
         action={
           <div className="cluster">
@@ -1190,7 +1194,10 @@ export function AtsReport() {
         <ParsedInputPanel title="Parsed job description" input={analysis.parsed_inputs?.job_description} />
       </div>
       <Card className="stack panel-blue">
-        <Progress value={analysis.overall_score || 0} label="JD keyword coverage" />
+        <Progress
+          value={analysis.overall_score == null ? 0 : Number(analysis.overall_score)}
+          label={analysis.overall_score == null ? "Score unavailable" : "JD keyword coverage"}
+        />
         <p>
           <strong>{missingTerms.length}</strong> missing of <strong>{total || "—"}</strong> scored terms
           {matchedCount != null ? ` (${matchedCount} matched)` : ""}.

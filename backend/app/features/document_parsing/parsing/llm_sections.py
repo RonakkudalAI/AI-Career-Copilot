@@ -271,6 +271,8 @@ async def _llm_segregate(settings: Settings, source_lines: list[str]) -> LlmDocu
                     raise
             logger.warning("document_section_nvidia_rate_limited falling_back=groq")
         except Exception as exc:
+            if isinstance(exc, ApiError) and exc.code == "nvidia_unavailable":
+                raise
             if not (getattr(settings, "groq_resume_parser_configured", False) or settings.groq_configured):
                 raise
             logger.warning("document_section_nvidia_failed error=%s falling_back=groq", type(exc).__name__)
@@ -351,6 +353,8 @@ async def extract_sections_enriched(
         ]
         return structural
     except Exception as exc:
+        if isinstance(exc, ApiError) and exc.code == "nvidia_unavailable":
+            raise
         logger.warning("document_section_llm_failed error=%s using_structural_fallback", type(exc).__name__)
         structural["warnings"] = list(structural.get("warnings") or []) + [
             "LLM segregation unavailable; used structural layout."

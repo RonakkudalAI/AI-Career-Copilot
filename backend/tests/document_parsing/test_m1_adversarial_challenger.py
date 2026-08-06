@@ -117,7 +117,7 @@ def test_groq_config_boundary_validation():
         "log_level": "INFO",
         "frontend_origins": ["http://localhost:3000"],
         "auth_secret": "secret",
-        "local_storage_dir": "/tmp/storage",
+        "firebase_storage_bucket": "test-project.appspot.com",
         "document_bucket": "docs",
         "avatar_bucket": "avatars",
         "interview_bucket": "interviews",

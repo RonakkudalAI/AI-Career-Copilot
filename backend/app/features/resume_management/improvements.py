@@ -303,6 +303,29 @@ def update_existing_resume_content(
     if not rows:
         raise ApiError(500, "resume_version_update_failed", "The existing resume could not be updated.")
     record = rows[0]
+    # In-place content changes keep the same version id; drop related analyses so
+    # the next ATS run cannot return a stale score keyed only on version+JD ids.
+    try:
+        analyses = (
+            client.table("ats_analyses")
+            .select("id")
+            .eq("user_id", str(user.id))
+            .eq("resume_version_id", str(record["id"]))
+            .execute()
+            .data
+            or []
+        )
+        analysis_ids = [str(row["id"]) for row in analyses if row.get("id")]
+        if analysis_ids:
+            client.table("ats_evidence").delete().eq("user_id", str(user.id)).in_(
+                "analysis_id", analysis_ids
+            ).execute()
+            client.table("ats_analyses").delete().eq("user_id", str(user.id)).eq(
+                "resume_version_id", str(record["id"])
+            ).execute()
+    except Exception:
+        # Best-effort invalidation; create_ats also fingerprints source content.
+        pass
     write_activity(
         client,
         user,

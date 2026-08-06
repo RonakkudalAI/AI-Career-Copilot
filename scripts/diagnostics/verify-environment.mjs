@@ -14,6 +14,12 @@ const checks = [
   ["VITE_FIREBASE_APP_ID", "CLIENT-SAFE"],
   ["FIREBASE_PROJECT_ID", "SERVER-ONLY"],
   ["FIREBASE_CREDENTIALS_PATH", "SERVER-ONLY"],
+  ["SUPABASE_URL", "SERVER-ONLY"],
+  ["SUPABASE_SERVICE_ROLE_KEY", "SERVER-ONLY"],
+  ["SUPABASE_STORAGE_BUCKET", "SERVER-ONLY"],
+  ["FIREBASE_DATABASE_ID", "SERVER-ONLY-OPTIONAL"],
+  ["DOCUMENT_BUCKET", "SERVER-ONLY-OPTIONAL"],
+  ["AVATAR_BUCKET", "SERVER-ONLY-OPTIONAL"],
   ["AUTH_SECRET", "SERVER-ONLY"],
   ["PUBLIC_API_BASE_URL", "SERVER-ONLY-OPTIONAL"],
   ["LLM_PROVIDER", "SERVER-ONLY"],
@@ -61,6 +67,7 @@ for (const name of Object.keys(environment)) {
 if (environment.VITE_API_BASE_URL) requireAbsoluteHttpUrl("VITE_API_BASE_URL");
 if (environment.NVIDIA_BASE_URL) requireAbsoluteHttpUrl("NVIDIA_BASE_URL");
 if (environment.GROQ_BASE_URL) requireAbsoluteHttpUrl("GROQ_BASE_URL");
+if (environment.SUPABASE_URL) requireAbsoluteHttpUrl("SUPABASE_URL");
 
 if (
   environment.VITE_FIREBASE_PROJECT_ID &&

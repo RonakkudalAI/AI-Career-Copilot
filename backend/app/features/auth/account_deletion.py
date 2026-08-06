@@ -64,11 +64,7 @@ def email_matches_account(provided: str | None, account_email: str | None) -> bo
 
 def collect_user_storage_paths(client, user: CurrentUser) -> dict[str, list[str]]:
     uid = str(user.id)
-    buckets: dict[str, list[str]] = {
-        "candidate-documents": [],
-        "candidate-avatars": [],
-        "interview-media": [],
-    }
+    buckets: dict[str, list[str]] = {"candidate-documents": [], "candidate-avatars": []}
 
     def _add(bucket: str, path: Any) -> None:
         if not path:
@@ -82,28 +78,16 @@ def collect_user_storage_paths(client, user: CurrentUser) -> dict[str, list[str]
             rows = client.table(table).select(column).eq("user_id", uid).execute().data or []
             for row in rows:
                 _add("candidate-documents", row.get(column))
-        except Exception:
-            logger.warning("account_delete_path_collect_failed table=%s user_id=%s", table, uid)
-    try:
-        rows = (
-            client.table("interview_responses")
-            .select("audio_path,video_path")
-            .eq("user_id", uid)
-            .execute()
-            .data
-            or []
-        )
-        for row in rows:
-            _add("interview-media", row.get("audio_path"))
-            _add("interview-media", row.get("video_path"))
-    except Exception:
-        logger.warning("account_delete_path_collect_failed table=interview_responses user_id=%s", uid)
+        except Exception as exc:
+            logger.exception("account_delete_path_collect_failed table=%s user_id=%s", table, uid)
+            raise ApiError(500, "account_deletion_incomplete", "Could not enumerate stored account files.") from exc
     try:
         profile = client.table("profiles").select("avatar_path").eq("id", uid).limit(1).execute().data or []
         if profile:
             _add("candidate-avatars", profile[0].get("avatar_path"))
-    except Exception:
-        logger.warning("account_delete_path_collect_failed table=profiles user_id=%s", uid)
+    except Exception as exc:
+        logger.exception("account_delete_path_collect_failed table=profiles user_id=%s", uid)
+        raise ApiError(500, "account_deletion_incomplete", "Could not enumerate the account avatar.") from exc
     return buckets
 
 
@@ -146,8 +130,9 @@ def _list_prefix_recursive(admin_client, bucket: str, prefix: str) -> list[str]:
         seen_dirs.add(current)
         try:
             entries = admin_client.storage.from_(bucket).list(current) or []
-        except Exception:
-            continue
+        except Exception as exc:
+            logger.exception("account_delete_storage_list_failed bucket=%s prefix=%s", bucket, current)
+            raise RuntimeError(f"Could not enumerate Firebase Storage bucket {bucket}") from exc
         for entry in entries:
             name = (entry or {}).get("name")
             if not name:
@@ -169,15 +154,15 @@ def purge_user_storage(
     bucket_map = {
         "candidate-documents": settings.document_bucket,
         "candidate-avatars": settings.avatar_bucket,
-        "interview-media": settings.interview_bucket,
     }
     removed: dict[str, int] = {key: 0 for key in bucket_map}
     for logical, bucket in bucket_map.items():
         paths = list(known_paths.get(logical) or [])
         try:
             paths.extend(_list_prefix_recursive(admin_client, bucket, uid))
-        except Exception:
-            logger.warning("account_delete_storage_list_failed bucket=%s user_id=%s", bucket, uid)
+        except Exception as exc:
+            logger.exception("account_delete_storage_list_failed bucket=%s user_id=%s", bucket, uid)
+            raise ApiError(500, "account_deletion_incomplete", "Could not enumerate stored account files.") from exc
         unique: list[str] = []
         seen: set[str] = set()
         for path in paths:
@@ -190,11 +175,12 @@ def purge_user_storage(
             try:
                 admin_client.storage.from_(bucket).remove(chunk)
                 removed[logical] += len(chunk)
-            except Exception:
-                logger.warning(
+            except Exception as exc:
+                logger.exception(
                     "account_delete_storage_remove_failed bucket=%s count=%s user_id=%s",
                     bucket,
                     len(chunk),
                     uid,
                 )
+                raise ApiError(500, "account_deletion_incomplete", "Could not remove all stored account files.") from exc
     return removed
