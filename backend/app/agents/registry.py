@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.agents.providers import GroqClient, NvidiaClient
+from app.agents.providers import GroqClient, NvidiaClient, preferred_llm_provider, preferred_llm_providers
 from app.core.config import Settings
 from app.features.learning.service import learning_agent_capability
 from app.features.resume_improvement.agents.crew import crew_capability, crew_runtime_mode
@@ -15,37 +15,58 @@ AGENT_ATS_IMPROVEMENT_BRIEF = "ats_improvement_brief"
 AGENT_RESUME_IMPROVEMENT_CREW = "resume_improvement_crew"
 AGENT_LEARNING_YOUTUBE_CREW = "learning_youtube_crew"
 AGENT_DOCUMENT_SECTION_EXTRACT = "document_section_extract"
+
+
+def _primary_model(settings: Settings, nvidia: dict[str, Any], groq: dict[str, Any]) -> str | None:
+    preferred = preferred_llm_provider(settings)
+    if preferred == "groq" and groq.get("configured"):
+        return groq.get("model")
+    if preferred == "nvidia" and nvidia.get("configured"):
+        return nvidia.get("model")
+    if groq.get("configured"):
+        return groq.get("model")
+    if nvidia.get("configured"):
+        return nvidia.get("model")
+    return None
+
+
 def list_agents(settings: Settings) -> list[dict[str, Any]]:
     nvidia = NvidiaClient(settings).capability()
     groq = GroqClient(settings).capability()
     crew = crew_capability(settings)
     learning = learning_agent_capability(settings)
+    preferred = preferred_llm_provider(settings)
+    ordered = preferred_llm_providers(settings)
+    any_llm = bool(ordered)
+    primary_model = _primary_model(settings, nvidia, groq)
     return [
         {
             "id": AGENT_RESUME_IMPROVEMENT,
             "name": "Resume improvement",
             "description": "Evidence-checked resume rewrite suggestions for confirmed sections.",
-            "provider": "nvidia",
+            "provider": preferred if any_llm else "none",
+            "provider_order": ordered,
             "prompt": "improve_resume_v1.txt",
-            "configured": bool(nvidia.get("configured")),
-            "ready": bool(nvidia.get("configured")),
-            "model": nvidia.get("model"),
+            "configured": any_llm,
+            "ready": any_llm,
+            "model": primary_model,
             "endpoint": "POST /api/v1/resume-improvements",
-            "fallback": "Manual edit and export remain available when NVIDIA is not configured.",
+            "fallback": "Manual edit and export remain available when no LLM is configured.",
             "orchestration": crew_runtime_mode(),
         },
         {
             "id": AGENT_RESUME_IMPROVEMENT_CREW,
             "name": crew["name"],
             "description": (
-                "CrewAI-compatible sequential crew: ATS gap analyst → NVIDIA improver → "
-                "evidence validator. Tools never invent experience."
+                "CrewAI-compatible sequential crew: ATS gap analyst → LLM improver "
+                f"(prefers {preferred}) → evidence validator. Tools never invent experience."
             ),
-            "provider": "nvidia",
+            "provider": preferred if any_llm else "none",
+            "provider_order": ordered,
             "prompt": "improve_resume_v1.txt (+ crew tools)",
-            "configured": bool(nvidia.get("configured")),
+            "configured": any_llm,
             "ready": bool(crew.get("ready")),
-            "model": nvidia.get("model"),
+            "model": primary_model,
             "endpoint": "POST /api/v1/resume-improvements",
             "fallback": crew.get("official_crewai_note") or crew.get("truthfulness"),
             "framework": crew.get("framework"),
@@ -58,13 +79,14 @@ def list_agents(settings: Settings) -> list[dict[str, Any]]:
             "id": AGENT_PROFILE_FILL,
             "name": "Profile fill from resume",
             "description": "Extract profile fields from resume text (AI + deterministic merge).",
-            "provider": "nvidia",
+            "provider": preferred if any_llm else "none",
+            "provider_order": ordered,
             "prompt": "fill_profile_from_resume_v1.txt",
-            "configured": bool(nvidia.get("configured")),
+            "configured": any_llm,
             "ready": True,
-            "model": nvidia.get("model") if nvidia.get("configured") else None,
+            "model": primary_model,
             "endpoint": "POST /api/v1/profile/from-resume/preview",
-            "fallback": "Deterministic resume mapping when NVIDIA is unavailable.",
+            "fallback": "Deterministic resume mapping when LLM providers are unavailable.",
         },
         {
             "id": AGENT_INTERVIEW_QUESTIONS,
@@ -82,13 +104,12 @@ def list_agents(settings: Settings) -> list[dict[str, Any]]:
             "id": AGENT_ATS_IMPROVEMENT_BRIEF,
             "name": "ATS improvement brief",
             "description": "Overall inference from missing ATS keywords only (no invented experience).",
-            "provider": "nvidia_or_groq",
+            "provider": preferred if any_llm else "none",
+            "provider_order": ordered,
             "prompt": "ats_improvement_v1.txt",
-            "configured": bool(nvidia.get("configured") or groq.get("configured")),
+            "configured": any_llm,
             "ready": True,
-            "model": nvidia.get("model")
-            if nvidia.get("configured")
-            else (groq.get("model") if groq.get("configured") else None),
+            "model": primary_model,
             "endpoint": "POST /api/v1/ats-analyses (summary.overall_inference)",
             "fallback": "Deterministic missing-keyword brief when no LLM is available.",
         },
@@ -119,23 +140,26 @@ def list_agents(settings: Settings) -> list[dict[str, Any]]:
             "name": "Document section segregation",
             "description": (
                 "Segregates resume/JD plain text into source-true sections using one short LLM call. "
-                "NVIDIA first (rate-limit throttled); Groq only on NVIDIA 429; structural layout fallback."
+                f"Prefers {preferred} (from LLM_PROVIDER); falls back to the other provider, then structural layout."
             ),
-            "provider": "nvidia_or_groq",
+            "provider": preferred if any_llm else "none",
+            "provider_order": ordered,
             "prompt": "document_section_extract_v1.txt",
-            "configured": bool(nvidia.get("configured") or groq.get("configured")),
+            "configured": any_llm or bool(getattr(settings, "groq_resume_parser_configured", False)),
             "ready": True,
-            "model": nvidia.get("model")
-            if nvidia.get("configured")
-            else (groq.get("model") if groq.get("configured") else None),
+            "model": primary_model,
             "endpoint": "POST /api/v1/resumes, POST /api/v1/job-descriptions",
             "fallback": "Structural layout parser when no LLM is available.",
         },
     ]
+
+
 def agents_status(settings: Settings) -> dict[str, Any]:
     agents = list_agents(settings)
     nvidia = NvidiaClient(settings).capability()
     groq = GroqClient(settings).capability()
+    preferred = preferred_llm_provider(settings)
+    ordered = preferred_llm_providers(settings)
     ready_count = sum(1 for a in agents if a.get("ready"))
     configured_llm_agents = sum(1 for a in agents if a.get("configured"))
     return {
@@ -143,6 +167,8 @@ def agents_status(settings: Settings) -> dict[str, Any]:
         "agent_count": len(agents),
         "ready_count": ready_count,
         "llm_configured_agent_count": configured_llm_agents,
+        "preferred_provider": preferred,
+        "provider_order": ordered,
         "providers": {
             "nvidia": {
                 "configured": bool(nvidia.get("configured")),

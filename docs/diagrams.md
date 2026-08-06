@@ -40,7 +40,7 @@ flowchart TB
   subgraph DOMAIN["Feature modules · backend/app/features"]
     direction TB
     F_AUTH["auth<br/>JWT · scrypt · account wipe"]
-    F_PARSE["document_parsing<br/>Docling + sections"]
+    F_PARSE["document_parsing<br/>pypdf + sections"]
     F_ATS["ats<br/>keyword coverage v3"]
     F_PROF["profile<br/>completion · fill"]
     F_INT["interview<br/>questions · prep"]
@@ -207,7 +207,7 @@ flowchart TB
   V --> P["parse_document_bytes<br/>pipeline.py"]
   P --> T["extract_text<br/>text_extract.py"]
   T --> T1["fast PDF/DOCX extractors"]
-  T --> T2["Docling fallback"]
+  T --> T2["pypdf / PyMuPDF / pdfplumber"]
   P --> S["extract_sections_enriched<br/>llm_sections.py / sections.py"]
   S --> RV[("resume_versions<br/>review_required")]
   RV -->|confirm| CF[("confirmed")]

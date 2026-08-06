@@ -37,13 +37,13 @@ What `npm run setup` does (`scripts/setup/project.mjs`):
 2. Create `backend/.venv` and install `career-copilot-api`  
 3. Run Firebase connectivity checks  
 
-Docling is a core dependency (`backend/pyproject.toml`). Optional extras:
+PDF parsing uses **pypdf** (core). Optional faster backends:
 
 ```bash
 # Official CrewAI (Python < 3.14)
 backend\.venv\Scripts\python.exe -m pip install -e "backend/.[crewai]"
 
-# Extra PDF extractors
+# Optional faster PDF backends (PyMuPDF, pdfplumber) before pypdf
 backend\.venv\Scripts\python.exe -m pip install -e "backend/.[pdf-extras]"
 ```
 
@@ -158,7 +158,7 @@ npm run e2e:landing   # playwright
 |---------|--------------|-----|
 | Backend fails on boot | Missing `AUTH_SECRET` or invalid Settings | Complete `.env`; read pydantic error |
 | Firestore errors | Bad credentials path / project id | `FIREBASE_CREDENTIALS_PATH`, `npm run firebase:check` |
-| PDF 503 `docling_not_installed` | Docling missing in venv | `pip install 'docling>=2.0,<3'` in venv |
+| PDF parse failed / no text | Bad PDF, encrypted, or image-only | Use a text-based PDF; encrypted files are rejected |
 | CORS errors | Origin not allow-listed | Add exact origin to `FRONTEND_ORIGINS` |
 | UI “Could not reach the API” | Backend down or proxy misconfig | `npm run dev`; check `PUBLIC_API_BASE_URL` |
 | Weak AI features | Keys empty | Set Groq/NVIDIA; confirm `/agents/status` |

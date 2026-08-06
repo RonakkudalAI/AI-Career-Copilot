@@ -333,7 +333,7 @@ def utc_now() -> str:
 async def _extract_resume_content(
     content: bytes, filename: str, declared_mime: str | None, settings: Settings
 ) -> tuple[str, dict[str, Any]]:
-    """Parse resume with Docling + simple section map (sections only — no source-block payload)."""
+    """Parse resume with pypdf (and optional fast PDF backends) + section map (no source-block payload)."""
     mime = validate_document(filename or "document", declared_mime, content, settings.document_max_bytes)
     return await parse_document_bytes(content, mime_type=mime, settings=settings)
 
@@ -539,8 +539,8 @@ def bootstrap(
             "interview_evaluation": False,
             "interview_questions": True,  # Groq when configured; templates otherwise
             "interview_questions_ai": settings.groq_configured,
-            "resume_improvements": settings.nvidia_configured,
-            "profile_fill_ai": settings.nvidia_configured,
+            "resume_improvements": settings.nvidia_configured or settings.groq_configured,
+            "profile_fill_ai": settings.nvidia_configured or settings.groq_configured,
             "ats_improvement_brief_ai": settings.nvidia_configured or settings.groq_configured,
             "job_recommendations": False,
             "nvidia_configured": settings.nvidia_configured,
@@ -1068,7 +1068,7 @@ async def preview_profile_from_resume(
     plain_text = version.get("plain_text") or ""
     structured = version.get("structured_content") or {}
     if not isinstance(structured, dict) or not structured.get("sections"):
-        structured = await extract_sections_enriched(plain_text, settings)
+        structured = await extract_sections_enriched(plain_text, settings, prefer_llm=False)
     draft = await build_profile_draft_enriched(
         plain_text,
         structured if isinstance(structured, dict) else {},
@@ -1858,7 +1858,10 @@ async def create_jd(
     from app.features.document_parsing.pipeline import _clean_structured
 
     raw_structured = await extract_sections_enriched(
-        payload.raw_text, settings, schema_version="jd-extraction-v1"
+        payload.raw_text,
+        settings,
+        schema_version="jd-extraction-v1",
+        prefer_llm=False,
     )
     structured = _clean_structured(raw_structured, "jd-extraction-v1")
     inferred = infer_job_metadata(payload.raw_text)
@@ -2039,32 +2042,85 @@ def confirm_jd(
     return result
 
 
+def _unavailable_resume_payload(
+    *,
+    resume_id: Any = None,
+    title: str = "Resume unavailable",
+    original_filename: Any = None,
+    version_number: Any = None,
+    created_at: Any = None,
+) -> dict[str, Any]:
+    return {
+        "id": resume_id,
+        "title": title,
+        "original_filename": original_filename,
+        "version_number": version_number,
+        "created_at": created_at,
+        "unavailable": True,
+    }
+
+
+def _unavailable_job_payload() -> dict[str, Any]:
+    return {
+        "id": None,
+        "title": "Job description unavailable",
+        "company": None,
+        "role_title": None,
+        "input_type": None,
+        "original_filename": None,
+        "created_at": None,
+        "unavailable": True,
+    }
+
+
 def _enrich_ats_analysis(
     client, user: CurrentUser, analysis: dict[str, Any], *, include_parsed: bool = False
 ) -> dict[str, Any]:
-    """Attach the resume version and job description used for a stored ATS run."""
-    enriched = dict(analysis)
+    """Attach the resume version and job description used for a stored ATS run.
+
+    Never raises for missing related rows: list history must stay visible even when
+    a linked resume/JD was deleted or a legacy analysis row is incomplete.
+    """
+    enriched = dict(analysis or {})
+    version_id = enriched.get("resume_version_id")
+    job_id = enriched.get("job_description_id")
+
+    # --- Resume used ---
     try:
-        version = owned_row(client, "resume_versions", analysis["resume_version_id"], user)
-        resume = owned_row(client, "resumes", version["resume_id"], user)
-        if resume.get("deleted_at"):
-            enriched["resume"] = {
-                "id": resume.get("id"),
-                "title": resume.get("title") or "Deleted resume",
-                "original_filename": version.get("original_filename"),
-                "version_number": version.get("version_number"),
-                "created_at": version.get("created_at"),
-                "unavailable": True,
-            }
+        if not version_id:
+            enriched["resume"] = _unavailable_resume_payload(title="Resume unavailable (no version linked)")
         else:
-            enriched["resume"] = {
-                "id": resume.get("id"),
-                "title": resume.get("title"),
+            version = owned_row(client, "resume_versions", version_id, user)
+            resume_id = version.get("resume_id")
+            version_meta = {
                 "original_filename": version.get("original_filename"),
                 "version_number": version.get("version_number"),
                 "created_at": version.get("created_at"),
-                "unavailable": False,
             }
+            try:
+                resume = owned_row(client, "resumes", resume_id, user) if resume_id else None
+            except ApiError:
+                resume = None
+            if not resume:
+                enriched["resume"] = _unavailable_resume_payload(
+                    resume_id=resume_id,
+                    title="Resume unavailable",
+                    **version_meta,
+                )
+            elif resume.get("deleted_at"):
+                enriched["resume"] = {
+                    "id": resume.get("id"),
+                    "title": resume.get("title") or "Deleted resume",
+                    **version_meta,
+                    "unavailable": True,
+                }
+            else:
+                enriched["resume"] = {
+                    "id": resume.get("id"),
+                    "title": resume.get("title"),
+                    **version_meta,
+                    "unavailable": False,
+                }
             if include_parsed:
                 enriched["parsed_inputs"] = {
                     "resume": {
@@ -2074,55 +2130,78 @@ def _enrich_ats_analysis(
                         "structured_content": version.get("structured_content") or {},
                     }
                 }
-    except ApiError:
-        enriched["resume"] = {
-            "id": None,
-            "title": "Resume unavailable",
-            "original_filename": None,
-            "version_number": None,
-            "created_at": None,
-            "unavailable": True,
-        }
+    except Exception as exc:
+        logger.warning(
+            "ats_enrich_resume_failed analysis_id=%s type=%s",
+            enriched.get("id"),
+            type(exc).__name__,
+        )
+        enriched["resume"] = _unavailable_resume_payload()
+
+    # --- Job description used ---
     try:
-        job = owned_row(client, "job_descriptions", analysis["job_description_id"], user)
-        enriched["job_description"] = {
-            "id": job.get("id"),
-            "title": job.get("title"),
-            "company": job.get("company"),
-            "role_title": job.get("role_title"),
-            "input_type": job.get("input_type"),
-            "original_filename": job.get("original_filename"),
-            "created_at": job.get("created_at"),
-            "unavailable": False,
-        }
-        if include_parsed:
-            enriched.setdefault("parsed_inputs", {})["job_description"] = {
-                "filename": job.get("original_filename"),
-                "extraction_status": job.get("extraction_status"),
-                "plain_text": job.get("raw_text") or "",
-                "structured_content": job.get("structured_content") or {},
+        if not job_id:
+            enriched["job_description"] = {
+                **_unavailable_job_payload(),
+                "title": "Job description unavailable (none linked)",
             }
-    except ApiError:
-        enriched["job_description"] = {
-            "id": None,
-            "title": "Job description unavailable",
-            "company": None,
-            "role_title": None,
-            "input_type": None,
-            "original_filename": None,
-            "created_at": None,
-            "unavailable": True,
-        }
+        else:
+            job = owned_row(client, "job_descriptions", job_id, user)
+            enriched["job_description"] = {
+                "id": job.get("id"),
+                "title": job.get("title"),
+                "company": job.get("company"),
+                "role_title": job.get("role_title"),
+                "input_type": job.get("input_type"),
+                "original_filename": job.get("original_filename"),
+                "created_at": job.get("created_at"),
+                "unavailable": False,
+            }
+            if include_parsed:
+                enriched.setdefault("parsed_inputs", {})["job_description"] = {
+                    "filename": job.get("original_filename"),
+                    "extraction_status": job.get("extraction_status"),
+                    "plain_text": job.get("raw_text") or "",
+                    "structured_content": job.get("structured_content") or {},
+                }
+    except Exception as exc:
+        logger.warning(
+            "ats_enrich_job_failed analysis_id=%s type=%s",
+            enriched.get("id"),
+            type(exc).__name__,
+        )
+        enriched["job_description"] = _unavailable_job_payload()
     return enriched
 
 
 @router.get("/ats-analyses")
 def list_ats(user: CurrentUser = Depends(get_current_user), settings: Settings = Depends(get_settings)):
     client = client_for(settings, user)
-    analyses = owned_rows(client, "ats_analyses", user, "created_at")
-    # Keep every candidate-owned run visible so history counts remain truthful.
-    analyses = list(reversed(analyses))
-    return [_enrich_ats_analysis(client, user, row) for row in analyses]
+    analyses = (
+        client.table("ats_analyses")
+        .select("*")
+        .eq("user_id", str(user.id))
+        .order("created_at", desc=True)
+        .execute()
+        .data
+        or []
+    )
+    # Keep every candidate-owned run visible; never drop the list on a single bad row.
+    output: list[dict[str, Any]] = []
+    for row in analyses:
+        try:
+            output.append(_enrich_ats_analysis(client, user, row))
+        except Exception as exc:
+            logger.exception(
+                "ats_list_enrich_row_failed analysis_id=%s type=%s",
+                (row or {}).get("id"),
+                type(exc).__name__,
+            )
+            fallback = dict(row or {})
+            fallback.setdefault("resume", _unavailable_resume_payload())
+            fallback.setdefault("job_description", _unavailable_job_payload())
+            output.append(fallback)
+    return output
 
 
 @router.get("/ats-analyses/{analysis_id}")
@@ -2225,7 +2304,7 @@ async def create_ats(
         prior_breakdown = prior.get("score_breakdown") if isinstance(prior.get("score_breakdown"), dict) else {}
         prior_fp = prior_breakdown.get("source_fingerprint") if isinstance(prior_breakdown, dict) else None
         if prior_fp and prior_fp == source_fp:
-            return prior
+            return _enrich_ats_analysis(client, user, prior, include_parsed=False)
         # Content changed under the same ids — fall through and re-score.
 
     try:
@@ -2330,7 +2409,7 @@ async def create_ats(
             resume_section_summary=score.section_summary,
         )
 
-        completed = (
+        completed_rows = (
             client.table("ats_analyses")
             .update(
                 {
@@ -2375,16 +2454,34 @@ async def create_ats(
             .eq("id", analysis["id"])
             .eq("user_id", str(user.id))
             .execute()
-            .data[0]
+            .data
+            or []
         )
+        if not completed_rows:
+            # Query-by-field miss after insert used to IndexError as a vague 500.
+            raise RuntimeError(
+                f"ats_analysis_update_returned_empty analysis_id={analysis.get('id')}"
+            )
+        completed = completed_rows[0]
     except Exception as exc:
-        client.table("ats_analyses").update(
-            {
-                "status": "failed",
-                "error_code": "ats_persistence_failed",
-                "error_message": "Scoring could not be persisted.",
-            }
-        ).eq("id", analysis["id"]).eq("user_id", str(user.id)).execute()
+        logger.exception(
+            "ats_persistence_failed analysis_id=%s type=%s",
+            analysis.get("id"),
+            type(exc).__name__,
+        )
+        try:
+            client.table("ats_analyses").update(
+                {
+                    "status": "failed",
+                    "error_code": "ats_persistence_failed",
+                    "error_message": "Scoring could not be persisted.",
+                }
+            ).eq("id", analysis["id"]).eq("user_id", str(user.id)).execute()
+        except Exception:
+            logger.exception(
+                "ats_mark_failed_also_failed analysis_id=%s",
+                analysis.get("id"),
+            )
         raise ApiError(500, "ats_persistence_failed", "The ATS analysis could not be persisted.") from exc
 
     write_activity(
@@ -2395,7 +2492,8 @@ async def create_ats(
         "ats_analysis",
         completed["id"],
     )
-    return completed
+    # Return the same shape as GET list/detail so the UI can show resume + JD used.
+    return _enrich_ats_analysis(client, user, completed, include_parsed=False)
 
 
 @router.get("/ats-analyses/{analysis_id}/evidence")

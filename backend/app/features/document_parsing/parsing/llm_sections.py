@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.agents.providers.groq_client import GroqClient
 from app.agents.providers.nvidia_client import NvidiaClient
+from app.agents.providers.routing import preferred_llm_provider
 from app.core.config import Settings
 from app.core.errors import ApiError
 
@@ -247,36 +248,23 @@ def _materialize_from_line_numbers(
         "detected_headings": detected,
         "extraction_method": "llm_line_assignment_v1",
     }
-async def _llm_segregate(settings: Settings, source_lines: list[str]) -> LlmDocumentSections:
-    prompt = _PROMPT_PATH.read_text(encoding="utf-8")
-    numbered = "\n".join(f"{index}|{line}" for index, line in enumerate(source_lines, start=1))
-    payload = {
-        "numbered_lines": numbered,
-        "line_count": len(source_lines),
-        "goal": "assign_line_numbers_to_sections",
-    }
-    if settings.nvidia_configured:
-        try:
-            return await NvidiaClient(settings).generate_structured(
-                system_prompt=prompt,
-                user_payload=payload,
-                schema_model=LlmDocumentSections,
-                temperature=0.0,
-                allow_repair=False,
-            )
-        except ApiError as exc:
-            if exc.status_code != 429 or not getattr(settings, "groq_resume_parser_configured", False):
-                if exc.status_code != 429 or not settings.groq_configured:
-                    raise
-            logger.warning("document_section_nvidia_rate_limited falling_back=groq")
-        except Exception as exc:
-            if isinstance(exc, ApiError) and exc.code == "nvidia_unavailable":
-                raise
-            if not (getattr(settings, "groq_resume_parser_configured", False) or settings.groq_configured):
-                raise
-            logger.warning("document_section_nvidia_failed error=%s falling_back=groq", type(exc).__name__)
+async def _try_nvidia_sections(
+    settings: Settings, prompt: str, payload: dict[str, Any]
+) -> LlmDocumentSections:
+    return await NvidiaClient(settings).generate_structured(
+        system_prompt=prompt,
+        user_payload=payload,
+        schema_model=LlmDocumentSections,
+        temperature=0.0,
+        allow_repair=False,
+    )
+
+
+async def _try_groq_sections(
+    settings: Settings, prompt: str, payload: dict[str, Any]
+) -> LlmDocumentSections:
+    client = GroqClient(settings)
     if getattr(settings, "groq_resume_parser_configured", False):
-        client = GroqClient(settings)
         try:
             return await client.generate_structured(
                 system_prompt=prompt,
@@ -305,14 +293,54 @@ async def _llm_segregate(settings: Settings, source_lines: list[str]) -> LlmDocu
                 max_retries=getattr(settings, "groq_resume_parser_max_retries", None),
                 strict_schema=True,
             )
-    if settings.groq_configured:
-        return await GroqClient(settings).generate_structured(
-            system_prompt=prompt,
-            user_payload=payload,
-            schema_model=LlmDocumentSections,
-            temperature=0.0,
-            allow_repair=False,
-        )
+    if not settings.groq_configured:
+        raise ApiError(503, "groq_not_configured", "Groq is not configured for document section extraction.")
+    return await client.generate_structured(
+        system_prompt=prompt,
+        user_payload=payload,
+        schema_model=LlmDocumentSections,
+        temperature=0.0,
+        allow_repair=False,
+    )
+
+
+async def _llm_segregate(settings: Settings, source_lines: list[str]) -> LlmDocumentSections:
+    prompt = _PROMPT_PATH.read_text(encoding="utf-8")
+    numbered = "\n".join(f"{index}|{line}" for index, line in enumerate(source_lines, start=1))
+    payload = {
+        "numbered_lines": numbered,
+        "line_count": len(source_lines),
+        "goal": "assign_line_numbers_to_sections",
+    }
+    primary = preferred_llm_provider(settings)
+    # Prefer LLM_PROVIDER order. Groq-first avoids multi-minute NVIDIA hangs.
+    if primary == "groq":
+        order = ("groq", "nvidia")
+    else:
+        order = ("nvidia", "groq")
+
+    last_error: Exception | None = None
+    for provider in order:
+        if provider == "groq" and not (
+            settings.groq_configured or getattr(settings, "groq_resume_parser_configured", False)
+        ):
+            continue
+        if provider == "nvidia" and not settings.nvidia_configured:
+            continue
+        try:
+            if provider == "groq":
+                return await _try_groq_sections(settings, prompt, payload)
+            return await _try_nvidia_sections(settings, prompt, payload)
+        except Exception as exc:
+            last_error = exc
+            logger.warning(
+                "document_section_%s_failed error=%s falling_back=next",
+                provider,
+                type(exc).__name__,
+            )
+
+    if last_error is not None:
+        raise last_error
     raise ApiError(503, "llm_not_configured", "No LLM is configured for document section extraction.")
 async def extract_sections_enriched(
     text: str,
@@ -352,8 +380,6 @@ async def extract_sections_enriched(
         ]
         return structural
     except Exception as exc:
-        if isinstance(exc, ApiError) and exc.code == "nvidia_unavailable":
-            raise
         logger.warning("document_section_llm_failed error=%s using_structural_fallback", type(exc).__name__)
         structural["warnings"] = list(structural.get("warnings") or []) + [
             "LLM segregation unavailable; used structural layout."

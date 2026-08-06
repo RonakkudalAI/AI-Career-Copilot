@@ -1,15 +1,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from pathlib import Path
 from typing import Any
 
-from app.agents.providers import NvidiaClient
+from app.agents.providers import GroqClient, NvidiaClient, preferred_llm_providers
 from app.api.schemas import ProfileResumeExtractResult
 from app.core.config import Settings
-from app.core.errors import ApiError
 from app.features.profile.agent.deterministic import build_profile_draft, draft_counts
 from app.features.profile.agent.normalize import extract_explicit_years, normalize_draft
 
@@ -18,6 +18,7 @@ _PROMPT_PATH = (
     Path(__file__).resolve().parents[3] / "agents" / "prompts" / "fill_profile_from_resume_v1.txt"
 )
 _MAX_RESUME_CHARS = 28_000
+_OPTIONAL_AI_TIMEOUT_SECONDS = 12.0
 def _norm(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").casefold()).strip()
 def _haystack(plain_text: str) -> str:
@@ -307,12 +308,15 @@ async def build_profile_draft_enriched(
     text = (plain_text or "").strip()
     if not text:
         return base
-    if not settings.nvidia_configured:
+    providers = preferred_llm_providers(settings)
+    if not providers:
         meta = dict(base.get("meta") or {})
         meta["ai_used"] = False
         meta["method"] = "deterministic_resume_mapping_v1"
         warnings = list(meta.get("warnings") or [])
-        warnings.append("AI not configured (NVIDIA_API_KEY / NVIDIA_MODEL); used deterministic mapping only.")
+        warnings.append(
+            "AI not configured (set GROQ_API_KEY or NVIDIA_API_KEY); used deterministic mapping only."
+        )
         meta["warnings"] = warnings
         base["meta"] = meta
         return base
@@ -321,44 +325,68 @@ async def build_profile_draft_enriched(
         sections = structured_content.get("sections") or {}
     clipped = text[:_MAX_RESUME_CHARS]
     prompt = _PROMPT_PATH.read_text(encoding="utf-8")
-    client = NvidiaClient(settings)
-    try:
-        result: ProfileResumeExtractResult = await client.generate_structured(
-            system_prompt=prompt,
-            user_payload={
-                "task": "extract_candidate_profile_from_resume",
-                "resume_plain_text": clipped,
-                "resume_sections": sections,
-                "instructions": "Extract only facts present in the resume. Prefer accurate job/education splits.",
-            },
-            schema_model=ProfileResumeExtractResult,
-            temperature=min(settings.nvidia_temperature, 0.2),
-        )
-        ai_draft = _llm_to_draft(result)
-        merged = merge_profile_drafts(base, ai_draft, plain_text=text)
-        meta = dict(merged.get("meta") or {})
-        meta["agent"] = "profile_fill"
-        meta["provider"] = "nvidia"
-        meta["fallback"] = False
-        merged["meta"] = meta
-        return merged
-    except Exception as exc:
-        if isinstance(exc, ApiError) and exc.code == "nvidia_unavailable":
-            raise
-        logger.warning("profile_ai_extract_failed error=%s", exc)
-        meta = dict(base.get("meta") or {})
-        meta["ai_used"] = False
-        meta["method"] = "deterministic_resume_mapping_v1"
-        meta["agent"] = "profile_fill"
-        meta["provider"] = "deterministic"
-        meta["fallback"] = True
-        warnings = list(meta.get("warnings") or [])
-        warnings.append(
-            f"AI extraction failed or was unavailable ({type(exc).__name__}); used deterministic mapping. You can retry later."
-        )
-        meta["warnings"] = warnings
-        base["meta"] = meta
-        return normalize_draft(base, resume_text=text)
+    user_payload = {
+        "task": "extract_candidate_profile_from_resume",
+        "resume_plain_text": clipped,
+        "resume_sections": sections,
+        "instructions": "Extract only facts present in the resume. Prefer accurate job/education splits.",
+    }
+    last_error_name = "unknown"
+    for provider in providers:
+        try:
+            if provider == "groq":
+                timeout_seconds = min(
+                    float(getattr(settings, "groq_timeout_seconds", _OPTIONAL_AI_TIMEOUT_SECONDS)),
+                    _OPTIONAL_AI_TIMEOUT_SECONDS,
+                )
+                result: ProfileResumeExtractResult = await asyncio.wait_for(
+                    GroqClient(settings).generate_structured(
+                        system_prompt=prompt,
+                        user_payload=user_payload,
+                        schema_model=ProfileResumeExtractResult,
+                        temperature=min(settings.groq_temperature, 0.2),
+                    ),
+                    timeout=timeout_seconds,
+                )
+            else:
+                timeout_seconds = min(
+                    float(getattr(settings, "nvidia_timeout_seconds", _OPTIONAL_AI_TIMEOUT_SECONDS)),
+                    _OPTIONAL_AI_TIMEOUT_SECONDS,
+                )
+                result = await asyncio.wait_for(
+                    NvidiaClient(settings).generate_structured(
+                        system_prompt=prompt,
+                        user_payload=user_payload,
+                        schema_model=ProfileResumeExtractResult,
+                        temperature=min(settings.nvidia_temperature, 0.2),
+                    ),
+                    timeout=timeout_seconds,
+                )
+            ai_draft = _llm_to_draft(result)
+            merged = merge_profile_drafts(base, ai_draft, plain_text=text)
+            meta = dict(merged.get("meta") or {})
+            meta["agent"] = "profile_fill"
+            meta["provider"] = provider
+            meta["fallback"] = False
+            meta["ai_used"] = True
+            merged["meta"] = meta
+            return merged
+        except Exception as exc:
+            last_error_name = type(exc).__name__
+            logger.warning("profile_ai_%s_failed error=%s", provider, last_error_name)
+    meta = dict(base.get("meta") or {})
+    meta["ai_used"] = False
+    meta["method"] = "deterministic_resume_mapping_v1"
+    meta["agent"] = "profile_fill"
+    meta["provider"] = "deterministic"
+    meta["fallback"] = True
+    warnings = list(meta.get("warnings") or [])
+    warnings.append(
+        f"AI extraction failed or was unavailable ({last_error_name}); used deterministic mapping. You can retry later."
+    )
+    meta["warnings"] = warnings
+    base["meta"] = meta
+    return normalize_draft(base, resume_text=text)
 def profile_draft_response_payload(
     draft: dict[str, Any],
     version_meta: dict[str, Any],

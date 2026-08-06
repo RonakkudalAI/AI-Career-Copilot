@@ -10,7 +10,7 @@ Career Copilot is a **private career workspace** for one candidate at a time. It
 | API | FastAPI + Pydantic v2 | Typed request/response, dependency injection, async-friendly |
 | Database | Firebase Cloud Firestore | Cloud-backed multi-device workspace without self-hosting Postgres |
 | Files | Firebase Storage (GCS via Admin SDK) | Resumes, avatars, exports under `{user_id}/…` |
-| PDF text | Docling (+ fast extractors first) | Layout-aware extraction for modern resume PDFs |
+| PDF text | pypdf (+ optional PyMuPDF/pdfplumber) | Fast text extraction without ML document converters |
 | LLM | Groq + NVIDIA Integrate API | OpenAI-compatible chat; optional, with deterministic fallbacks |
 | Secrets | Root `.env` server-only | Browser only sees `VITE_*` and never private keys |
 
@@ -247,7 +247,7 @@ Shared infrastructure:
 | Confirm gate before ATS | Extra UX step; prevents scoring unreviewed garbage extraction |
 | Deterministic keyword ATS as product path | Transparent, testable; weaker “semantic” fit than embeddings |
 | Optional LLM composite scorer kept as library | Research path without polluting product persistence |
-| PDF: fast extract first, Docling fallback | Speed when text-rich; Docling for hard layouts |
+| PDF: pypdf with optional fast backends | Lightweight installs; PyMuPDF/pdfplumber when installed |
 | Section LLM assigns **line numbers only** | Model cannot rewrite resume body |
 | YouTube IDs only from API | No hallucinated watch URLs; search-page fallback if key missing |
 | No AI interview grading | Avoids fake “hireability” scores |

@@ -23,6 +23,12 @@ const checks = [
   ["AUTH_SECRET", "SERVER-ONLY"],
   ["PUBLIC_API_BASE_URL", "SERVER-ONLY-OPTIONAL"],
   ["LLM_PROVIDER", "SERVER-ONLY"],
+  ["OMNIROUTE_ENABLED", "SERVER-ONLY-OPTIONAL"],
+  ["OMNIROUTE_BASE_URL", "SERVER-ONLY-OPTIONAL"],
+  ["OMNIROUTE_API_KEY", "SERVER-ONLY-OPTIONAL"],
+  ["OMNIROUTE_MODEL", "SERVER-ONLY-OPTIONAL"],
+  ["OMNIROUTE_TIMEOUT_SECONDS", "SERVER-ONLY-OPTIONAL"],
+  ["OMNIROUTE_MAX_RETRIES", "SERVER-ONLY-OPTIONAL"],
   ["NVIDIA_API_KEY", "SERVER-ONLY"],
   ["NVIDIA_BASE_URL", "SERVER-ONLY"],
   ["NVIDIA_MODEL", "SERVER-ONLY"],
@@ -67,6 +73,7 @@ for (const name of Object.keys(environment)) {
 if (environment.VITE_API_BASE_URL) requireAbsoluteHttpUrl("VITE_API_BASE_URL");
 if (environment.NVIDIA_BASE_URL) requireAbsoluteHttpUrl("NVIDIA_BASE_URL");
 if (environment.GROQ_BASE_URL) requireAbsoluteHttpUrl("GROQ_BASE_URL");
+if (environment.OMNIROUTE_BASE_URL) requireAbsoluteHttpUrl("OMNIROUTE_BASE_URL");
 if (environment.SUPABASE_URL) requireAbsoluteHttpUrl("SUPABASE_URL");
 
 if (
@@ -82,6 +89,10 @@ if (environment.NVIDIA_API_KEY && !environment.NVIDIA_MODEL) {
 }
 if (environment.GROQ_API_KEY && !environment.GROQ_MODEL) {
   failures.push("GROQ_MODEL: MISSING while Groq interview generation is enabled");
+}
+if (environment.OMNIROUTE_ENABLED === "true") {
+  if (!environment.OMNIROUTE_BASE_URL) failures.push("OMNIROUTE_BASE_URL: MISSING while OmniRoute is enabled");
+  if (!environment.OMNIROUTE_MODEL) failures.push("OMNIROUTE_MODEL: MISSING while OmniRoute is enabled");
 }
 if (environment.GROQ_API_KEY && environment.GROQ_RESUME_PARSER_ENABLED === "true") {
   if (!environment.GROQ_RESUME_PARSER_MODEL) {

@@ -32,7 +32,7 @@ Career Copilot is a full-stack monorepo that helps candidates manage a professio
 | Frontend | Vite, React 19, TypeScript, Tailwind CSS 4, React Router 7 |
 | Backend | FastAPI, Pydantic v2, Uvicorn |
 | Data | Firebase Cloud Firestore + Firebase Storage |
-| Document AI | Docling (PDF), python-docx (DOCX), optional Groq/NVIDIA section segregation |
+| Document AI | pypdf (PDF; optional PyMuPDF/pdfplumber), python-docx (DOCX), optional Groq/NVIDIA section segregation |
 | LLM providers | Groq and NVIDIA Integrate API (server-only, with deterministic fallbacks) |
 | Jobs (optional) | Adzuna API sync |
 | Learning (optional) | YouTube Data API v3 |
@@ -95,7 +95,7 @@ FastAPI  backend/app/main.py
               NVIDIA Integrate API  → structured LLM tasks
               Groq                  → interviews, learning, ATS brief, parser
               YouTube Data API v3   → exact learning-path videos
-              Docling               → layout-aware PDF text extraction
+              pypdf / PyMuPDF / pdfplumber → fast PDF text extraction
               Adzuna                → optional external job sync
 ```
 
@@ -205,11 +205,7 @@ npm run setup
 
 This installs frontend dependencies, creates `backend/.venv`, installs the API package, and verifies the configured Firestore connection.
 
-Docling is a core dependency. If PDF parse returns **503 `docling_not_installed`**:
-
-```bash
-backend\.venv\Scripts\python.exe -m pip install "docling>=2.0,<3"
-```
+PDF text uses **pypdf** by default (optional faster backends via `pip install -e "backend/.[pdf-extras]"` for PyMuPDF and pdfplumber).
 
 Optional official CrewAI package (Python &lt; 3.14):
 
@@ -289,13 +285,13 @@ Protected UI routes redirect unauthenticated users to `/sign-in`. **Ownership is
 
 | Format | Engine | Notes |
 |--------|--------|-------|
-| PDF | **Docling** | Layout-aware; missing Docling → HTTP 503 |
-| DOCX | python-docx (native); Docling optional | |
+| PDF | **pypdf** (+ optional PyMuPDF / pdfplumber) | Fast extract via `extractors/pdf.py` |
+| DOCX | python-docx | Native paragraphs + tables |
 
 Pipeline:
 
 1. Extract plain text off the async event loop (`asyncio.to_thread`) so health/auth stay responsive.
-2. Segregate sections via LLM line-number assignment (NVIDIA first, Groq on 429) **or** structural heuristics.
+2. Segregate sections via LLM line-number assignment (prefers `LLM_PROVIDER`, falls back to the other provider) **or** structural heuristics.
 3. Reconstruct section body only from source lines — the model never authors resume text.
 4. Store `schema_version: resume-extraction-v1` with `sections`, `warnings`, `extraction_method`.
 
@@ -428,7 +424,7 @@ One root `.env` (copy from `.env.example`). Browser-safe values use the `VITE_` 
 
 | Variable | Purpose |
 |----------|---------|
-| `LLM_PROVIDER` | Preference hint: `groq` or `nvidia` |
+| `LLM_PROVIDER` | Primary agent provider: `groq` (default) or `nvidia`. Other configured provider is fallback. |
 | `NVIDIA_*` | Integrate API key, model, timeouts, tokens |
 | `GROQ_*` | Chat API key, model, timeouts, tokens |
 | `GROQ_RESUME_PARSER_*` | Structured resume parser model + limits |
@@ -553,7 +549,7 @@ API workflow smoke: `scripts/diagnostics/e2e-smoke.py`.
 2. **Server-enforced ownership** — candidate data lives in Firestore + Storage; rules deny direct client access.  
 3. **Server-side secrets** — NVIDIA, Groq, YouTube, Admin credentials never ship to the browser.  
 4. **Explainable ATS** — one product scoring module, weighted keyword coverage, exact quotes.  
-5. **Layout-aware parse, simple review UI** — Docling for PDF accuracy; sections only for confirmation.  
+5. **Fast parse, simple review UI** — pypdf (and optional fast backends) for PDF text; sections only for confirmation.  
 6. **YouTube without hallucination** — video IDs only from the YouTube API (or search-page fallback).  
 7. **Delete what you create** — resumes, ATS analyses, interviews, learning paths, full account wipe.  
 8. **Stable error contracts** — `ApiError` codes + `X-Request-ID` for every response.
@@ -566,7 +562,7 @@ API workflow smoke: `scripts/diagnostics/e2e-smoke.py`.
 |---------|----------------|
 | Backend won’t start | `AUTH_SECRET`, `FIREBASE_*`, `npm run check:env` |
 | Firestore errors | Service-account path, project id, `npm run firebase:check` |
-| PDF parse 503 | Docling installed in `backend/.venv` |
+| PDF parse fails | Install backend deps; optional `pdf-extras` for PyMuPDF/pdfplumber |
 | Empty / weak LLM features | `GROQ_API_KEY` / `NVIDIA_API_KEY` and matching models; see `/agents/status` |
 | Learning paths have only search links | Set `YOUTUBE_API_KEY` |
 | CORS / cookie issues | `FRONTEND_ORIGINS` must include the exact browser origin |
@@ -580,7 +576,7 @@ API workflow smoke: `scripts/diagnostics/e2e-smoke.py`.
 |----------|--------|
 | How is product ATS scored? | `backend/app/features/ats/ats_score.py` |
 | How is auth done? | scrypt + HS256 JWT + localStorage/cookie |
-| How are PDFs parsed? | Docling via `document_parsing/parsing/text_extract.py` |
+| How are PDFs parsed? | pypdf chain via `document_parsing/parsing/text_extract.py` + `extractors/pdf.py` |
 | Profile completion points? | `features/profile/completion.py` |
 | Job match formula? | `features/career_matching.py` |
 | Learning videos? | `learning/youtube_api.py` + crew under `learning/agents/crew/` |
@@ -595,11 +591,11 @@ API workflow smoke: `scripts/diagnostics/e2e-smoke.py`.
 
 Career Copilot is cloud-backed (Firestore + Storage). Natural next steps if you outgrow a single API process:
 
-- **Background workers** for Docling extraction, ATS scoring, and long LLM crews (keep the request path thin).  
+- **Background workers** for PDF extraction, ATS scoring, and long LLM crews (keep the request path thin).  
 - **Caching** (e.g. Redis) for job lists, bootstrap payloads, and YouTube quota-sensitive searches.  
 - **Horizontal API replicas** behind a load balancer (stateless JWT + shared Firebase).  
 - **CDN / reverse proxy** for the static frontend with same-origin `/api` routing.
 
 ---
 
-*This README describes the current product path: Firebase-backed career workspace, Docling PDF extraction, evidence-backed ATS keyword coverage (`evidence-keyword-coverage-v3`), optional structured LLM ATS library (non-product), YouTube Data API learning paths, mock interviews without AI grading, and BFF-proxied JWT auth. Prefer `/health` and `/agents/status` at runtime over assumptions about which keys are configured.*
+*This README describes the current product path: Firebase-backed career workspace, pypdf-based PDF extraction, evidence-backed ATS keyword coverage (`evidence-keyword-coverage-v3`), optional structured LLM ATS library (non-product), YouTube Data API learning paths, mock interviews without AI grading, and BFF-proxied JWT auth. Prefer `/health` and `/agents/status` at runtime over assumptions about which keys are configured.*

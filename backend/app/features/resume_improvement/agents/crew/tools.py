@@ -1,14 +1,17 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
-from app.agents.providers import NvidiaClient
+from app.agents.providers import GroqClient, NvidiaClient, preferred_llm_providers
 from app.api.schemas import ProviderSuggestion, ProviderSuggestionResult
 from app.core.config import Settings
 from app.core.errors import ApiError
 from app.features.resume_management.evidence import build_blocks
 from app.features.resume_management.validation import validate_suggestion
+
+logger = logging.getLogger(__name__)
 
 
 def tool_analyze_ats_gaps(context: dict[str, Any]) -> dict[str, Any]:
@@ -61,13 +64,31 @@ def tool_analyze_ats_gaps(context: dict[str, Any]) -> dict[str, Any]:
 async def tool_generate_resume_suggestions(
     settings: Settings, context: dict[str, Any]
 ) -> ProviderSuggestionResult:
-    if not settings.nvidia_configured:
+    providers = preferred_llm_providers(settings)
+    if not providers:
         raise ApiError(
             503,
-            "nvidia_not_configured",
+            "llm_not_configured",
             "AI improvements are not configured. Manual editing and export remain available.",
         )
-    return await NvidiaClient(settings).generate(context)
+    last_error: Exception | None = None
+    for provider in providers:
+        try:
+            if provider == "groq":
+                return await GroqClient(settings).generate(context)
+            return await NvidiaClient(settings).generate(context)
+        except Exception as exc:
+            last_error = exc
+            logger.warning(
+                "resume_improve_%s_failed error=%s", provider, type(exc).__name__
+            )
+    if isinstance(last_error, ApiError):
+        raise last_error
+    raise ApiError(
+        503,
+        "llm_unavailable",
+        "AI improvements are temporarily unavailable. Manual editing and export remain available.",
+    ) from last_error
 def _block_map_from_context(context: dict[str, Any]) -> dict[str, Any]:
     from app.features.resume_management.evidence import ResumeBlock, normalize_text, source_hash
     raw_blocks = context.get("_blocks")

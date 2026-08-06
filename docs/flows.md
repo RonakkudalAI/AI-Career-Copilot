@@ -132,8 +132,8 @@ Convert a PDF/DOCX into **reviewable** plain text + sections without inventing c
         │  asyncio.to_thread(extract_text)  ← keep event loop free
         │
 5. extract_text  (parsing/text_extract.py)
-   PDF:  fast extractor (≥200 chars) → else Docling → else extractor fallback
-   DOCX: python-docx fast → else Docling
+   PDF:  PyMuPDF → pdfplumber → pypdf (≥200 chars quality gate)
+   DOCX: python-docx (≥80 chars quality gate)
         │
 6. extract_sections_enriched  (parsing/llm_sections.py)
    - Prefer LLM line-number → section kind mapping

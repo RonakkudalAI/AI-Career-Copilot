@@ -39,10 +39,13 @@ async def parse_document_bytes(
         plain_text,
         settings,
         schema_version=schema_version,
-        prefer_llm=True,
+        # Upload/review must not depend on a remote model. The candidate can
+        # review deterministic sections immediately; AI enrichment belongs in
+        # explicitly AI-powered actions after the source has been persisted.
+        prefer_llm=False,
     )
     return plain_text, _clean_structured(extracted, schema_version)
 async def parse_source_blocks(blocks, settings: Settings) -> dict[str, Any]:
     source_text = "\n".join(getattr(block, "text", "") for block in (blocks or []) if getattr(block, "text", "").strip())
-    extracted = await extract_sections_enriched(source_text, settings, prefer_llm=True)
+    extracted = await extract_sections_enriched(source_text, settings, prefer_llm=False)
     return _clean_structured(extracted, str(extracted.get("schema_version") or "resume-extraction-v1"))

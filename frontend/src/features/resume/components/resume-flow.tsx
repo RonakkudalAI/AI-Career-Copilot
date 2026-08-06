@@ -10,6 +10,7 @@ import { BriefcaseBusiness, CheckCircle2, FileText, RotateCcw, ShieldCheck } fro
 
 
 import { apiRequest } from "@/shared/api/client";
+import { jdLabel, resumeLabel } from "@/features/resume/analysis-labels";
 import { isValidCareerFile } from "@/shared/utils";
 import { Badge, Button, Card, Input, PageHeader, Progress, Textarea } from "@/shared/ui/primitives";
 
@@ -172,27 +173,6 @@ function formatDate(value?: string | null) {
   return date.toLocaleString();
 }
 
-function resumeLabel(analysis: Analysis) {
-  const resume = analysis.resume;
-  if (!resume) return "Resume unavailable";
-  const file = resume.original_filename || resume.title || "Resume";
-  const version = resume.version_number != null ? ` · v${resume.version_number}` : "";
-  return `${file}${version}`;
-}
-
-function jdLabel(analysis: Analysis) {
-  const job = analysis.job_description;
-  if (!job) return "Job description unavailable";
-  const title = job.title || "Job description";
-  const company = job.company ? ` · ${job.company}` : "";
-  const source = job.original_filename
-    ? ` · ${job.original_filename}`
-    : job.input_type
-      ? ` · ${job.input_type}`
-      : "";
-  return `${title}${company}${source}`;
-}
-
 function parsedSections(input?: ParsedInput | null) {
   return Object.entries(input?.structured_content?.sections || {}).filter(
     ([, values]) => values.some((value) => value.trim()),
@@ -311,7 +291,7 @@ function ResumeLibrary() {
 
   async function loadResumes() {
     const rows = await apiRequest<ResumeListItem[]>("/resumes");
-    setResumes(rows || []);
+    setResumes(Array.isArray(rows) ? rows : []);
   }
 
   useEffect(() => {
@@ -319,7 +299,10 @@ function ResumeLibrary() {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- setState is inside promise callbacks, not synchronously
     loadResumes()
       .catch((reason: Error) => {
-        if (active) setError(reason.message);
+        if (active) {
+          setError(reason.message || "Could not load resumes.");
+          setResumes([]);
+        }
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -432,7 +415,7 @@ function ResumeLibrary() {
           {message}
         </p>
       )}
-      {!resumes.length ? (
+      {!resumes.length && !error ? (
         <Card className="empty-state">
           <h2>No resumes yet</h2>
           <p>Upload a resume from New upload to see it here.</p>
@@ -440,8 +423,25 @@ function ResumeLibrary() {
             New upload
           </Link>
         </Card>
-      ) : (
-        resumes.map((resume) => (
+      ) : null}
+      {!resumes.length && error ? (
+        <Card className="empty-state">
+          <h2>Could not load resumes</h2>
+          <p>Confirm the backend is running and object storage is configured, then retry.</p>
+          <Button
+            onClick={() => {
+              setLoading(true);
+              setError("");
+              void loadResumes()
+                .catch((reason: Error) => setError(reason.message))
+                .finally(() => setLoading(false));
+            }}
+          >
+            Retry
+          </Button>
+        </Card>
+      ) : null}
+      {resumes.map((resume) => (
           <Card className="stack" key={resume.id}>
             <div className="row">
               <div>
@@ -480,8 +480,7 @@ function ResumeLibrary() {
               </Button>
             </div>
           </Card>
-        ))
-      )}
+      ))}
 
       {preview && pdfUrl ? (
         <div
@@ -532,7 +531,8 @@ function AtsHistoryList() {
 
   async function loadAnalyses() {
     const rows = await apiRequest<Analysis[]>("/ats-analyses");
-    setAnalyses(rows || []);
+    // Defensive: API should return an array; never crash the hub on a bad payload.
+    setAnalyses(Array.isArray(rows) ? rows : []);
   }
 
   useEffect(() => {
@@ -540,7 +540,10 @@ function AtsHistoryList() {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- setState is inside promise callbacks, not synchronously
     loadAnalyses()
       .catch((reason: Error) => {
-        if (active) setError(reason.message);
+        if (active) {
+          setError(reason.message || "Could not load ATS analyses.");
+          setAnalyses([]);
+        }
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -574,6 +577,9 @@ function AtsHistoryList() {
     );
   }
 
+  const completedCount = analyses.filter((item) => item.status === "completed").length;
+  const otherCount = analyses.length - completedCount;
+
   return (
     <div className="stack">
       {error && (
@@ -592,15 +598,15 @@ function AtsHistoryList() {
           <span className="analysis-overview-label">Total analyses</span>
         </div>
         <div>
-          <span className="analysis-overview-value">{analyses.filter((item) => item.status === "completed").length}</span>
+          <span className="analysis-overview-value">{completedCount}</span>
           <span className="analysis-overview-label">Completed</span>
         </div>
         <div>
-          <span className="analysis-overview-value">{analyses.filter((item) => item.status !== "completed").length}</span>
+          <span className="analysis-overview-value">{otherCount}</span>
           <span className="analysis-overview-label">Needs attention</span>
         </div>
       </div>
-      {!analyses.length ? (
+      {!analyses.length && !error ? (
         <Card className="empty-state">
           <h2>No ATS analyses yet</h2>
           <p>Upload a resume and job description to create your first analysis.</p>
@@ -608,48 +614,72 @@ function AtsHistoryList() {
             New upload
           </Link>
         </Card>
-      ) : (
-        analyses.map((analysis) => (
-          <Card className="stack" key={analysis.id}>
-            <div className="row">
-              <div>
-                <p className="eyebrow">Previous ATS run</p>
-                <h2 style={{ marginBottom: 6 }}>
-                  {analysis.overall_score == null ? "No score" : `${Math.round(Number(analysis.overall_score))}%`}
-                </h2>
-                <p style={{ margin: 0 }}>{formatDate(analysis.created_at)}</p>
-              </div>
-              <Badge variant={analysis.status === "completed" ? "default" : analysis.status === "failed" ? "destructive" : "outline"}>
-                {analysis.status}
-              </Badge>
+      ) : null}
+      {!analyses.length && error ? (
+        <Card className="empty-state">
+          <h2>Could not load analyses</h2>
+          <p>Check that the backend is running and your session is still valid, then retry.</p>
+          <Button
+            onClick={() => {
+              setLoading(true);
+              setError("");
+              void loadAnalyses()
+                .catch((reason: Error) => setError(reason.message))
+                .finally(() => setLoading(false));
+            }}
+          >
+            Retry
+          </Button>
+        </Card>
+      ) : null}
+      {analyses.map((analysis) => (
+        <Card className="stack" key={analysis.id}>
+          <div className="row">
+            <div>
+              <p className="eyebrow">Previous ATS run</p>
+              <h2 style={{ marginBottom: 6 }}>
+                {analysis.overall_score == null ? "No score" : `${Math.round(Number(analysis.overall_score))}%`}
+              </h2>
+              <p style={{ margin: 0 }}>{formatDate(analysis.created_at)}</p>
             </div>
-            <div className="grid-2">
-              <div>
-                <strong>Resume used</strong>
-                <p style={{ margin: "6px 0 0" }}>{resumeLabel(analysis)}</p>
-              </div>
-              <div>
-                <strong>Job description used</strong>
-                <p style={{ margin: "6px 0 0" }}>{jdLabel(analysis)}</p>
-              </div>
+            <Badge
+              variant={
+                analysis.status === "completed"
+                  ? "default"
+                  : analysis.status === "failed"
+                    ? "destructive"
+                    : "outline"
+              }
+            >
+              {analysis.status}
+            </Badge>
+          </div>
+          <div className="grid-2">
+            <div>
+              <strong>Resume used</strong>
+              <p style={{ margin: "6px 0 0" }}>{resumeLabel(analysis)}</p>
             </div>
-            <div className="cluster">
-              {analysis.status === "completed" && (
-                <Link className="button button-primary" href={`/resume-analysis/report/${analysis.id}`}>
-                  Open report
-                </Link>
-              )}
-              <Button
-                variant="destructive"
-                disabled={deletingId === analysis.id}
-                onClick={() => deleteAnalysis(analysis.id)}
-              >
-                {deletingId === analysis.id ? "Deleting…" : "Delete"}
-              </Button>
+            <div>
+              <strong>Job description used</strong>
+              <p style={{ margin: "6px 0 0" }}>{jdLabel(analysis)}</p>
             </div>
-          </Card>
-        ))
-      )}
+          </div>
+          <div className="cluster">
+            {analysis.status === "completed" && (
+              <Link className="button button-primary" href={`/resume-analysis/report/${analysis.id}`}>
+                Open report
+              </Link>
+            )}
+            <Button
+              variant="destructive"
+              disabled={deletingId === analysis.id}
+              onClick={() => deleteAnalysis(analysis.id)}
+            >
+              {deletingId === analysis.id ? "Deleting…" : "Delete"}
+            </Button>
+          </div>
+        </Card>
+      ))}
     </div>
   );
 }

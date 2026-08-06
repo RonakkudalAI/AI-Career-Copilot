@@ -133,8 +133,9 @@ class InterviewCreate(BaseModel):
     difficulty: str | None = None
     question_count: int = Field(default=5, ge=1, le=20)
     duration_minutes: int = Field(default=20, ge=5, le=180)
-    camera_enabled: bool = False
-    microphone_enabled: bool = False
+    # Practice defaults: live camera/mic on unless the candidate opts out.
+    camera_enabled: bool = True
+    microphone_enabled: bool = True
     recording_consent: bool = False
 class InterviewResponseCreate(BaseModel):
     question_id: UUID

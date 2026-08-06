@@ -402,6 +402,12 @@ class FirestoreQuery:
             for document in docs:
                 document.reference.set(dict(self.payload or {}), merge=True)
                 output.append({**(document.to_dict() or {}), **dict(self.payload or {}), "id": document.id})
+            # Direct id write: query-by-field can miss right after create, or when the
+            # document id equals the payload id but the `id` field filter is flaky.
+            if not output:
+                direct = self._direct_id_update(collection)
+                if direct is not None:
+                    output.append(direct)
             return FirestoreResult(output)
 
         data = [] if self.head else [self._project(document) for document in docs]
@@ -458,6 +464,29 @@ class FirestoreQuery:
         for key in keys.intersection(row):
             query = query.where(filter=self.client.field_filter(key, "==", row[key]))
         return next(iter(query.limit(1).stream()), None)
+
+    def _direct_id_update(self, collection):
+        """Update by document id when equality filters include id (and optional user_id)."""
+        doc_id = None
+        user_id = None
+        for operator, column, value in self.filters:
+            if operator != "==":
+                continue
+            if column == "id":
+                doc_id = str(value)
+            elif column == "user_id":
+                user_id = str(value)
+        if not doc_id:
+            return None
+        snap = collection.document(doc_id).get()
+        if not snap.exists:
+            return None
+        data = snap.to_dict() or {}
+        if user_id is not None and str(data.get("user_id") or "") != user_id:
+            return None
+        payload = dict(self.payload or {})
+        snap.reference.set(payload, merge=True)
+        return {**data, **payload, "id": snap.id}
 
 
 class FirestoreClient:

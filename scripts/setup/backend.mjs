@@ -61,6 +61,25 @@ function findPython() {
     }
     // Common install locations
     const local = process.env.LOCALAPPDATA || "";
+    const roaming = process.env.APPDATA || "";
+    const userProfile = process.env.USERPROFILE || "";
+    for (const minor of ["3.12", "3.13", "3.11"]) {
+      const executable = join(
+        roaming,
+        "uv",
+        "python",
+        `cpython-${minor}-windows-x86_64-none`,
+        "python.exe",
+      );
+      if (existsSync(executable)) candidates.push(probePython(executable));
+    }
+    for (const executable of [
+      join(userProfile, ".local", "bin", "python3.12.exe"),
+      join(userProfile, ".local", "bin", "python3.13.exe"),
+      join(userProfile, ".local", "bin", "python3.11.exe"),
+    ]) {
+      if (existsSync(executable)) candidates.push(probePython(executable));
+    }
     for (const rel of [
       "Programs\\Python\\Python312\\python.exe",
       "Programs\\Python\\Python313\\python.exe",

@@ -60,6 +60,14 @@ class Settings(BaseSettings):
     groq_resume_parser_max_input_tokens: int = Field(default=110000, ge=1000, le=200000)
     groq_resume_parser_temperature: float = Field(default=0.0, ge=0.0, le=1.0)
     llm_provider: str
+    # Optional local OpenAI-compatible OmniRoute sidecar. It is deliberately
+    # disabled by default so deleting integrations/omniroute cannot affect the app.
+    omniroute_enabled: bool = False
+    omniroute_base_url: str = "http://127.0.0.1:20128/v1"
+    omniroute_api_key: str = ""
+    omniroute_model: str = "auto"
+    omniroute_timeout_seconds: float = Field(default=30.0, gt=0, le=180)
+    omniroute_max_retries: int = Field(default=1, ge=0, le=2)
     improvement_max_sections: int = Field(default=4, ge=1, le=8)
     improvement_max_source_chars: int = Field(default=30_000, ge=1_000, le=100_000)
     improvement_max_jd_chars: int = Field(default=12_000, ge=1_000, le=50_000)
@@ -81,7 +89,7 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
-    @field_validator("nvidia_base_url", "groq_base_url")
+    @field_validator("nvidia_base_url", "groq_base_url", "omniroute_base_url")
     @classmethod
     def validate_server_url(cls, value: str) -> str:
         if not value:
@@ -147,10 +155,14 @@ class Settings(BaseSettings):
         return self.supabase_storage_configured
     @property
     def nvidia_configured(self) -> bool:
-        return bool(self.nvidia_api_key and self.nvidia_model and self.nvidia_base_url)
+        return self.omniroute_configured or bool(self.nvidia_api_key and self.nvidia_model and self.nvidia_base_url)
     @property
     def groq_configured(self) -> bool:
-        return bool(self.groq_api_key and self.groq_model and self.groq_base_url)
+        return self.omniroute_configured or bool(self.groq_api_key and self.groq_model and self.groq_base_url)
+
+    @property
+    def omniroute_configured(self) -> bool:
+        return bool(self.omniroute_enabled and self.omniroute_model and self.omniroute_base_url)
     @property
     def groq_resume_parser_configured(self) -> bool:
         return bool(

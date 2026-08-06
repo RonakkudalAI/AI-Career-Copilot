@@ -1,6 +1,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from typing import Any
@@ -9,11 +10,16 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.agents.providers.groq_client import GroqClient
 from app.agents.providers.nvidia_client import PROMPTS_DIR, NvidiaClient
+from app.agents.providers.routing import preferred_llm_providers
 from app.core.config import Settings
-from app.core.errors import ApiError
 
 logger = logging.getLogger(__name__)
 _PROMPT_PATH = PROMPTS_DIR / "ats_improvement_v1.txt"
+# Optional enrichment only — never block ATS scoring on a hung provider.
+# Profile AI uses the same 12s cap; full provider timeout+retries can exceed 4 minutes.
+_OPTIONAL_BRIEF_TIMEOUT_SECONDS = 12.0
+
+
 class AtsImprovementBriefResult(BaseModel):
     model_config = ConfigDict(extra="ignore")
     overall_inference: str = Field(min_length=20, max_length=6000)
@@ -21,6 +27,13 @@ class AtsImprovementBriefResult(BaseModel):
     priority_actions: list[str] = Field(default_factory=list, max_length=12)
     section_guidance: list[str] = Field(default_factory=list, max_length=20)
     do_not_claim: list[str] = Field(default_factory=list, max_length=12)
+
+
+def _optional_timeout(settings: Settings, attr: str, default: float) -> float:
+    configured = float(getattr(settings, attr, default) or default)
+    return max(0.5, min(configured, _OPTIONAL_BRIEF_TIMEOUT_SECONDS))
+
+
 def _deterministic_brief(
     *,
     score: float,
@@ -112,6 +125,59 @@ def _grounded_items(
         ):
             grounded.append(item)
     return grounded
+
+
+def _brief_from_llm(
+    result: AtsImprovementBriefResult,
+    *,
+    overall_score: float,
+    missing: list[str],
+    matched_count: int,
+    total_terms: int,
+    role_title: str | None,
+    missing_items: list[dict[str, Any]],
+    evidence_items: list[dict[str, Any]],
+    provider: str,
+    model: str | None,
+    focus_limit: int,
+) -> dict[str, Any]:
+    allowed = {term.casefold() for term in missing}
+    focus = [
+        item
+        for item in result.focus_areas
+        if any(term in str(item).casefold() for term in allowed)
+    ] or missing[:focus_limit]
+    inference = _validate_inference(result.overall_inference, evidence_items)
+    fallback = _deterministic_brief(
+        score=overall_score,
+        missing=missing,
+        matched_count=matched_count,
+        total=total_terms,
+        role_title=role_title,
+        missing_items=missing_items,
+    )
+    if not inference:
+        inference = fallback["overall_inference"]
+    priority_actions = _grounded_items(result.priority_actions, evidence_items)
+    section_guidance = _grounded_items(result.section_guidance, evidence_items)
+    do_not_claim = _grounded_items(
+        result.do_not_claim,
+        evidence_items,
+        generic_prefixes=("do not", "never", "only", "avoid"),
+    )
+    return {
+        "overall_inference": inference,
+        "focus_areas": focus[:12],
+        "priority_actions": priority_actions[:12] or fallback["priority_actions"],
+        "section_guidance": section_guidance[:20] or fallback["section_guidance"],
+        "do_not_claim": do_not_claim[:12] or fallback["do_not_claim"],
+        "provider": provider,
+        "model": model,
+        "agent": "ats_improvement_brief",
+        "fallback": False,
+    }
+
+
 async def generate_ats_improvement_brief(
     settings: Settings,
     *,
@@ -127,6 +193,12 @@ async def generate_ats_improvement_brief(
     domain_gate: dict[str, Any] | None = None,
     resume_section_summary: dict[str, list[str]] | None = None,
 ) -> dict[str, Any]:
+    """Build an improvement brief for an ATS run.
+
+    LLM output is optional enrichment. Any provider failure, timeout, or
+    ``nvidia_unavailable`` must fall through to Groq then deterministic so
+    ``POST /ats-analyses`` can still persist the score and evidence.
+    """
     missing = [str(term).strip() for term in (missing_terms or []) if str(term).strip()]
     missing_items = missing_items or [
         {"term": term, "priority": "critical", "suggested_section": "skills"}
@@ -154,79 +226,70 @@ async def generate_ats_improvement_brief(
     prompt = _PROMPT_PATH.read_text(encoding="utf-8") if _PROMPT_PATH.is_file() else (
         "Return the required evidence-constrained JSON fields only."
     )
-    if settings.nvidia_configured:
+    # Respect LLM_PROVIDER order so Groq-first configs never wait on NVIDIA.
+    for provider in preferred_llm_providers(settings):
         try:
-            result = await NvidiaClient(settings).generate_structured(
-                system_prompt=prompt, user_payload=payload,
-                schema_model=AtsImprovementBriefResult,
-                temperature=min(settings.nvidia_temperature, 0.3),
+            if provider == "groq":
+                timeout = _optional_timeout(
+                    settings, "groq_timeout_seconds", _OPTIONAL_BRIEF_TIMEOUT_SECONDS
+                )
+                result = await asyncio.wait_for(
+                    GroqClient(settings).generate_structured(
+                        system_prompt=prompt,
+                        user_payload=payload,
+                        schema_model=AtsImprovementBriefResult,
+                        temperature=min(settings.groq_temperature, 0.4),
+                    ),
+                    timeout=timeout,
+                )
+                return _brief_from_llm(
+                    result,
+                    overall_score=overall_score,
+                    missing=missing,
+                    matched_count=matched_count,
+                    total_terms=total_terms,
+                    role_title=role_title,
+                    missing_items=missing_items,
+                    evidence_items=evidence_items,
+                    provider="groq",
+                    model=settings.groq_model,
+                    focus_limit=12,
+                )
+            timeout = _optional_timeout(
+                settings, "nvidia_timeout_seconds", _OPTIONAL_BRIEF_TIMEOUT_SECONDS
             )
-            allowed = {term.casefold() for term in missing}
-            focus = [item for item in result.focus_areas if any(term in str(item).casefold() for term in allowed)] or missing[:8]
-            inference = _validate_inference(result.overall_inference, evidence_items)
-            if not inference:
-                inference = _deterministic_brief(
-                    score=overall_score, missing=missing, matched_count=matched_count,
-                    total=total_terms, role_title=role_title, missing_items=missing_items,
-                )["overall_inference"]
-            priority_actions = _grounded_items(result.priority_actions, evidence_items)
-            section_guidance = _grounded_items(result.section_guidance, evidence_items)
-            do_not_claim = _grounded_items(
-                result.do_not_claim, evidence_items,
-                generic_prefixes=("do not", "never", "only", "avoid"),
+            result = await asyncio.wait_for(
+                NvidiaClient(settings).generate_structured(
+                    system_prompt=prompt,
+                    user_payload=payload,
+                    schema_model=AtsImprovementBriefResult,
+                    temperature=min(settings.nvidia_temperature, 0.3),
+                ),
+                timeout=timeout,
             )
-            fallback = _deterministic_brief(
-                score=overall_score, missing=missing, matched_count=matched_count,
-                total=total_terms, role_title=role_title, missing_items=missing_items,
+            return _brief_from_llm(
+                result,
+                overall_score=overall_score,
+                missing=missing,
+                matched_count=matched_count,
+                total_terms=total_terms,
+                role_title=role_title,
+                missing_items=missing_items,
+                evidence_items=evidence_items,
+                provider="nvidia",
+                model=settings.nvidia_model,
+                focus_limit=8,
             )
-            return {
-                "overall_inference": inference, "focus_areas": focus[:12],
-                "priority_actions": priority_actions[:12] or fallback["priority_actions"],
-                "section_guidance": section_guidance[:20] or fallback["section_guidance"],
-                "do_not_claim": do_not_claim[:12] or fallback["do_not_claim"], "provider": "nvidia",
-                "model": settings.nvidia_model, "agent": "ats_improvement_brief", "fallback": False,
-            }
         except Exception as exc:
-            if isinstance(exc, ApiError) and exc.code == "nvidia_unavailable":
-                raise
-            logger.warning("ats_brief_nvidia_failed error=%s", exc)
-    if settings.groq_configured:
-        try:
-            result = await GroqClient(settings).generate_structured(
-                system_prompt=prompt, user_payload=payload,
-                schema_model=AtsImprovementBriefResult,
-                temperature=min(settings.groq_temperature, 0.4),
-            )
-            allowed = {term.casefold() for term in missing}
-            focus = [item for item in result.focus_areas if any(term in str(item).casefold() for term in allowed)] or missing[:12]
-            inference = _validate_inference(result.overall_inference, evidence_items)
-            if not inference:
-                inference = _deterministic_brief(
-                    score=overall_score, missing=missing, matched_count=matched_count,
-                    total=total_terms, role_title=role_title, missing_items=missing_items,
-                )["overall_inference"]
-            priority_actions = _grounded_items(result.priority_actions, evidence_items)
-            section_guidance = _grounded_items(result.section_guidance, evidence_items)
-            do_not_claim = _grounded_items(
-                result.do_not_claim, evidence_items,
-                generic_prefixes=("do not", "never", "only", "avoid"),
-            )
-            fallback = _deterministic_brief(
-                score=overall_score, missing=missing, matched_count=matched_count,
-                total=total_terms, role_title=role_title, missing_items=missing_items,
-            )
-            return {
-                "overall_inference": inference,
-                "focus_areas": focus[:12], "priority_actions": priority_actions[:12] or fallback["priority_actions"],
-                "section_guidance": section_guidance[:20] or fallback["section_guidance"],
-                "do_not_claim": do_not_claim[:12] or fallback["do_not_claim"], "provider": "groq",
-                "model": settings.groq_model, "agent": "ats_improvement_brief", "fallback": False,
-            }
-        except Exception as exc:
-            logger.warning("ats_brief_groq_failed error=%s", exc)
+            # Never re-raise: brief must not fail the ATS persistence path.
+            logger.warning("ats_brief_%s_failed error=%s", provider, type(exc).__name__)
     brief = _deterministic_brief(
-        score=overall_score, missing=missing, matched_count=matched_count,
-        total=total_terms, role_title=role_title, missing_items=missing_items,
+        score=overall_score,
+        missing=missing,
+        matched_count=matched_count,
+        total=total_terms,
+        role_title=role_title,
+        missing_items=missing_items,
     )
     brief["agent"] = "ats_improvement_brief"
     brief["fallback"] = True

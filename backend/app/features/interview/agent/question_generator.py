@@ -67,7 +67,6 @@ async def generate_interview_questions(
 ) -> dict[str, Any]:
     count = max(1, min(int(count or 3), 20))
     mode = (mode or "mixed").strip().lower()
-    fallback_reason: str | None = None
     if settings.groq_configured:
         try:
             prompt = _PROMPT_PATH.read_text(encoding="utf-8")
@@ -105,15 +104,19 @@ async def generate_interview_questions(
                 "groq_returned_no_questions",
                 "The interview question provider returned no usable questions. Retry the session start.",
             )
-        except ApiError:
-            raise
         except Exception as exc:
-            logger.warning("groq_interview_questions_failed error=%s", exc)
-            raise ApiError(
-                502,
-                "interview_questions_provider_failed",
-                f"Could not generate interview questions ({type(exc).__name__}).",
-            ) from exc
+            # Session start must not hard-fail when Groq is down or returns junk.
+            # Templates keep the practice flow available (same idea as ATS brief).
+            reason = exc.code if isinstance(exc, ApiError) else type(exc).__name__
+            logger.warning("groq_interview_questions_failed reason=%s", reason)
+            return {
+                "questions": _template_questions(mode, count, target_role),
+                "provider": "template",
+                "model": None,
+                "agent": "interview_questions",
+                "fallback": True,
+                "fallback_reason": str(reason),
+            }
     # Groq not configured: templates are the explicit non-AI path, not a silent fallback.
     return {
         "questions": _template_questions(mode, count, target_role),

@@ -22,7 +22,7 @@ Statuses: CONFIRMED | FIXED | NOT REPRODUCED | STALE | BLOCKED | RETAINED WITH E
 | 16 | Dismiss status contract | FIXED | schema allows dismissed; FE posts dismissed |
 | 17 | Filters/pagination fields | FIXED | generate body sends limit/offset/location/work_mode/salary_min |
 | 18 | Adzuna sync abuse | FIXED | auth + cooldown + lock + tests |
-| 19 | Parsing path dual prod/test | FIXED / partial | text_extract Docling→blocks fallthrough; OCR removed |
+| 19 | Parsing path dual prod/test | FIXED / partial | text_extract pypdf→blocks fallthrough; OCR removed |
 | 20 | LLM_ALLOW_REPAIR ignored | FIXED | config + provider clients |
 | 21 | Duplicate Adzuna env docs | FIXED | single section in .env.example |
 | 22 | NVIDIA dual rate limit | FIXED | provider_rpm_limiter shared |

@@ -235,7 +235,11 @@ def crew_capability(settings: Settings) -> dict[str, Any]:
         "process": "sequential",
         "agents": [
             {"role": GAP_ANALYST.role, "tool": "analyze_ats_gaps"},
-            {"role": RESUME_IMPROVER.role, "tool": "generate_resume_suggestions", "provider": "nvidia"},
+            {
+                "role": RESUME_IMPROVER.role,
+                "tool": "generate_resume_suggestions",
+                "provider": "llm_provider_preferred",
+            },
             {"role": EVIDENCE_VALIDATOR.role, "tool": "validate_suggestions"},
         ],
         "tasks": [t.name for t in RESUME_CREW_TASKS],
@@ -244,6 +248,7 @@ def crew_capability(settings: Settings) -> dict[str, Any]:
             "and server-side validation. No free-form invention of experience."
         ),
         "enabled": True,
-        "ready": bool(settings.nvidia_configured),
-        "requires_nvidia": True,
+        "ready": bool(settings.groq_configured or settings.nvidia_configured),
+        "requires_nvidia": False,
+        "requires_llm": True,
     }

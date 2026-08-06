@@ -176,6 +176,92 @@ function resumeVersion(resumeId: string) {
   return state.resumeVersions.find((version) => String(version.resume_id || "") === resumeId) || null;
 }
 
+/** Mirror backend _enrich_ats_analysis so demo history shows resume + JD used. */
+function enrichDemoAnalysis(analysis: DemoRecord, includeParsed = false): DemoRecord {
+  const version = state.resumeVersions.find(
+    (item) => String(item.id || "") === String(analysis.resume_version_id || ""),
+  );
+  const resume = version
+    ? state.resumes.find((item) => String(item.id || "") === String(version.resume_id || ""))
+    : null;
+  const job = state.jobDescriptions.find(
+    (item) => String(item.id || "") === String(analysis.job_description_id || ""),
+  );
+
+  const enriched: DemoRecord = {
+    ...analysis,
+    resume: resume
+      ? {
+          id: resume.id,
+          title: resume.title,
+          original_filename: version?.original_filename || null,
+          version_number: version?.version_number ?? null,
+          created_at: version?.created_at || resume.created_at || null,
+          unavailable: false,
+        }
+      : version
+        ? {
+            id: version.resume_id,
+            title: "Resume unavailable",
+            original_filename: version.original_filename || null,
+            version_number: version.version_number ?? null,
+            created_at: version.created_at || null,
+            unavailable: true,
+          }
+        : {
+            id: null,
+            title: "Resume unavailable",
+            original_filename: null,
+            version_number: null,
+            created_at: null,
+            unavailable: true,
+          },
+    job_description: job
+      ? {
+          id: job.id,
+          title: job.title,
+          company: job.company || null,
+          role_title: job.role_title || null,
+          input_type: job.input_type || null,
+          original_filename: job.original_filename || null,
+          created_at: job.created_at || null,
+          unavailable: false,
+        }
+      : {
+          id: null,
+          title: "Job description unavailable",
+          company: null,
+          role_title: null,
+          input_type: null,
+          original_filename: null,
+          created_at: null,
+          unavailable: true,
+        },
+  };
+
+  if (includeParsed) {
+    enriched.parsed_inputs = {
+      resume: version
+        ? {
+            filename: version.original_filename || null,
+            extraction_status: version.extraction_status || null,
+            plain_text: "Demo resume plain text.",
+            structured_content: version.structured_content || { sections: {} },
+          }
+        : null,
+      job_description: job
+        ? {
+            filename: job.original_filename || null,
+            extraction_status: job.extraction_status || null,
+            plain_text: job.raw_text || "",
+            structured_content: job.structured_content || { sections: {} },
+          }
+        : null,
+    };
+  }
+  return enriched;
+}
+
 function parsePath(path: string) {
   return path.split("?")[0].split("/").filter(Boolean);
 }
@@ -322,15 +408,67 @@ export async function demoApiRequest<T>(path: string, init: RequestInit = {}): P
     state.jobDescriptions.unshift(record);
     return record as T;
   }
-  if (path === "/ats-analyses" && method === "GET") return state.analyses as T;
+  if (path === "/ats-analyses" && method === "GET") {
+    return state.analyses.map((row) => enrichDemoAnalysis(row)) as T;
+  }
   if (path === "/ats-analyses" && method === "POST") {
-    const analysis = { id: id("demo-ats"), user_id: DEMO_USER_ID, resume_version_id: body.resume_version_id, job_description_id: body.job_description_id, status: "completed", overall_score: 78, score_breakdown: { method: "Demo structured ATS scoring", matched_terms: ["TypeScript", "Python"], missing_terms: ["Docker"], total_terms: 3, structured_parameter_scores: { hard_skill_match: 82, experience_relevance: 78, education_match: 75, certifications_match: 70, seniority_alignment: 80 }, domain_gate: { decision: "ALLOW", reason: "Demo structured evidence is in domain." } }, summary: { method: "Demo structured ATS scoring", matched: 2, missing: 1, total: 3, missing_terms: ["Docker"], structured_composite_score: 78, structured_parameter_scores: { hard_skill_match: 82, experience_relevance: 78, education_match: 75, certifications_match: 70, seniority_alignment: 80 }, domain_gate: { decision: "ALLOW", reason: "Demo structured evidence is in domain." }, disclaimer: "Demo result only; not a hiring prediction." }, created_at: now() };
+    const analysis = {
+      id: id("demo-ats"),
+      user_id: DEMO_USER_ID,
+      resume_version_id: body.resume_version_id,
+      job_description_id: body.job_description_id,
+      status: "completed",
+      overall_score: 78,
+      score_breakdown: {
+        method: "Demo structured ATS scoring",
+        matched_terms: ["TypeScript", "Python"],
+        missing_terms: ["Docker"],
+        total_terms: 3,
+        structured_parameter_scores: {
+          hard_skill_match: 82,
+          experience_relevance: 78,
+          education_match: 75,
+          certifications_match: 70,
+          seniority_alignment: 80,
+        },
+        domain_gate: { decision: "ALLOW", reason: "Demo structured evidence is in domain." },
+      },
+      summary: {
+        method: "Demo structured ATS scoring",
+        matched: 2,
+        missing: 1,
+        total: 3,
+        missing_terms: ["Docker"],
+        structured_composite_score: 78,
+        structured_parameter_scores: {
+          hard_skill_match: 82,
+          experience_relevance: 78,
+          education_match: 75,
+          certifications_match: 70,
+          seniority_alignment: 80,
+        },
+        domain_gate: { decision: "ALLOW", reason: "Demo structured evidence is in domain." },
+        disclaimer: "Demo result only; not a hiring prediction.",
+      },
+      created_at: now(),
+    };
     state.analyses.unshift(analysis);
-    state.evidence = [{ id: id("demo-evidence"), analysis_id: analysis.id, requirement_text: "Docker", match_status: "not_found", explanation: "Not found in the demo resume." }];
-    return analysis as T;
+    state.evidence = [
+      {
+        id: id("demo-evidence"),
+        analysis_id: analysis.id,
+        requirement_text: "Docker",
+        match_status: "not_found",
+        explanation: "Not found in the demo resume.",
+      },
+    ];
+    return enrichDemoAnalysis(analysis) as T;
   }
   if (parts[0] === "ats-analyses" && parts[2] === "evidence") return state.evidence.filter((item) => item.analysis_id === parts[1]) as T;
-  if (parts[0] === "ats-analyses" && parts.length === 2 && method === "GET") return state.analyses.find((item) => item.id === parts[1]) as T;
+  if (parts[0] === "ats-analyses" && parts.length === 2 && method === "GET") {
+    const row = state.analyses.find((item) => item.id === parts[1]);
+    return (row ? enrichDemoAnalysis(row, true) : undefined) as T;
+  }
   if (parts[0] === "ats-analyses" && parts.length === 2 && method === "DELETE") {
     state.analyses = state.analyses.filter((item) => item.id !== parts[1]);
     return undefined as T;

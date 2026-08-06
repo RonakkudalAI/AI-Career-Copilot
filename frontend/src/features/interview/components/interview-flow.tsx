@@ -1,13 +1,23 @@
 
 import { Link } from "@/shared/ui/router-link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
-
-
-
 
 import { apiRequest } from "@/shared/api/client";
 import { Button, Card, PageHeader, Textarea } from "@/shared/ui/primitives";
+import {
+  DEFAULT_ANSWER_SILENCE_MS,
+  DEFAULT_LISTEN_AFTER_TTS_MS,
+  extractSpeechTranscript,
+  mediaReadyMessage,
+  mergeSpokenAnswer,
+  nextActiveIndex,
+  phaseAfterQuestionSpoken,
+  sessionMediaFlags,
+  shouldAutoSubmitOnSilence,
+  type InterviewTurnPhase,
+  type SpeechResultListLike,
+} from "@/features/interview/interview-voice";
 
 type Session = {
   id: string;
@@ -17,6 +27,8 @@ type Session = {
   created_at?: string;
   question_count?: number;
   target_role?: string | null;
+  camera_enabled?: boolean;
+  microphone_enabled?: boolean;
 };
 
 type Question = {
@@ -26,6 +38,35 @@ type Question = {
   question_type?: string | null;
   source_context?: { provider?: string; model?: string | null } | null;
 };
+
+type SpeechRecognitionResultEvent = {
+  resultIndex?: number;
+  results?: SpeechResultListLike;
+};
+
+type SpeechRecognitionErrorEvent = { error?: string };
+
+type SpeechRecognitionLike = {
+  lang: string;
+  interimResults: boolean;
+  continuous: boolean;
+  onresult: ((event: SpeechRecognitionResultEvent) => void) | null;
+  onend: (() => void) | null;
+  onerror: ((event: SpeechRecognitionErrorEvent) => void) | null;
+  start: () => void;
+  stop: () => void;
+  abort?: () => void;
+};
+
+type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
+
+function speechRecognitionConstructor(): SpeechRecognitionConstructor | null {
+  const browserWindow = window as Window & {
+    SpeechRecognition?: SpeechRecognitionConstructor;
+    webkitSpeechRecognition?: SpeechRecognitionConstructor;
+  };
+  return browserWindow.SpeechRecognition || browserWindow.webkitSpeechRecognition || null;
+}
 
 export function InterviewHome() {
   const [data, setData] = useState<Session[]>([]);
@@ -133,6 +174,8 @@ export function InterviewSetup() {
   const [mode, setMode] = useState(resumeVersionId && jobDescriptionId ? "resume_and_jd" : "behavioural");
   const [targetRole, setTargetRole] = useState(searchParams.get("target_role") || "");
   const [questionCount, setQuestionCount] = useState(3);
+  const [cameraEnabled, setCameraEnabled] = useState(true);
+  const [microphoneEnabled, setMicrophoneEnabled] = useState(true);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -150,8 +193,8 @@ export function InterviewSetup() {
           difficulty: "balanced",
           duration_minutes: 15,
           question_count: questionCount,
-          camera_enabled: false,
-          microphone_enabled: false,
+          camera_enabled: cameraEnabled,
+          microphone_enabled: microphoneEnabled,
           recording_consent: false,
         }),
       });
@@ -169,7 +212,7 @@ export function InterviewSetup() {
       <PageHeader
         eyebrow="Interview setup"
         title="Create a practice session"
-        description="Choose a mode and role. We will generate practice questions for this session and save them to your account."
+        description="Choose a mode and role. In the session, the interviewer asks aloud, your spoken answer appears as text, and the next question starts automatically after you pause."
       />
       <Card className="stack">
         {resumeVersionId && jobDescriptionId ? <p role="status" className="muted" style={{ margin: 0 }}>This session will use the confirmed resume and job description selected in preparation.</p> : null}
@@ -205,6 +248,19 @@ export function InterviewSetup() {
             ))}
           </select>
         </label>
+        <div className="stack" style={{ gap: 8 }}>
+          <p className="muted" style={{ margin: 0 }}>
+            Camera and microphone are used only for the live practice session. No interview media is recorded or stored.
+          </p>
+          <label className="cluster" style={{ gap: 8 }}>
+            <input type="checkbox" checked={cameraEnabled} onChange={(e) => setCameraEnabled(e.target.checked)} />
+            Enable camera
+          </label>
+          <label className="cluster" style={{ gap: 8 }}>
+            <input type="checkbox" checked={microphoneEnabled} onChange={(e) => setMicrophoneEnabled(e.target.checked)} />
+            Enable microphone and voice answers
+          </label>
+        </div>
         {error && <p className="field-error">{error}</p>}
         <Button disabled={busy} onClick={() => void create()}>
           {busy ? "Creating…" : "Create session"}
@@ -221,14 +277,277 @@ export function InterviewSession() {
   const [session, setSession] = useState<Session | null>(null);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
-  const [response, setResponse] = useState("");
+  /** Finalized answer text (typed + speech finals). */
+  const [answer, setAnswer] = useState("");
+  /** Live partial speech — shown in the answer box while speaking. */
+  const [interim, setInterim] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [questionSource, setQuestionSource] = useState<string>("");
+  const [questionSource, setQuestionSource] = useState("");
+  const [mediaMessage, setMediaMessage] = useState("");
+  const [phase, setPhase] = useState<InterviewTurnPhase>("idle");
+  const [autoVoice, setAutoVoice] = useState(true);
+  const [speechSupported, setSpeechSupported] = useState(true);
 
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const phaseRef = useRef<InterviewTurnPhase>("idle");
+  const answerRef = useRef("");
+  const lastSpeechAtRef = useRef(0);
+  const keepListeningRef = useRef(false);
+  const submittingRef = useRef(false);
+  const activeIndexRef = useRef(0);
+  const questionsRef = useRef<Question[]>([]);
+  const autoVoiceRef = useRef(true);
+
+  const current = questions[activeIndex];
+  const media = sessionMediaFlags(session || {});
+  /** Live view: committed answer + current interim so speech is visible while talking. */
+  const liveTranscript = interim ? (answer ? `${answer} ${interim}` : interim) : answer;
+
+  useEffect(() => {
+    phaseRef.current = phase;
+  }, [phase]);
+  useEffect(() => {
+    answerRef.current = answer;
+  }, [answer]);
+  useEffect(() => {
+    activeIndexRef.current = activeIndex;
+  }, [activeIndex]);
+  useEffect(() => {
+    questionsRef.current = questions;
+  }, [questions]);
+  useEffect(() => {
+    autoVoiceRef.current = autoVoice;
+  }, [autoVoice]);
+
+  const stopRecognition = useCallback((opts?: { keepPhase?: boolean }) => {
+    keepListeningRef.current = false;
+    const rec = recognitionRef.current;
+    recognitionRef.current = null;
+    if (rec) {
+      try {
+        rec.onresult = null;
+        rec.onerror = null;
+        rec.onend = null;
+        rec.stop();
+      } catch {
+        try {
+          rec.abort?.();
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    if (!opts?.keepPhase && phaseRef.current === "listening") {
+      setPhase("idle");
+    }
+  }, []);
+
+  const startListening = useCallback(() => {
+    if (!media.microphone) {
+      setMediaMessage("Microphone is disabled for this session. Type your answer.");
+      setPhase("idle");
+      return;
+    }
+    const Constructor = speechRecognitionConstructor();
+    if (!Constructor) {
+      setSpeechSupported(false);
+      setMediaMessage("Voice answers are not supported in this browser. Type your answer instead.");
+      setPhase("idle");
+      return;
+    }
+    setSpeechSupported(true);
+
+    // Never capture TTS of the question.
+    if ("speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+    }
+
+    // Replace any existing recognizer.
+    keepListeningRef.current = false;
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.onend = null;
+        recognitionRef.current.stop();
+      } catch {
+        /* ignore */
+      }
+      recognitionRef.current = null;
+    }
+
+    const recognition = new Constructor();
+    recognition.lang = "en-US";
+    recognition.interimResults = true;
+    recognition.continuous = true;
+    lastSpeechAtRef.current = Date.now();
+    keepListeningRef.current = true;
+
+    recognition.onresult = (event) => {
+      lastSpeechAtRef.current = Date.now();
+      const { finalChunk, interimText } = extractSpeechTranscript(
+        event.results,
+        typeof event.resultIndex === "number" ? event.resultIndex : 0,
+      );
+      setAnswer((prev) => {
+        const merged = mergeSpokenAnswer(prev, finalChunk, "");
+        answerRef.current = merged.committed;
+        return merged.committed;
+      });
+      setInterim(interimText);
+      setMediaMessage("Listening… your words appear in the answer box as you speak.");
+    };
+
+    recognition.onerror = (event) => {
+      const code = String(event?.error || "");
+      // "no-speech" / "aborted" are normal; keep trying while in listen mode.
+      if (code === "not-allowed" || code === "service-not-allowed") {
+        keepListeningRef.current = false;
+        setMediaMessage("Microphone permission was denied. Enable it in the browser, or type your answer.");
+        setPhase("idle");
+        return;
+      }
+      if (code === "network") {
+        setMediaMessage("Speech recognition network error. Check connectivity or type your answer.");
+      }
+    };
+
+    recognition.onend = () => {
+      recognitionRef.current = null;
+      // Chrome often ends continuous sessions after a pause — restart while we still want input.
+      if (keepListeningRef.current && phaseRef.current === "listening") {
+        window.setTimeout(() => {
+          if (!keepListeningRef.current || phaseRef.current !== "listening") return;
+          try {
+            const again = new Constructor();
+            again.lang = "en-US";
+            again.interimResults = true;
+            again.continuous = true;
+            again.onresult = recognition.onresult;
+            again.onerror = recognition.onerror;
+            again.onend = recognition.onend;
+            recognitionRef.current = again;
+            again.start();
+          } catch {
+            keepListeningRef.current = false;
+            setPhase("idle");
+            setMediaMessage("Voice input stopped. Press “Answer by voice” or type your answer.");
+          }
+        }, 120);
+        return;
+      }
+      if (phaseRef.current === "listening") setPhase("idle");
+    };
+
+    recognitionRef.current = recognition;
+    setPhase("listening");
+    setInterim("");
+    setMediaMessage("Listening… speak your answer. It will appear below.");
+    try {
+      recognition.start();
+    } catch {
+      keepListeningRef.current = false;
+      recognitionRef.current = null;
+      setPhase("idle");
+      setMediaMessage("Voice input could not be started. Type your answer or try again.");
+    }
+  }, [media.microphone]);
+
+  const speakQuestion = useCallback(
+    (text: string, after?: () => void) => {
+      stopRecognition({ keepPhase: true });
+      setPhase("asking");
+      setInterim("");
+      if (!text || typeof window === "undefined" || !("speechSynthesis" in window)) {
+        setMediaMessage("Text-to-speech is not available. Read the question and answer below.");
+        after?.();
+        return;
+      }
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.onstart = () => setPhase("asking");
+      utterance.onend = () => {
+        after?.();
+      };
+      utterance.onerror = () => {
+        after?.();
+      };
+      window.speechSynthesis.speak(utterance);
+      setMediaMessage("Asking the question…");
+    },
+    [stopRecognition],
+  );
+
+  const completeSession = useCallback(async () => {
+    setSaving(true);
+    setError("");
+    try {
+      await apiRequest(`/interviews/${sessionId}/complete`, { method: "POST" });
+      setMessage("Session marked complete.");
+      setSession((s) => (s ? { ...s, status: "completed" } : s));
+      setPhase("complete");
+      setMediaMessage("Session complete. You can review answers or delete the session.");
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }, [sessionId]);
+
+  const submitCurrentAnswer = useCallback(
+    async (opts?: { advance?: boolean }) => {
+      const q = questionsRef.current[activeIndexRef.current];
+      const text = answerRef.current.trim();
+      if (!q || !text || submittingRef.current) return;
+      submittingRef.current = true;
+      keepListeningRef.current = false;
+      stopRecognition({ keepPhase: true });
+      setInterim("");
+      setPhase("saving");
+      setSaving(true);
+      setError("");
+      setMessage("");
+      try {
+        await apiRequest(`/interviews/${sessionId}/responses`, {
+          method: "POST",
+          body: JSON.stringify({
+            question_id: q.id,
+            typed_response: text,
+            transcript: text,
+          }),
+        });
+        setMessage("Answer saved.");
+        setAnswer("");
+        answerRef.current = "";
+        if (opts?.advance !== false) {
+          const next = nextActiveIndex(activeIndexRef.current, questionsRef.current.length);
+          if (next === null) {
+            setPhase("complete");
+            setMediaMessage("All questions answered. Completing the session…");
+            await completeSession();
+          } else {
+            setPhase("between");
+            setActiveIndex(next);
+          }
+        } else {
+          setPhase("idle");
+        }
+      } catch (e) {
+        setError((e as Error).message);
+        setPhase("idle");
+      } finally {
+        setSaving(false);
+        submittingRef.current = false;
+      }
+    },
+    [completeSession, sessionId, stopRecognition],
+  );
+
+  // Load session + questions
   useEffect(() => {
     if (!sessionId) return;
     let active = true;
@@ -259,43 +578,147 @@ export function InterviewSession() {
     };
   }, [sessionId]);
 
-  const current = questions[activeIndex];
-
-  async function submitResponse() {
-    if (!current || !response.trim()) return;
-    setSaving(true);
-    setError("");
-    setMessage("");
-    try {
-      await apiRequest(`/interviews/${sessionId}/responses`, {
-        method: "POST",
-        body: JSON.stringify({
-          question_id: current.id,
-          typed_response: response.trim(),
-        }),
-      });
-      setMessage("Response saved.");
-      setResponse("");
-      if (activeIndex < questions.length - 1) setActiveIndex((i) => i + 1);
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setSaving(false);
+  // Camera / microphone stream
+  useEffect(() => {
+    if (!session) return;
+    let cancelled = false;
+    const flags = sessionMediaFlags(session);
+    if (!flags.camera && !flags.microphone) {
+      setMediaMessage(mediaReadyMessage(false, false));
+      return;
     }
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setMediaMessage("This browser does not support camera or microphone access.");
+      return;
+    }
+    void navigator.mediaDevices
+      .getUserMedia({ video: flags.camera, audio: flags.microphone })
+      .then((stream) => {
+        if (cancelled) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+        streamRef.current = stream;
+        if (videoRef.current && flags.camera) {
+          videoRef.current.srcObject = stream;
+        }
+        setMediaMessage(mediaReadyMessage(flags.camera, flags.microphone));
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setMediaMessage(
+            "Camera or microphone permission was not granted. You can still type answers.",
+          );
+        }
+      });
+    return () => {
+      cancelled = true;
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    };
+  }, [session]);
+
+  // Attach stream if video element mounts later
+  useEffect(() => {
+    if (!media.camera || !videoRef.current || !streamRef.current) return;
+    if (videoRef.current.srcObject !== streamRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+    }
+  }, [media.camera, current?.id]);
+
+  // Auto ask → listen loop when the active question changes
+  useEffect(() => {
+    if (loading || !current?.question || session?.status === "completed") return;
+    let cancelled = false;
+    setAnswer("");
+    answerRef.current = "";
+    setInterim("");
+    setMessage("");
+
+    const afterSpoken = () => {
+      if (cancelled) return;
+      const nextPhase = phaseAfterQuestionSpoken(media.microphone, autoVoiceRef.current);
+      if (nextPhase === "listening") {
+        window.setTimeout(() => {
+          if (!cancelled) startListening();
+        }, DEFAULT_LISTEN_AFTER_TTS_MS);
+      } else {
+        setPhase("idle");
+        setMediaMessage(
+          media.microphone
+            ? "Press “Answer by voice” or type your answer, then save."
+            : "Type your answer, then save to continue.",
+        );
+      }
+    };
+
+    const timer = window.setTimeout(() => {
+      if (cancelled) return;
+      speakQuestion(current.question, afterSpoken);
+    }, 200);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+      if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+      stopRecognition({ keepPhase: true });
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-run on question change
+  }, [current?.id, loading, session?.status]);
+
+  // Silence → auto-save → next question (back-and-forth)
+  useEffect(() => {
+    if (phase !== "listening") return;
+    const id = window.setInterval(() => {
+      const msSince = Date.now() - lastSpeechAtRef.current;
+      if (
+        shouldAutoSubmitOnSilence({
+          phase: phaseRef.current,
+          committedAnswer: answerRef.current,
+          msSinceLastSpeech: msSince,
+          silenceMs: DEFAULT_ANSWER_SILENCE_MS,
+        })
+      ) {
+        void submitCurrentAnswer({ advance: true });
+      }
+    }, 350);
+    return () => window.clearInterval(id);
+  }, [phase, submitCurrentAnswer]);
+
+  useEffect(
+    () => () => {
+      keepListeningRef.current = false;
+      stopRecognition({ keepPhase: true });
+      if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+    },
+    [stopRecognition],
+  );
+
+  function toggleVoiceAnswer() {
+    if (phase === "listening" || recognitionRef.current) {
+      stopRecognition();
+      setMediaMessage("Listening stopped. Edit your answer or save to continue.");
+      return;
+    }
+    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+    startListening();
   }
 
-  async function completeSession() {
-    setSaving(true);
-    setError("");
-    try {
-      await apiRequest(`/interviews/${sessionId}/complete`, { method: "POST" });
-      setMessage("Session marked complete.");
-      setSession((s) => (s ? { ...s, status: "completed" } : s));
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setSaving(false);
-    }
+  function askQuestionAloud() {
+    if (!current?.question) return;
+    speakQuestion(current.question, () => {
+      const nextPhase = phaseAfterQuestionSpoken(media.microphone, autoVoice);
+      if (nextPhase === "listening") startListening();
+      else setPhase("idle");
+    });
+  }
+
+  function onAnswerChange(value: string) {
+    setAnswer(value);
+    answerRef.current = value;
+    setInterim("");
+    lastSpeechAtRef.current = Date.now();
   }
 
   async function deleteThisSession() {
@@ -308,7 +731,6 @@ export function InterviewSession() {
     try {
       await apiRequest(`/interviews/${sessionId}`, { method: "DELETE" });
       navigate("/mock-interview");
-
     } catch (e) {
       setError((e as Error).message);
       setDeleting(false);
@@ -323,6 +745,17 @@ export function InterviewSession() {
     );
   }
 
+  const phaseLabel =
+    phase === "asking"
+      ? "Interviewer is asking…"
+      : phase === "listening"
+        ? "Your turn — speak now"
+        : phase === "saving"
+          ? "Saving answer…"
+          : phase === "complete"
+            ? "Session complete"
+            : "Ready";
+
   return (
     <>
       <PageHeader
@@ -330,19 +763,78 @@ export function InterviewSession() {
         title={session?.target_role ? `${session.target_role} practice` : "Practice workspace"}
         description={`${session?.mode || "mixed"} · ${session?.status || "unknown"} · ${questions.length} question(s)${questionSource ? ` · ${questionSource}` : ""}`}
       />
-      {error && <p className="field-error">{error}</p>}
-      {message && <p role="status">{message}</p>}
+      {error && (
+        <p role="alert" className="field-error">
+          {error}
+        </p>
+      )}
+      {message && (
+        <p role="status" style={{ margin: 0 }}>
+          {message}
+        </p>
+      )}
       {questionSource ? (
         <p className="muted" style={{ margin: 0, fontSize: "var(--text-sm)" }}>
           {questionSource}
         </p>
       ) : null}
+      <Card className="stack">
+        <div className="cluster" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
+          <div className="stack" style={{ gap: 6 }}>
+            <h2 style={{ margin: 0 }}>Live practice</h2>
+            <p className="muted" style={{ margin: 0 }}>
+              {mediaMessage || "Questions are spoken aloud; your spoken answers appear in the box below."}
+            </p>
+            <p style={{ margin: 0, fontWeight: 600 }}>{phaseLabel}</p>
+            {!speechSupported ? (
+              <p className="field-error" style={{ margin: 0 }}>
+                This browser has no Web Speech recognition (try Chrome/Edge). Typing still works.
+              </p>
+            ) : null}
+          </div>
+          {media.camera ? (
+            <video
+              ref={videoRef}
+              autoPlay
+              muted
+              playsInline
+              style={{ width: 220, maxWidth: "100%", borderRadius: 12, background: "#0b1930" }}
+            />
+          ) : null}
+        </div>
+        <label className="cluster" style={{ gap: 8 }}>
+          <input
+            type="checkbox"
+            checked={autoVoice}
+            onChange={(e) => setAutoVoice(e.target.checked)}
+            disabled={!media.microphone}
+          />
+          Automatic back-and-forth (speak question → listen → save on silence → next question)
+        </label>
+        <div className="cluster">
+          <Button variant="secondary" onClick={askQuestionAloud} disabled={!current || phase === "asking" || phase === "saving"}>
+            {phase === "asking" ? "Asking question…" : "Ask question aloud"}
+          </Button>
+          {media.microphone ? (
+            <Button
+              variant="secondary"
+              onClick={toggleVoiceAnswer}
+              disabled={!current || phase === "asking" || phase === "saving"}
+            >
+              {phase === "listening" ? "Stop listening" : "Answer by voice"}
+            </Button>
+          ) : null}
+        </div>
+      </Card>
       {!questions.length ? (
         <Card className="stack">
           <p>No questions are available for this session yet.</p>
           <p className="muted" style={{ margin: 0 }}>
             Start the session again, or create a new session.
           </p>
+          <Button variant="destructive" disabled={deleting} onClick={() => void deleteThisSession()}>
+            {deleting ? "Deleting…" : "Delete session"}
+          </Button>
         </Card>
       ) : (
         <Card className="stack">
@@ -352,24 +844,50 @@ export function InterviewSession() {
           </p>
           <h2 style={{ margin: 0 }}>{current?.question}</h2>
           <label className="field-label">
-            Your answer
-            <Textarea value={response} onChange={(e: any) => setResponse(e.target.value)} />
+            Your answer {phase === "listening" ? "(updates as you speak)" : ""}
+            <Textarea
+              value={liveTranscript}
+              onChange={(e: { target: { value: string } }) => onAnswerChange(e.target.value)}
+              placeholder={
+                media.microphone
+                  ? "Speak after the question, or type here. Spoken words appear as you talk."
+                  : "Type your answer here."
+              }
+            />
           </label>
+          {phase === "listening" ? (
+            <p className="muted" style={{ margin: 0, fontSize: "var(--text-sm)" }} role="status">
+              {interim
+                ? `Hearing now: “${interim}”`
+                : answer
+                  ? "Listening for more… pause ~2s when finished to auto-save and go to the next question."
+                  : "Listening… start speaking. Your words will show above."}
+            </p>
+          ) : null}
           <div className="cluster">
-            <Button disabled={saving || !response.trim()} onClick={() => void submitResponse()}>
-              {saving ? "Saving…" : "Save answer"}
+            <Button
+              disabled={saving || !answer.trim() || phase === "asking"}
+              onClick={() => void submitCurrentAnswer({ advance: true })}
+            >
+              {saving ? "Saving…" : "Save & next"}
             </Button>
             <Button
               variant="secondary"
-              disabled={activeIndex <= 0}
-              onClick={() => setActiveIndex((i) => Math.max(0, i - 1))}
+              disabled={activeIndex <= 0 || phase === "saving" || phase === "asking"}
+              onClick={() => {
+                stopRecognition();
+                setActiveIndex((i) => Math.max(0, i - 1));
+              }}
             >
               Previous
             </Button>
             <Button
               variant="secondary"
-              disabled={activeIndex >= questions.length - 1}
-              onClick={() => setActiveIndex((i) => Math.min(questions.length - 1, i + 1))}
+              disabled={activeIndex >= questions.length - 1 || phase === "saving" || phase === "asking"}
+              onClick={() => {
+                stopRecognition();
+                setActiveIndex((i) => Math.min(questions.length - 1, i + 1));
+              }}
             >
               Next
             </Button>
@@ -382,13 +900,6 @@ export function InterviewSession() {
           </div>
         </Card>
       )}
-      {questions.length === 0 ? (
-        <div className="cluster" style={{ marginTop: 12 }}>
-          <Button variant="destructive" disabled={deleting} onClick={() => void deleteThisSession()}>
-            {deleting ? "Deleting…" : "Delete session"}
-          </Button>
-        </div>
-      ) : null}
     </>
   );
 }

@@ -34,14 +34,27 @@ from app.features.resume_management.validation import is_source_stale, validate_
 
 
 def capabilities(settings: Settings) -> dict[str, Any]:
+    from app.agents.providers.routing import preferred_llm_provider, preferred_llm_providers
+
     provider = NvidiaClient(settings).capability()
     groq = GroqClient(settings).capability()
     status = agents_status(settings)
     crew = crew_capability(settings)
+    preferred = preferred_llm_provider(settings)
+    ordered = preferred_llm_providers(settings)
+    selected_model = (
+        groq.get("model")
+        if preferred == "groq" and groq.get("configured")
+        else provider.get("model")
+        if provider.get("configured")
+        else groq.get("model")
+    )
     return {
         "nvidia_configured": provider["configured"],
-        "selected_model": provider["model"],
-        "improvement_available": provider["configured"],
+        "selected_model": selected_model,
+        "preferred_provider": preferred,
+        "provider_order": ordered,
+        "improvement_available": bool(ordered),
         "export_formats": ["pdf", "docx"],
         "ats_context_available": True,
         "manual_editing_available": False,

@@ -60,6 +60,9 @@ backend/.data/
 .codex/
 .grok/
 
+# Optional OmniRoute sidecar source and dependencies; the app must not depend on it.
+/integrations/omniroute/
+
 # Editor
 .idea/
 .vscode/

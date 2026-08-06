@@ -16,6 +16,7 @@ from app.agents.providers.common import (
     strip_json_fence,
 )
 from app.agents.providers.rate_limit import provider_rpm_limiter
+from app.agents.providers.routing import provider_route
 from app.api.schemas import ProviderSuggestionResult
 from app.core.config import Settings
 from app.core.errors import ApiError
@@ -27,12 +28,13 @@ class NvidiaClient:
         self.settings = settings
         self.transport = transport
     def capability(self) -> dict[str, Any]:
+        route = provider_route(self.settings, "nvidia")
         return {
             "configured": self.settings.nvidia_configured,
-            "model": self.settings.nvidia_model or None,
+            "model": route["model"] or None,
             "prompt_version": self.settings.nvidia_prompt_version,
-            "base_url": self.settings.nvidia_base_url or None,
-            "provider": "nvidia",
+            "base_url": route["base_url"] or None,
+            "provider": route["provider"],
         }
     async def generate(self, context: dict[str, Any]) -> ProviderSuggestionResult:
         if not self.settings.nvidia_configured:
@@ -43,8 +45,9 @@ class NvidiaClient:
             )
         system_prompt = (PROMPTS_DIR / "improve_resume_v1.txt").read_text(encoding="utf-8")
         schema = ProviderSuggestionResult.model_json_schema()
+        route = provider_route(self.settings, "nvidia")
         payload = {
-            "model": self.settings.nvidia_model,
+            "model": route["model"],
             "temperature": self.settings.nvidia_temperature,
             "max_tokens": self.settings.nvidia_max_output_tokens,
             "response_format": {"type": "json_object"},
@@ -106,8 +109,9 @@ class NvidiaClient:
                 "AI extraction is not configured. Deterministic mapping remains available.",
             )
         schema = schema_model.model_json_schema()
+        route = provider_route(self.settings, "nvidia")
         payload = {
-            "model": self.settings.nvidia_model,
+            "model": route["model"],
             "temperature": self.settings.nvidia_temperature if temperature is None else temperature,
             "max_tokens": self.settings.nvidia_max_output_tokens,
             "response_format": {"type": "json_object"},
@@ -157,19 +161,19 @@ class NvidiaClient:
                     "The AI provider returned an invalid structured response.",
                 ) from exc
     async def _request(self, payload: dict[str, Any]) -> str:
-        headers = {
-            "Authorization": f"Bearer {self.settings.nvidia_api_key}",
-            "Content-Type": "application/json",
-        }
-        timeout = httpx.Timeout(self.settings.nvidia_timeout_seconds)
-        attempts = self.settings.nvidia_max_retries + 1
-        limiter = await provider_rpm_limiter("nvidia", self.settings.llm_rpm_limit)
+        route = provider_route(self.settings, "nvidia")
+        headers = {"Content-Type": "application/json"}
+        if route["api_key"]:
+            headers["Authorization"] = f"Bearer {route['api_key']}"
+        timeout = httpx.Timeout(route["timeout_seconds"])
+        attempts = route["max_retries"] + 1
+        limiter = await provider_rpm_limiter(route["provider"], self.settings.llm_rpm_limit)
         async with httpx.AsyncClient(timeout=timeout, transport=self.transport) as client:
             for attempt in range(attempts):
                 await limiter.acquire()
                 try:
                     response = await client.post(
-                        f"{self.settings.nvidia_base_url.rstrip('/')}/chat/completions",
+                        f"{route['base_url'].rstrip('/')}/chat/completions",
                         headers=headers,
                         json=payload,
                     )

@@ -151,7 +151,7 @@ instead of raw Firestore API. Storage uses logical buckets (`document_bucket`, `
 |------|------|
 | `features/document_parsing/pipeline.py` | `parse_document_bytes` public entry |
 | `features/document_parsing/service.py` | Validate, skills candidates, titles, metadata helpers |
-| `features/document_parsing/parsing/text_extract.py` | PDF/DOCX text extraction (fast path + Docling) |
+| `features/document_parsing/parsing/text_extract.py` | PDF/DOCX text extraction (pypdf chain + python-docx) |
 | `features/document_parsing/parsing/llm_sections.py` | LLM line→section mapping |
 | `features/document_parsing/parsing/sections.py` | Structural/heuristic sections |
 | `features/document_parsing/extractors/pdf.py` | Lightweight PDF blocks |

@@ -16,6 +16,8 @@ from app.agents.providers.common import (
     strip_json_fence,
 )
 from app.agents.providers.rate_limit import provider_rpm_limiter
+from app.agents.providers.routing import provider_route
+from app.api.schemas import ProviderSuggestionResult
 from app.core.config import Settings
 from app.core.errors import ApiError
 
@@ -56,15 +58,91 @@ class GroqClient:
         self.settings = settings
         self.transport = transport
     def capability(self) -> dict[str, Any]:
+        route = provider_route(self.settings, "groq")
         return {
             "configured": self.settings.groq_configured,
-            "model": self.settings.groq_model or None,
-            "provider": "groq",
-            "base_url": self.settings.groq_base_url or None,
-            "tasks": ["interview_questions", "ats_improvement_brief", "learning_youtube_path"],
+            "model": route["model"] or None,
+            "provider": route["provider"],
+            "base_url": route["base_url"] or None,
+            "tasks": [
+                "interview_questions",
+                "ats_improvement_brief",
+                "learning_youtube_path",
+                "resume_improvement",
+                "profile_fill",
+                "document_section_extract",
+            ],
         }
+
     def _strip_json_fence(self, content: str) -> str:
         return strip_json_fence(content)
+
+    def _parse_suggestions(self, content: str) -> ProviderSuggestionResult:
+        data = parse_json_object(content)
+        return ProviderSuggestionResult.model_validate(data)
+
+    async def generate(self, context: dict[str, Any]) -> ProviderSuggestionResult:
+        """Resume-improvement suggestions (same contract as NvidiaClient.generate)."""
+        if not self.settings.groq_configured:
+            raise ApiError(
+                503,
+                "groq_not_configured",
+                "AI improvements are not configured. Manual editing and export remain available.",
+            )
+        system_prompt = (PROMPTS_DIR / "improve_resume_v1.txt").read_text(encoding="utf-8")
+        schema = ProviderSuggestionResult.model_json_schema()
+        route = provider_route(self.settings, "groq")
+        payload = {
+            "model": route["model"],
+            "temperature": min(self.settings.groq_temperature, 0.4),
+            "max_tokens": self.settings.groq_max_output_tokens,
+            "response_format": {"type": "json_object"},
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {"context": context, "output_schema": schema}, separators=(",", ":")
+                    ),
+                },
+            ],
+        }
+        raw = await self._request(payload)
+        try:
+            return self._parse_suggestions(raw)
+        except (json.JSONDecodeError, ValidationError, TypeError, ValueError):
+            repair_path = PROMPTS_DIR / "repair_structured_output_v1.txt"
+            repair_prompt = (
+                repair_path.read_text(encoding="utf-8")
+                if repair_path.is_file()
+                else "Return only valid JSON matching the provided output_schema."
+            )
+            repair_payload = {
+                **payload,
+                "messages": [
+                    {"role": "system", "content": repair_prompt},
+                    {
+                        "role": "user",
+                        "content": json.dumps(
+                            {
+                                "invalid_output": strip_json_fence(raw)[:12_000],
+                                "output_schema": schema,
+                            },
+                            separators=(",", ":"),
+                        ),
+                    },
+                ],
+            }
+            repaired = await self._request(repair_payload)
+            try:
+                return self._parse_suggestions(repaired)
+            except (json.JSONDecodeError, ValidationError, TypeError, ValueError) as exc:
+                raise ApiError(
+                    502,
+                    "invalid_provider_response",
+                    "The AI provider returned an invalid structured response.",
+                ) from exc
+
     async def generate_structured(
         self,
         *,
@@ -95,8 +173,9 @@ class GroqClient:
                     "schema": _strict_schema(schema),
                 },
             }
+        route = provider_route(self.settings, "groq")
         payload = {
-            "model": model or self.settings.groq_model,
+            "model": model or route["model"],
             "temperature": self.settings.groq_temperature if temperature is None else temperature,
             "max_tokens": self.settings.groq_max_output_tokens,
             "response_format": response_format,
@@ -162,19 +241,19 @@ class GroqClient:
         timeout_seconds: float | None = None,
         max_retries: int | None = None,
     ) -> str:
-        headers = {
-            "Authorization": f"Bearer {self.settings.groq_api_key}",
-            "Content-Type": "application/json",
-        }
-        timeout = httpx.Timeout(timeout_seconds or self.settings.groq_timeout_seconds)
-        attempts = (self.settings.groq_max_retries if max_retries is None else max_retries) + 1
-        limiter = await provider_rpm_limiter("groq", self.settings.llm_rpm_limit)
+        route = provider_route(self.settings, "groq")
+        headers = {"Content-Type": "application/json"}
+        if route["api_key"]:
+            headers["Authorization"] = f"Bearer {route['api_key']}"
+        timeout = httpx.Timeout(timeout_seconds or route["timeout_seconds"])
+        attempts = (route["max_retries"] if max_retries is None else max_retries) + 1
+        limiter = await provider_rpm_limiter(route["provider"], self.settings.llm_rpm_limit)
         async with httpx.AsyncClient(timeout=timeout, transport=self.transport) as client:
             for attempt in range(attempts):
                 await limiter.acquire()
                 try:
                     response = await client.post(
-                        f"{self.settings.groq_base_url.rstrip('/')}/chat/completions",
+                        f"{route['base_url'].rstrip('/')}/chat/completions",
                         headers=headers,
                         json=payload,
                     )

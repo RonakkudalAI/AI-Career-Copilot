@@ -16,6 +16,9 @@
     "check:env": "node scripts/diagnostics/verify-environment.mjs",
     "check:secrets": "node scripts/diagnostics/check-secrets.mjs",
     "check:boundaries": "node scripts/verify-boundaries.mjs",
+    "omniroute:install": "node scripts/integrations/omniroute.mjs install",
+    "omniroute:dev": "node scripts/integrations/omniroute.mjs dev",
+    "omniroute:check": "node scripts/integrations/omniroute.mjs check",
     "test:backend": "backend\\.venv\\Scripts\\python.exe -m pytest backend\\tests"
   }
 }
