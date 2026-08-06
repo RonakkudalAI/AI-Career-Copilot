@@ -1,68 +1,18 @@
-import uuid
 import hashlib
 import hmac
 import logging
+import mimetypes
 import secrets
+import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-import mimetypes
-
 from fastapi import APIRouter, Body, Depends, File, Form, Header, Response, UploadFile
 from fastapi.responses import Response as PlainResponse
 
-from app.features.auth.account_deletion import (
-    CONFIRM_PHRASE,
-    collect_user_storage_paths,
-    confirmation_is_valid,
-    email_matches_account,
-    purge_user_storage,
-)
-from app.features.ats.agents import generate_ats_improvement_brief
-from app.features.interview.agent import generate_interview_questions
-from app.features.interview.preparation import generate_interview_preparation
-from app.features.profile.agent import build_profile_draft_enriched, profile_draft_response_payload
 from app.agents.registry import agents_status
-from app.features.ats.ats_score import (
-    ALGORITHM_VERSION,
-    ats_source_fingerprint,
-    evidence_match_status,
-    score_resume,
-)
-from app.features.auth.service import CurrentUser, create_access_token, get_current_user
-from app.features.profile.avatars import (
-    attach_avatar_url,
-    avatar_extension_for_mime,
-    signed_avatar_url,
-    validate_avatar_upload,
-)
-from app.core.config import Settings, get_settings
-from app.core.constants import MIN_PASSWORD_LENGTH
-from app.features.document_parsing.service import (
-    extract_sections_enriched,
-    extract_skill_candidates,
-    extract_text,
-    infer_job_metadata,
-    infer_resume_title,
-    safe_filename,
-    sha256_bytes,
-    validate_document,
-)
-from app.features.document_parsing.pipeline import parse_document_bytes
-from app.core.errors import ApiError
-from app.features.profile.importer import insert_validated_batch
-from app.features.profile.agent.normalize import normalize_date_value
-from app.database.repository import (
-    CANDIDATE_TABLES,
-    client_for,
-    list_recent_activity,
-    owned_row,
-    owned_rows,
-    recalculate_completion,
-    write_activity,
-)
-from app.features.resume_improvement.routes import router as resume_improvement_router
 from app.api.schemas import (
     AccountDeleteRequest,
     AtsAnalysisCreate,
@@ -72,10 +22,10 @@ from app.api.schemas import (
     InterviewResponseCreate,
     JobDescriptionMetadataPatch,
     JobDescriptionTextCreate,
+    JobRecommendationGenerate,
+    LearningItemProgressPatch,
     LearningPathCreate,
     LearningPathGenerate,
-    LearningItemProgressPatch,
-    JobRecommendationGenerate,
     NotificationSettings,
     PreferencesUpdate,
     PrivacySettings,
@@ -84,15 +34,66 @@ from app.api.schemas import (
     ProfilePatch,
     SavedJobPatch,
 )
+from app.core.config import Settings, get_settings
+from app.core.constants import MIN_PASSWORD_LENGTH
+from app.core.errors import ApiError
 from app.database.client import database_client, database_probe
+from app.database.repository import (
+    CANDIDATE_TABLES,
+    client_for,
+    list_recent_activity,
+    owned_row,
+    owned_rows,
+    recalculate_completion,
+    write_activity,
+)
+from app.features.ats.agents import generate_ats_improvement_brief
+from app.features.ats.ats_score import (
+    ALGORITHM_VERSION,
+    ats_source_fingerprint,
+    evidence_match_status,
+    score_resume,
+)
+from app.features.auth.account_deletion import (
+    CONFIRM_PHRASE,
+    collect_user_storage_paths,
+    confirmation_is_valid,
+    email_matches_account,
+    purge_user_storage,
+)
+from app.features.auth.service import CurrentUser, create_access_token, get_current_user
 from app.features.career_matching import (
     ALGORITHM_VERSION as CAREER_MATCH_ALGORITHM_VERSION,
+)
+from app.features.career_matching import (
     _infer_work_mode,
     candidate_skill_evidence,
     progress_percentage,
     score_job,
 )
+from app.features.document_parsing.pipeline import parse_document_bytes
+from app.features.document_parsing.service import (
+    extract_sections_enriched,
+    extract_skill_candidates,
+    infer_job_metadata,
+    infer_resume_title,
+    safe_filename,
+    sha256_bytes,
+    validate_document,
+)
+from app.features.interview.agent import generate_interview_questions
+from app.features.interview.preparation import generate_interview_preparation
 from app.features.learning.service import generate_learning_path_from_ats
+from app.features.profile.agent import build_profile_draft_enriched, profile_draft_response_payload
+from app.features.profile.agent.normalize import normalize_date_value
+from app.features.profile.avatars import (
+    attach_avatar_url,
+    avatar_extension_for_mime,
+    signed_avatar_url,
+    validate_avatar_upload,
+)
+from app.features.profile.importer import insert_validated_batch
+from app.features.resume_improvement.routes import router as resume_improvement_router
 
 router = APIRouter()
 router.include_router(resume_improvement_router)
@@ -249,7 +250,7 @@ def auth_firebase(payload: dict[str, Any] = Body(...), settings: Settings = Depe
             user["firebase_uid"] = uid
     else:
         user_id = str(uuid.uuid4())
-        full_name = str((decoded.get("name") or "")).strip()[:120] or None
+        full_name = str(decoded.get("name") or "").strip()[:120] or None
         user = _create_user_records(
             client,
             {
@@ -402,77 +403,92 @@ def bootstrap(
     client = client_for(settings, user)
     # Bootstrap is a read endpoint. Completion is recalculated after mutations;
     # never perform cleanup or writes while loading a page.
-    profile = (
-        client.table("profiles")
-        .select("*")
-        .eq("id", str(user.id))
-        .limit(1)
-        .execute()
-        .data
-        or [{}]
-    )[0]
-    active_resume = (
-        client.table("resumes")
-        .select("id,title")
-        .eq("user_id", str(user.id))
-        .eq("is_active", True)
-        .is_("deleted_at", "null")
-        .limit(1)
-        .execute()
-        .data
-        or []
-    )
-    confirmed_resume = (
-        client.table("resume_versions")
-        .select("id", count="exact", head=True)
-        .eq("user_id", str(user.id))
-        .eq("extraction_status", "confirmed")
-        .execute()
-    )
-    latest_jd = (
-        client.table("job_descriptions")
-        .select("id,title,company,role_title")
-        .eq("user_id", str(user.id))
-        .order("created_at", desc=True)
-        .limit(1)
-        .execute()
-        .data
-        or []
-    )
-    latest_analysis = (
-        client.table("ats_analyses")
-        .select("id,overall_score,status,created_at")
-        .eq("user_id", str(user.id))
-        .eq("status", "completed")
-        .order("created_at", desc=True)
-        .limit(1)
-        .execute()
-        .data
-        or []
-    )
-    recent_activity = list_recent_activity(client, user)
-    latest_actions = _latest_actions(client, user)
-    counts = {}
-    for key, table in {
-        "resumes": "resumes",
-        "ats_analyses": "ats_analyses",
-        "interviews": "interview_sessions",
-        "learning_paths": "learning_paths",
-        "saved_jobs": "saved_jobs",
-    }.items():
-        query = client.table(table).select("*", count="exact", head=True).eq("user_id", str(user.id))
-        if table == "resumes":
+    uid = str(user.id)
+
+    def _read_profile():
+        return client.table("profiles").select("*").eq("id", uid).limit(1).execute()
+
+    def _read_active_resume():
+        return (
+            client.table("resumes")
+            .select("id,title")
+            .eq("user_id", uid)
+            .eq("is_active", True)
+            .is_("deleted_at", "null")
+            .limit(1)
+            .execute()
+        )
+
+    def _read_confirmed_resume():
+        return (
+            client.table("resume_versions")
+            .select("id", count="exact", head=True)
+            .eq("user_id", uid)
+            .eq("extraction_status", "confirmed")
+            .execute()
+        )
+
+    def _read_latest_jd():
+        return (
+            client.table("job_descriptions")
+            .select("id,title,company,role_title")
+            .eq("user_id", uid)
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+
+    def _read_latest_analysis():
+        return (
+            client.table("ats_analyses")
+            .select("id,overall_score,status,created_at")
+            .eq("user_id", uid)
+            .eq("status", "completed")
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+
+    with ThreadPoolExecutor(max_workers=8, thread_name_prefix="bootstrap") as executor:
+        futures = {
+            "profile": executor.submit(_read_profile),
+            "active_resume": executor.submit(_read_active_resume),
+            "confirmed_resume": executor.submit(_read_confirmed_resume),
+            "latest_jd": executor.submit(_read_latest_jd),
+            "latest_analysis": executor.submit(_read_latest_analysis),
+            "recent_activity": executor.submit(list_recent_activity, client, user),
+            "latest_actions": executor.submit(_latest_actions, client, user),
+        }
+        profile = (futures["profile"].result().data or [{}])[0]
+        active_resume = futures["active_resume"].result().data or []
+        confirmed_resume = futures["confirmed_resume"].result()
+        latest_jd = futures["latest_jd"].result().data or []
+        latest_analysis = futures["latest_analysis"].result().data or []
+        recent_activity = futures["recent_activity"].result()
+        latest_actions = futures["latest_actions"].result()
+    def _count(table: str, *, deleted_only: bool = False, failed_only: bool = False) -> int:
+        query = client.table(table).select("*", count="exact", head=True).eq("user_id", uid)
+        if deleted_only:
             query = query.is_("deleted_at", "null")
-        counts[key] = query.execute().count or 0
-    failed_ats = (
-        client.table("ats_analyses")
-        .select("id", count="exact", head=True)
-        .eq("user_id", str(user.id))
-        .eq("status", "failed")
-        .execute()
-        .count
-        or 0
-    )
+        if failed_only:
+            query = query.eq("status", "failed")
+        return query.execute().count or 0
+
+    count_jobs = {
+        "resumes": ("resumes", True, False),
+        "ats_analyses": ("ats_analyses", False, False),
+        "interviews": ("interview_sessions", False, False),
+        "learning_paths": ("learning_paths", False, False),
+        "saved_jobs": ("saved_jobs", False, False),
+        "failed_ats": ("ats_analyses", False, True),
+    }
+    with ThreadPoolExecutor(max_workers=len(count_jobs), thread_name_prefix="bootstrap-count") as executor:
+        count_futures = {
+            key: executor.submit(_count, table, deleted_only=deleted_only, failed_only=failed_only)
+            for key, (table, deleted_only, failed_only) in count_jobs.items()
+        }
+        counts = {key: count_futures[key].result() for key in ("resumes", "ats_analyses", "interviews", "learning_paths", "saved_jobs")}
+        failed_ats = count_futures["failed_ats"].result()
     return {
         "profile": attach_avatar_url(profile, client, settings),
         "active_resume": active_resume[0] if active_resume else None,
@@ -526,6 +542,17 @@ def _latest_actions(client, user: CurrentUser) -> dict[str, Any]:
     uid = str(user.id)
     last_resume_upload = None
     try:
+        parents = (
+            client.table("resumes")
+            .select("id,title,deleted_at")
+            .eq("user_id", uid)
+            .is_("deleted_at", "null")
+            .limit(50)
+            .execute()
+            .data
+            or []
+        )
+        parent_by_id = {str(row.get("id")): row for row in parents}
         versions = (
             client.table("resume_versions")
             .select("id,resume_id,original_filename,created_at,source_type")
@@ -540,17 +567,7 @@ def _latest_actions(client, user: CurrentUser) -> dict[str, Any]:
             resume_id = row.get("resume_id")
             if not resume_id:
                 continue
-            parents = (
-                client.table("resumes")
-                .select("id,title,deleted_at")
-                .eq("id", str(resume_id))
-                .eq("user_id", uid)
-                .limit(1)
-                .execute()
-                .data
-                or []
-            )
-            parent = parents[0] if parents else {}
+            parent = parent_by_id.get(str(resume_id), {})
             if parent.get("deleted_at"):
                 continue
             last_resume_upload = {

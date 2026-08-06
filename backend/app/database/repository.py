@@ -70,7 +70,6 @@ def list_recent_activity(
     *,
     limit: int = MAX_ACTIVITY_EVENTS,
 ) -> list[dict[str, Any]]:
-    prune_activity_events(client, user, keep=MAX_ACTIVITY_EVENTS)
     fetch_limit = min(max(limit, 0), MAX_ACTIVITY_EVENTS)
     if fetch_limit == 0:
         return []

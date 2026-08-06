@@ -1,9 +1,9 @@
 from app.features.ats.ats_score import (
     ALGORITHM_VERSION,
+    _candidate_terms,
     ats_source_fingerprint,
     evidence_match_status,
     score_resume,
-    _candidate_terms,
 )
 
 

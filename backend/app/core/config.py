@@ -19,8 +19,6 @@ class Settings(BaseSettings):
     firebase_project_id: str = ""
     firebase_database_id: str = "(default)"
     firebase_credentials_path: str = ""
-    # GCS bucket for Firebase Storage, e.g. your-project.appspot.com
-    firebase_storage_bucket: str = ""
     # Supabase Storage is the only production object-storage provider.
     supabase_url: str = ""
     supabase_service_role_key: str = ""
@@ -123,24 +121,11 @@ class Settings(BaseSettings):
         return bool(self.firebase_project_id and self.firebase_credentials_path)
 
     @property
-    def resolved_firebase_storage_bucket(self) -> str:
-        """GCS bucket name for Firebase Storage (documents, avatars, exports)."""
-        explicit = (self.firebase_storage_bucket or "").strip()
-        if explicit:
-            return explicit
-        project = (self.firebase_project_id or "").strip()
-        return f"{project}.appspot.com" if project else ""
-
-    @property
     def resolved_supabase_url(self) -> str:
         value = (self.supabase_url or "").strip().rstrip("/")
         if value.endswith("/rest/v1"):
             return value[: -len("/rest/v1")]
         return value
-
-    @property
-    def firebase_storage_configured(self) -> bool:
-        return bool(self.firebase_configured and self.resolved_firebase_storage_bucket)
 
     @property
     def supabase_storage_configured(self) -> bool:

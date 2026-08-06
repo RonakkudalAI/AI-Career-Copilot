@@ -50,7 +50,7 @@ def _safe_object_key(name: str) -> str:
     return cleaned
 
 
-class FirebaseStorageObject:
+class _LegacyFirebaseStorageObject:
     """Object store backed by Firebase Storage (GCS) under a logical bucket prefix."""
 
     def __init__(self, settings: Settings, logical_bucket: str):
@@ -276,7 +276,7 @@ class ObjectStorage:
         self.settings = settings
         self._memory = str(settings.app_env).lower() == "test"
 
-    def from_(self, bucket: str) -> FirebaseStorageObject | SupabaseStorageObject | MemoryStorageObject:
+    def from_(self, bucket: str) -> SupabaseStorageObject | MemoryStorageObject:
         if self._memory:
             return MemoryStorageObject(self.settings, bucket)
         if self.settings.supabase_storage_configured:
@@ -494,9 +494,6 @@ def firebase_admin_app(settings: Settings):
         raise RuntimeError("Firebase project mismatch between FIREBASE_PROJECT_ID and service-account credentials")
     app_name = f"career-copilot-{settings.firebase_project_id}-{settings.firebase_database_id}"
     options: dict[str, str] = {"projectId": settings.firebase_project_id}
-    storage_bucket = settings.resolved_firebase_storage_bucket
-    if storage_bucket:
-        options["storageBucket"] = storage_bucket
     try:
         return firebase_admin.get_app(app_name)
     except ValueError:
