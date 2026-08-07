@@ -199,7 +199,7 @@ def auth_resend():
     raise ApiError(
         503,
         "email_delivery_not_configured",
-        "Email verification is not enabled. Sign in with the account credentials you created.",
+        "Email verification delivery is not configured. Sign in with the account credentials you created.",
     )
 
 

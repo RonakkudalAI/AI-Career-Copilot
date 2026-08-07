@@ -66,6 +66,7 @@ class GroqClient:
             "base_url": route["base_url"] or None,
             "tasks": [
                 "interview_questions",
+                "interview_evaluation",
                 "ats_improvement_brief",
                 "learning_youtube_path",
                 "resume_improvement",

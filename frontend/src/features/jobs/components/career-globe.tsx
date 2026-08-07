@@ -5,7 +5,14 @@ import { isWebGLAvailable, projectGlobePoint } from "./globe-utils";
 export type GlobeJobPin = {
   id: string;
   title: string;
-  company?: string;
+  company: string;
+  location?: string | null;
+  work_mode?: string | null;
+  description?: string | null;
+  requirements?: string[];
+  application_url?: string | null;
+  salary_min?: number | null;
+  salary_max?: number | null;
   latitude: number;
   longitude: number;
 };
@@ -18,6 +25,7 @@ export default function CareerGlobe({ jobs = [] }: { jobs?: GlobeJobPin[] }) {
   const anglesRef = useRef({ phi: 0, theta: 0.2 });
   const [webgl, setWebgl] = useState(true);
   const [angles, setAngles] = useState({ phi: 0, theta: 0.2 });
+  const [hoveredJobId, setHoveredJobId] = useState<string | null>(null);
 
   const markers = useMemo(
     () =>
@@ -29,7 +37,7 @@ export default function CareerGlobe({ jobs = [] }: { jobs?: GlobeJobPin[] }) {
             typeof job.longitude === "number" &&
             Number.isFinite(job.longitude),
         )
-        .slice(0, 40)
+        .slice(0, 12)
         .map((job) => ({
           location: [job.latitude, job.longitude] as [number, number],
           size: 0.05,
@@ -55,6 +63,7 @@ export default function CareerGlobe({ jobs = [] }: { jobs?: GlobeJobPin[] }) {
         .filter((job) => job.visible),
     [jobs, angles.phi, angles.theta],
   );
+  const hoveredJob = projected.find((job) => job.id === hoveredJobId) || null;
 
   useEffect(() => {
     if (!isWebGLAvailable()) {
@@ -165,17 +174,56 @@ export default function CareerGlobe({ jobs = [] }: { jobs?: GlobeJobPin[] }) {
         ref={canvasRef}
         style={{ width: "100%", height: "100%", maxWidth: 520, aspectRatio: "1 / 1", display: "block", margin: "0 auto" }}
       />
-      <div className="globe-labels" aria-hidden>
+      <div className="globe-labels">
         {projected.map((job) => (
-          <span
+          <button
             key={job.id}
-            className="globe-label"
+            type="button"
+            className="globe-pin"
             style={{ left: `${job.x}%`, top: `${job.y}%`, opacity: job.depth > 0 ? 1 : 0.4 }}
-          >
-            {job.title}
-          </span>
+            aria-label={`Show details for ${job.title} at ${job.company}`}
+            onMouseEnter={() => setHoveredJobId(job.id)}
+            onMouseLeave={() => setHoveredJobId(null)}
+            onFocus={() => setHoveredJobId(job.id)}
+            onBlur={() => setHoveredJobId(null)}
+          />
         ))}
       </div>
+      {hoveredJob ? (
+        <div
+          className="globe-job-preview"
+          role="status"
+          onMouseEnter={() => setHoveredJobId(hoveredJob.id)}
+          onMouseLeave={() => setHoveredJobId(null)}
+        >
+          <strong>{hoveredJob.title}</strong>
+          <span>{hoveredJob.company}</span>
+          {hoveredJob.location ? <span>{hoveredJob.location}</span> : null}
+          {hoveredJob.work_mode ? <span>{hoveredJob.work_mode}</span> : null}
+          {hoveredJob.salary_min || hoveredJob.salary_max ? (
+            <span>
+              {hoveredJob.salary_min && hoveredJob.salary_max
+                ? `$${hoveredJob.salary_min.toLocaleString()} – $${hoveredJob.salary_max.toLocaleString()}`
+                : hoveredJob.salary_min
+                  ? `From $${hoveredJob.salary_min.toLocaleString()}`
+                  : `Up to $${hoveredJob.salary_max?.toLocaleString()}`}
+            </span>
+          ) : null}
+          {hoveredJob.description ? <p>{hoveredJob.description}</p> : null}
+          {hoveredJob.requirements?.length ? (
+            <ul>
+              {hoveredJob.requirements.slice(0, 5).map((requirement) => (
+                <li key={requirement}>{requirement}</li>
+              ))}
+            </ul>
+          ) : null}
+          {hoveredJob.application_url ? (
+            <a href={hoveredJob.application_url} target="_blank" rel="noreferrer">
+              View full job
+            </a>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

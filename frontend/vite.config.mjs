@@ -8,7 +8,7 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, path.resolve(frontendDir, ".."), "");
   const apiOrigin =
     env.PUBLIC_API_BASE_URL ||
-    `http://127.0.0.1:${env.BACKEND_PORT || process.env.BACKEND_PORT || 8000}`;
+    `http://127.0.0.1:${env.BACKEND_PORT || 8000}`;
   return {
     plugins: [react()],
 

@@ -1,9 +1,19 @@
-import { useLocation, useNavigate } from "react-router-dom";
+import { useLocation } from "react-router-dom";
 import { Link } from "@/shared/ui/router-link";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { BookOpenCheck, BriefcaseBusiness, FileSearch, Gauge, Menu, Mic2, PanelLeftClose, PanelLeftOpen, Settings, X } from "lucide-react";
+import {
+  BookOpenCheck,
+  BriefcaseBusiness,
+  FileSearch,
+  Gauge,
+  Menu,
+  Mic2,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Settings,
+  X,
+} from "lucide-react";
 import { routes } from "@/shared/routes";
-import { createClient } from "@/features/auth/api/client";
 import { apiRequest } from "@/shared/api/client";
 import { ProfileCompletionToast } from "@/features/profile/components/profile-completion-toast";
 import {
@@ -14,7 +24,6 @@ import {
   type ProfileUpdatedDetail,
 } from "@/features/profile/model/profile-completion";
 import { isDemoSession } from "@/features/auth/demo-session";
-import { DEMO_COOKIE_NAME } from "@/shared/config";
 
 const navigation = [
   { href: routes.dashboard, label: "Dashboard", icon: Gauge },
@@ -67,14 +76,11 @@ function subscribeDemoMode() {
 
 export function WorkspaceShell({ children }: { children: React.ReactNode }) {
   const { pathname } = useLocation();
-  const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
-  const [profileMenu, setProfileMenu] = useState(false);
   const [bootstrap, setBootstrap] = useState<Bootstrap | null>(null);
   const [failedAvatarUrl, setFailedAvatarUrl] = useState<string | null>(null);
   const demoMode = useSyncExternalStore(subscribeDemoMode, readDemoMode, () => false);
-  // Live score from last profile mutation (server payload) until bootstrap catches up.
   const [liveCompletion, setLiveCompletion] = useState<{
     completion: number;
     missing: ProfileMissingItem[];
@@ -87,24 +93,21 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
     const gen = ++fetchGen.current;
     apiRequest<Bootstrap>("/me/bootstrap")
       .then((data) => {
-        if (gen !== fetchGen.current) return; // ignore stale responses
+        if (gen !== fetchGen.current) return;
         setBootstrap(data);
         setLiveCompletion(null);
       })
       .catch((err: Error) => {
         if (gen !== fetchGen.current) return;
         setBootstrap(null);
-        // Surface once in console for diagnosis; dashboard shows the user-facing error.
         console.warn("[workspace] bootstrap failed:", err?.message || err);
       });
   }, []);
 
-  // Initial load once per shell mount.
   useEffect(() => {
     loadBootstrap();
   }, [loadBootstrap]);
 
-  // Keep toast/completion in sync after profile mutations.
   useEffect(() => {
     function onProfileUpdated(event: Event) {
       const detail = (event as CustomEvent<ProfileUpdatedDetail>).detail;
@@ -119,14 +122,12 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
         const completion = resolveCompletion(detail.profile_completion, details, missing);
         setLiveCompletion({ completion, missing });
       }
-      // Re-fetch bootstrap so percentage matches authoritative server recalculation.
       loadBootstrap();
     }
     window.addEventListener(PROFILE_UPDATED_EVENT, onProfileUpdated);
     return () => window.removeEventListener(PROFILE_UPDATED_EVENT, onProfileUpdated);
   }, [loadBootstrap]);
 
-  // When leaving Settings, refresh once so UI matches latest server score.
   const prevPathRef = useRef(pathname);
   useEffect(() => {
     const prev = prevPathRef.current;
@@ -143,28 +144,6 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
     };
   }, [open]);
 
-  // Close profile menu on outside click or Escape.
-  useEffect(() => {
-    if (!profileMenu) return;
-    function onPointerDown(event: MouseEvent | PointerEvent) {
-      const target = event.target as Node | null;
-      const wrap = document.querySelector(".profile-menu-wrap");
-      if (wrap && target && !wrap.contains(target)) {
-        setProfileMenu(false);
-      }
-    }
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") setProfileMenu(false);
-    }
-    document.addEventListener("pointerdown", onPointerDown);
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", onPointerDown);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [profileMenu]);
-
-  // Close mobile sidebar on Escape.
   useEffect(() => {
     if (!open) return;
     function onKeyDown(event: KeyboardEvent) {
@@ -174,19 +153,9 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [open]);
 
-  async function logout() {
-    if (demoMode) {
-      document.cookie = `${DEMO_COOKIE_NAME}=; Max-Age=0; Path=/; SameSite=Lax`;
-      navigate("/");
-
-      return;
-    }
-    await createClient()?.auth.signOut();
-    navigate("/");
-
-  }
-
-  const initials = (bootstrap?.profile?.full_name || "User")
+  const fullName = bootstrap?.profile?.full_name || "Your account";
+  const firstName = fullName.split(" ")[0] || "You";
+  const initials = fullName
     .split(" ")
     .map((part) => part[0])
     .join("")
@@ -197,6 +166,9 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
   const fromBootstrap = completionFromBootstrap(bootstrap);
   const completion = liveCompletion?.completion ?? fromBootstrap.completion;
   const missing: ProfileMissingItem[] = liveCompletion?.missing ?? fromBootstrap.missing;
+  const activeNav =
+    navigation.find((item) => pathname === item.href || pathname.startsWith(`${item.href}/`))?.label ||
+    (pathname.startsWith("/settings") ? "Settings" : "Workspace");
 
   return (
     <div className={`workspace ${collapsed ? "sidebar-collapsed" : ""}`}>
@@ -208,96 +180,106 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
           onClick={() => setOpen(false)}
         />
       ) : null}
+
       <aside className={`sidebar ${open ? "open" : ""}`} aria-label="Workspace navigation">
-        <div className="row sidebar-header">
-          <Link className="brand" href="/" onClick={() => setOpen(false)} aria-label="Career Copilot home">
-            <span className="sidebar-brand-full">Career Copilot</span>
-            <span className="sidebar-brand-short" aria-hidden="true">CC</span>
-          </Link>
-          <button
-            type="button"
-            className="icon-button sidebar-collapse-button"
-            onClick={() => setCollapsed((current) => !current)}
-            aria-label={collapsed ? "Expand navigation" : "Collapse navigation"}
-            aria-expanded={!collapsed}
-          >
-            {collapsed ? <PanelLeftOpen size={19} aria-hidden /> : <PanelLeftClose size={19} aria-hidden />}
-          </button>
-          {open && (
-            <button type="button" className="icon-button" onClick={() => setOpen(false)} aria-label="Close navigation">
-              <X size={20} aria-hidden />
+        <div className="sidebar-top">
+          <div className="row sidebar-header">
+            <Link className="brand" href="/" onClick={() => setOpen(false)} aria-label="Career Copilot home">
+              <span className="sidebar-brand-full">Career Copilot</span>
+              <span className="sidebar-brand-short" aria-hidden="true">
+                CC
+              </span>
+            </Link>
+            <button
+              type="button"
+              className="icon-button sidebar-collapse-button"
+              onClick={() => setCollapsed((current) => !current)}
+              aria-label={collapsed ? "Expand navigation" : "Collapse navigation"}
+              aria-expanded={!collapsed}
+            >
+              {collapsed ? <PanelLeftOpen size={18} aria-hidden /> : <PanelLeftClose size={18} aria-hidden />}
             </button>
-          )}
+            {open ? (
+              <button type="button" className="icon-button" onClick={() => setOpen(false)} aria-label="Close navigation">
+                <X size={18} aria-hidden />
+              </button>
+            ) : null}
+          </div>
+
+          <nav className="sidebar-nav">
+            {navigation.map((item) => {
+              const Icon = item.icon;
+              const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  onClick={() => setOpen(false)}
+                  className={`sidebar-link ${active ? "active" : ""}`}
+                  aria-current={active ? "page" : undefined}
+                  title={item.label}
+                >
+                  <span className="sidebar-link-icon" aria-hidden>
+                    <Icon size={18} />
+                  </span>
+                  <span className="sidebar-link-label">{item.label}</span>
+                </Link>
+              );
+            })}
+          </nav>
         </div>
-        <nav className="sidebar-nav">
-          {navigation.map((item) => {
-            const Icon = item.icon;
-            const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                onClick={() => setOpen(false)}
-                className={`sidebar-link ${active ? "active" : ""}`}
-                aria-current={active ? "page" : undefined}
-              >
-                <Icon size={19} aria-hidden />
-                <span className="sidebar-link-label">{item.label}</span>
-              </Link>
-            );
-          })}
-        </nav>
+
+        <div className="sidebar-footer">
+          <Link
+            href="/settings/profile"
+            className="sidebar-profile-card"
+            onClick={() => setOpen(false)}
+            title="Open profile"
+          >
+            <span className="sidebar-profile-avatar" aria-hidden>
+              {avatarUrl ? (
+                <img
+                  src={avatarUrl}
+                  alt=""
+                  className="avatar-image"
+                  onError={() => setFailedAvatarUrl(avatarUrl)}
+                />
+              ) : (
+                initials
+              )}
+            </span>
+            <span className="sidebar-profile-meta">
+              <span className="sidebar-profile-name">{firstName}</span>
+              <span className="sidebar-profile-sub">{completion}% complete</span>
+            </span>
+          </Link>
+        </div>
       </aside>
+
       <div className="workspace-main">
         <header className="app-header">
-          <button
-            type="button"
-            className="icon-button mobile-sidebar-button"
-            onClick={() => setOpen(true)}
-            aria-label="Open navigation"
-            aria-expanded={open}
-          >
-            <Menu size={20} aria-hidden />
-          </button>
-          <strong className="app-header-title">Career Copilot</strong>
-          <div className="app-header-actions">
-            {demoMode && <span className="demo-banner">Demo preview · no account data</span>}
-            <div className="profile-menu-wrap">
-              <button
-                type="button"
-                className="avatar"
-                onClick={() => setProfileMenu((current) => !current)}
-                aria-label="Open profile menu"
-                aria-expanded={profileMenu}
-                aria-haspopup="menu"
-              >
-                {avatarUrl ? (
-                                    <img
-                    src={avatarUrl}
-                    alt=""
-                    className="avatar-image"
-                    onError={() => setFailedAvatarUrl(avatarUrl)}
-                  />
-                ) : (
-                  initials
-                )}
-              </button>
-              {profileMenu && (
-                <div className="panel stack profile-menu" role="menu">
-                  <Link role="menuitem" href="/settings/profile" onClick={() => setProfileMenu(false)}>
-                    View profile
-                  </Link>
-                  <Link role="menuitem" href="/settings/account" onClick={() => setProfileMenu(false)}>
-                    Account settings
-                  </Link>
-                  <button type="button" className="button button-secondary" role="menuitem" onClick={logout}>
-                    Logout
-                  </button>
-                </div>
-              )}
+          <div className="app-header-left">
+            <button
+              type="button"
+              className="icon-button mobile-sidebar-button"
+              onClick={() => setOpen(true)}
+              aria-label="Open navigation"
+              aria-expanded={open}
+            >
+              <Menu size={18} aria-hidden />
+            </button>
+            <div className="app-header-titles">
+              <strong className="app-header-title">{activeNav}</strong>
+              <span className="app-header-kicker">Career workspace</span>
             </div>
           </div>
+
+          <div className="app-header-actions">
+            {demoMode ? <span className="demo-banner">Demo · no account data</span> : null}
+
+          </div>
         </header>
+
         <main id="main-content" className="workspace-content">
           {children}
         </main>

@@ -13,17 +13,25 @@ import { Button, Input } from "@/shared/ui/primitives";
 function Shell({ children, title, description }: { children: React.ReactNode; title: string; description: string }) {
   return (
     <main id="main-content" className="auth-shell">
-      <aside className="auth-aside">
+      <aside className="auth-aside" aria-label="Product overview">
         <Link className="brand" href="/">
           Career Copilot
         </Link>
-        <div>
-          <p className="eyebrow">Your career workspace</p>
+        <div className="auth-aside-copy">
+          <p className="eyebrow">Private career workspace</p>
           <h1>{title}</h1>
           <p>{description}</p>
+          <ul className="auth-aside-points">
+            <li>Review every score against evidence you control</li>
+            <li>Practice interviews with a live transcript</li>
+            <li>See roles matched to your confirmed profile</li>
+          </ul>
         </div>
+        <p className="auth-aside-foot">Private by default · you review before reuse</p>
       </aside>
-      <section className="auth-main">{children}</section>
+      <section className="auth-main">
+        <div className="auth-main-inner">{children}</div>
+      </section>
     </main>
   );
 }
@@ -169,23 +177,22 @@ export function SignInScreen() {
             Resend verification email
           </Button>
         )}
-        <div className="row">
-          <span />
+        <div className="auth-forgot">
           <Link href="/forgot-password">Forgot password?</Link>
         </div>
         <Button disabled={busy} type="submit">
           {busy ? "Signing in…" : "Sign in"}
         </Button>
         <div className="auth-divider">or</div>
-        <div className="grid-2">
+        <div className="auth-oauth">
           <Button type="button" variant="secondary" disabled={busy} onClick={() => { setBusy(true); void oauth("google"); }}>
             Continue with Google
           </Button>
         </div>
-        <p>
+        <p className="auth-switch">
           New here?{" "}
           <Link href="/sign-up">
-            <strong>Create an account</strong>
+            Create an account
           </Link>
         </p>
       </form>
@@ -273,8 +280,10 @@ export function SignUpScreen() {
         </div>
       ) : (
         <form className="auth-card panel stack" onSubmit={submit}>
-          <p className="eyebrow">Create account</p>
-          <h1>Get started</h1>
+          <div>
+            <p className="eyebrow">Create account</p>
+            <h1>Get started</h1>
+          </div>
           <label className="field-label">
             Full name
             <Input required minLength={2} value={name} onChange={(e: any) => setName(e.target.value)} />
@@ -312,10 +321,10 @@ export function SignUpScreen() {
           <Button disabled={busy} type="submit">
             {busy ? "Creating account…" : "Create account"}
           </Button>
-          <p>
+          <p className="auth-switch">
             Already registered?{" "}
             <Link href="/sign-in">
-              <strong>Sign in</strong>
+              Sign in
             </Link>
           </p>
         </form>
@@ -341,11 +350,9 @@ export function VerifyEmailScreen() {
 
 export function PasswordScreen({ reset = false }: { reset?: boolean }) {
   const navigate = useNavigate();
-  const [email, setEmail] = useState("");
   const [currentPassword, setCurrentPassword] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
-  const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -353,23 +360,15 @@ export function PasswordScreen({ reset = false }: { reset?: boolean }) {
     if (!authClient) return setError(configurationError());
     setError("");
     try {
-      if (reset) {
-        if (password !== confirm) return setError("Passwords do not match.");
-        if (!currentPassword.trim()) return setError("Enter your current password.");
-        const result = await authClient.auth.updateUser({
-          password,
-          current_password: currentPassword,
-        });
-        if (result.error) return setError(authErrorMessage(result.error.message));
-        navigate("/dashboard");
-
-      } else {
-        const result = await authClient.auth.resetPasswordForEmail(email.trim(), {
-          redirectTo: `${location.origin}/auth/callback?next=/reset-password`,
-        });
-        if (result.error) return setError(authErrorMessage(result.error.message));
-        setMessage("If the address is registered, a recovery link has been sent.");
-      }
+      if (!reset) return;
+      if (password !== confirm) return setError("Passwords do not match.");
+      if (!currentPassword.trim()) return setError("Enter your current password.");
+      const result = await authClient.auth.updateUser({
+        password,
+        current_password: currentPassword,
+      });
+      if (result.error) return setError(authErrorMessage(result.error.message));
+      navigate("/dashboard");
     } catch {
       setError("Could not reach authentication. Check your connection and try again.");
     }
@@ -384,7 +383,10 @@ export function PasswordScreen({ reset = false }: { reset?: boolean }) {
       }
     >
       <form className="auth-card panel stack" onSubmit={submit}>
-        <h1>{reset ? "Choose a new password" : "Reset your password"}</h1>
+        <div>
+          <p className="eyebrow">{reset ? "Account security" : "Account recovery"}</p>
+          <h1>{reset ? "Choose a new password" : "Reset your password"}</h1>
+        </div>
         {reset ? (
           <>
             <label className="field-label">
@@ -420,22 +422,25 @@ export function PasswordScreen({ reset = false }: { reset?: boolean }) {
             </label>
           </>
         ) : (
-          <label className="field-label">
-            Email
-            <Input type="email" required value={email} onChange={(e: any) => setEmail(e.target.value)} />
-          </label>
+          <p className="muted">
+            Password recovery email is not configured for this deployment. Sign in with your current password or
+            contact the workspace administrator.
+          </p>
         )}
         {error && (
           <p role="alert" className="field-error">
             {error}
           </p>
         )}
-        {message && (
-          <p role="status" className="badge badge-success">
-            {message}
+        <Button type={reset ? "submit" : "button"} disabled={!reset}>
+          {reset ? "Update password" : "Password recovery unavailable"}
+        </Button>
+        {!reset && (
+          <p className="auth-switch">
+            Remembered it?{" "}
+            <Link href="/sign-in">Sign in</Link>
           </p>
         )}
-        <Button type="submit">{reset ? "Update password" : "Send reset link"}</Button>
       </form>
     </Shell>
   );

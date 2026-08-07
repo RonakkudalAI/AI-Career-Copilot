@@ -21,6 +21,7 @@ type DemoState = {
   interviews: DemoRecord[];
   questions: DemoRecord[];
   responses: DemoRecord[];
+  reports: DemoRecord[];
   savedJobs: DemoRecord[];
   jobs: DemoRecord[];
   learningPaths: DemoRecord[];
@@ -94,6 +95,7 @@ function initialState(): DemoState {
     interviews: [],
     questions: [],
     responses: [],
+    reports: [],
     savedJobs: [],
     jobs: [
       { id: "demo-job-1", title: "Software Engineer", company: "Northstar Labs", location: "Bengaluru", work_mode: "hybrid", description: "Build dependable product experiences with a small engineering team.", is_active: true, latitude: 12.9716, longitude: 77.5946 },
@@ -510,22 +512,143 @@ export async function demoApiRequest<T>(path: string, init: RequestInit = {}): P
   if (parts[0] === "interviews" && parts[2] === "start" && method === "POST") {
     const session = state.interviews.find((item) => item.id === parts[1]);
     if (session) session.status = "in_progress";
+    const existingQuestions = state.questions.filter((item) => item.session_id === parts[1]);
+    if (existingQuestions.length) {
+      return { session, questions: existingQuestions, question_provider: "template" } as T;
+    }
     const count = Number(session?.question_count || 3);
     for (let index = 1; index <= count; index += 1) state.questions.push({ id: id("demo-question"), session_id: parts[1], position: index, question: `Tell me about a time you solved a challenging ${session?.target_role || "engineering"} problem.`, question_type: session?.mode || "mixed", source_context: { provider: "template" } });
     return { session, questions: state.questions.filter((item) => item.session_id === parts[1]), question_provider: "template" } as T;
   }
   if (parts[0] === "interviews" && parts[2] === "responses" && method === "POST") {
-    state.responses.push({ ...body, id: id("demo-response"), session_id: parts[1], user_id: DEMO_USER_ID });
-    return state.responses[state.responses.length - 1] as T;
+    const answer = String((body as DemoRecord)?.transcript || (body as DemoRecord)?.typed_response || "");
+    const fillers = (answer.toLowerCase().match(/\b(um|uh|like|you know)\b/g) || []).length;
+    const evaluation = {
+      verdict: answer.length > 80 ? "solid" : "partial",
+      score: Math.min(92, 40 + Math.floor(answer.length / 4) - fillers * 3),
+      interviewer_feedback:
+        "Demo interviewer: cover situation, action, and result more clearly. Reduce fillers if you used them.",
+      strengths: answer.length > 40 ? ["Enough detail to discuss"] : ["You responded"],
+      improvements: ["Add a measurable result", fillers ? "Cut filler words" : "Keep pauses intentional"],
+      better_approach: "Open with context, own the action, close with impact.",
+      filler_notes: fillers ? `Detected ~${fillers} common fillers in demo mode.` : "No common fillers detected (demo).",
+      filler_analysis: {
+        total_count: fillers,
+        unique: fillers ? ["um/uh/like/you know"] : [],
+        counts: fillers ? { filler: fillers } : {},
+        word_count: answer.split(/\s+/).filter(Boolean).length,
+        filler_rate: 0,
+        notes: fillers ? "Practice pausing instead of fillers." : "Clean delivery.",
+      },
+      provider: "demo",
+    };
+    const response = {
+      ...body,
+      id: id("demo-response"),
+      session_id: parts[1],
+      user_id: DEMO_USER_ID,
+      evaluation,
+      created_at: now(),
+    };
+    state.responses.push(response);
+    return { response, evaluation, question: state.questions.find((q) => q.id === (body as DemoRecord)?.question_id) } as T;
   }
   if (parts[0] === "interviews" && parts[2] === "complete" && method === "POST") {
     const session = state.interviews.find((item) => item.id === parts[1]);
     if (session) session.status = "completed";
-    return { session, report: null, message: "Demo session completed." } as T;
+    const sessionResponses = state.responses.filter((r) => r.session_id === parts[1]);
+    const report = {
+      id: id("demo-report"),
+      session_id: parts[1],
+      user_id: DEMO_USER_ID,
+      overall_score: 72,
+      communication_score: 70,
+      structure_score: 74,
+      content_score: 73,
+      summary: "Demo debrief: solid practice set. Focus on clearer results and fewer fillers.",
+      report: {
+        overall_summary: "Demo debrief: solid practice set. Focus on clearer results and fewer fillers.",
+        overall_score: 72,
+        communication_score: 70,
+        structure_score: 74,
+        content_score: 73,
+        strengths: ["Completed the demo questions", "Engaged with the prompt"],
+        improvements: ["Add measurable outcomes", "Tighten openings"],
+        practice_plan: ["Re-answer one question with STAR", "Record and count fillers"],
+        filler_summary: "Demo filler summary for this session.",
+        question_reviews: sessionResponses.map((r, index) => {
+          const evaluation = (r.evaluation || {}) as DemoRecord;
+          return {
+            question: state.questions.find((q) => q.id === r.question_id)?.question || `Question ${index + 1}`,
+            answer: r.transcript || r.typed_response || "",
+            score: evaluation.score,
+            verdict: evaluation.verdict,
+            interviewer_feedback: evaluation.interviewer_feedback,
+            strengths: (evaluation.strengths as string[]) || [],
+            improvements: (evaluation.improvements as string[]) || [],
+            better_approach: evaluation.better_approach,
+            filler_analysis: evaluation.filler_analysis,
+          };
+        }),
+        provider: "demo",
+      },
+      provider: "demo",
+    };
+    state.reports = state.reports.filter((item) => item.session_id !== parts[1]);
+    state.reports.push(report);
+    return { session, report, message: "Demo session completed with debrief report." } as T;
+  }
+  if (parts[0] === "interviews" && parts[2] === "report" && method === "GET") {
+    const session = state.interviews.find((item) => item.id === parts[1]);
+    const sessionResponses = state.responses.filter((r) => r.session_id === parts[1]);
+    if (!session) throw new Error("Session not found.");
+    if (session.status !== "completed") throw new Error("Complete the demo session before viewing its report.");
+    const storedReport = state.reports.find((item) => item.session_id === parts[1]);
+    if (storedReport) return { session, report: storedReport } as T;
+    return {
+      session,
+      report: {
+        id: id("demo-report"),
+        session_id: parts[1],
+        overall_score: 72,
+        communication_score: 70,
+        structure_score: 74,
+        content_score: 73,
+        summary: "Demo debrief report.",
+        report: {
+          overall_summary: "Demo debrief report for completed practice.",
+          overall_score: 72,
+          communication_score: 70,
+          structure_score: 74,
+          content_score: 73,
+          strengths: ["Completed answers"],
+          improvements: ["Add results"],
+          practice_plan: ["Practice STAR"],
+          filler_summary: "Demo filler summary.",
+          question_reviews: sessionResponses.map((r, index) => {
+            const evaluation = (r.evaluation || {}) as DemoRecord;
+            return {
+              question: state.questions.find((q) => q.id === r.question_id)?.question || `Question ${index + 1}`,
+              answer: r.transcript || r.typed_response || "",
+              score: evaluation.score ?? 70,
+              verdict: evaluation.verdict || "solid",
+              interviewer_feedback: evaluation.interviewer_feedback || "Demo feedback.",
+              strengths: (evaluation.strengths as string[]) || [],
+              improvements: (evaluation.improvements as string[]) || [],
+              better_approach: evaluation.better_approach,
+              filler_analysis: evaluation.filler_analysis,
+            };
+          }),
+          provider: "demo",
+        },
+      },
+    } as T;
   }
   if (parts[0] === "interviews" && parts.length === 2 && method === "DELETE") {
     state.interviews = state.interviews.filter((item) => item.id !== parts[1]);
     state.questions = state.questions.filter((item) => item.session_id !== parts[1]);
+    state.responses = state.responses.filter((item) => item.session_id !== parts[1]);
+    state.reports = state.reports.filter((item) => item.session_id !== parts[1]);
     return undefined as T;
   }
   if (path === "/jobs" && method === "GET") return state.jobs as T;

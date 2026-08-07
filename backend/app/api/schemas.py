@@ -98,13 +98,7 @@ class PreferencesUpdate(BaseModel):
     willing_to_relocate: bool = False
     work_authorization: str | None = Field(default=None, max_length=160)
     salary_min: float | None = Field(default=None, ge=0)
-    salary_max: float | None = Field(default=None, ge=0)
     salary_currency: str | None = Field(default=None, pattern=r"^[A-Z]{3}$")
-    @model_validator(mode="after")
-    def salary_order(self) -> "PreferencesUpdate":
-        if self.salary_min is not None and self.salary_max is not None and self.salary_min > self.salary_max:
-            raise ValueError("salary_min cannot exceed salary_max")
-        return self
 class JobDescriptionTextCreate(BaseModel):
     title: str | None = Field(default=None, max_length=200)
     company: str | None = Field(default=None, max_length=200)

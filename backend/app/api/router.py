@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import logging
+import threading
 import mimetypes
 import secrets
 import uuid
@@ -83,7 +84,11 @@ from app.features.document_parsing.service import (
     sha256_bytes,
     validate_document,
 )
-from app.features.interview.agent import generate_interview_questions
+from app.features.interview.agent import (
+    evaluate_interview_answer,
+    generate_interview_questions,
+    generate_interview_session_report,
+)
 from app.features.interview.preparation import generate_interview_preparation
 from app.features.learning.service import generate_learning_path_from_ats
 from app.features.profile.agent import build_profile_draft_enriched, profile_draft_response_payload
@@ -320,9 +325,10 @@ def bootstrap(
         },
         "capabilities": {
             "ats_scoring": True,
-            "interview_evaluation": False,
+            "interview_evaluation": True,
             "interview_questions": True,  # Groq when configured; templates otherwise
             "interview_questions_ai": settings.groq_configured,
+            "interview_evaluation_ai": settings.groq_configured,
             "resume_improvements": settings.nvidia_configured or settings.groq_configured,
             "profile_fill_ai": settings.nvidia_configured or settings.groq_configured,
             "ats_improvement_brief_ai": settings.nvidia_configured or settings.groq_configured,
@@ -654,7 +660,6 @@ async def upload_profile_avatar(
             "avatar_profile_update_failed",
             "The profile picture path could not be saved.",
         ) from exc
-
     if old_path and old_path != new_path:
         try:
             client.storage.from_(settings.avatar_bucket).remove([old_path])
@@ -710,7 +715,9 @@ def update_preferences(
 ):
     client = client_for(settings, user)
     result = client.table("candidate_preferences").upsert(
-        {"user_id": str(user.id), **payload.model_dump()}
+        # Clear the legacy field while keeping the public preference contract
+        # limited to a minimum salary.
+        {"user_id": str(user.id), "salary_max": None, **payload.model_dump()}
     ).execute().data or []
     if not result:
         raise ApiError(500, "preferences_save_failed", "Candidate preferences could not be saved.")
@@ -2342,7 +2349,19 @@ def list_suggestions(
 def list_interviews(
     user: CurrentUser = Depends(get_current_user), settings: Settings = Depends(get_settings)
 ):
-    return owned_rows(client_for(settings, user), "interview_sessions", user, "created_at")
+    """Return all interview sessions for the signed-in user, newest first.
+
+    Uses the same Firestore collection and user filter as dashboard bootstrap
+    (`_latest_actions` / interview counts) so the mock-interview list stays
+    aligned with "Last mock interview" on the dashboard.
+    """
+    return owned_rows(
+        client_for(settings, user),
+        "interview_sessions",
+        user,
+        "created_at",
+        desc=True,
+    )
 
 
 @router.post("/interview-preparation")
@@ -2522,17 +2541,18 @@ async def start_interview(
 
 
 @router.post("/interviews/{session_id}/responses", status_code=201)
-def add_response(
+async def add_response(
     session_id: UUID,
     payload: InterviewResponseCreate,
     user: CurrentUser = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ):
+    """Store an answer and return interviewer-style feedback + filler analysis."""
     client = client_for(settings, user)
-    owned_row(client, "interview_sessions", session_id, user)
-    question = (
+    session = owned_row(client, "interview_sessions", session_id, user)
+    question_rows = (
         client.table("interview_questions")
-        .select("id")
+        .select("id,question,question_type,position")
         .eq("id", str(payload.question_id))
         .eq("session_id", str(session_id))
         .eq("user_id", str(user.id))
@@ -2541,24 +2561,155 @@ def add_response(
         .data
         or []
     )
-    if not question:
+    if not question_rows:
         raise ApiError(404, "question_not_found", "The question does not belong to this interview session.")
-    return (
-        client.table("interview_responses")
-        .insert({**payload.model_dump(mode="json"), "session_id": str(session_id), "user_id": str(user.id)})
-        .execute()
-        .data[0]
+    question = question_rows[0]
+    answer_text = (payload.transcript or payload.typed_response or "").strip()
+    evaluation = await evaluate_interview_answer(
+        settings,
+        question=str(question.get("question") or ""),
+        answer=answer_text,
+        question_type=question.get("question_type"),
+        target_role=session.get("target_role"),
+        mode=session.get("mode"),
     )
+    row = {
+        **payload.model_dump(mode="json"),
+        "session_id": str(session_id),
+        "user_id": str(user.id),
+        "created_at": utc_now(),
+        "evaluation": evaluation,
+        "score": evaluation.get("score"),
+        "verdict": evaluation.get("verdict"),
+        "filler_analysis": evaluation.get("filler_analysis") or {},
+    }
+    saved = client.table("interview_responses").insert(row).execute().data[0]
+    return {
+        "response": saved,
+        "evaluation": evaluation,
+        "question": {
+            "id": question.get("id"),
+            "position": question.get("position"),
+            "question": question.get("question"),
+            "question_type": question.get("question_type"),
+        },
+    }
+
+
+async def _create_interview_report(
+    client,
+    settings: Settings,
+    user: CurrentUser,
+    session_id: UUID,
+    session: dict[str, Any],
+) -> dict[str, Any]:
+    """Build and persist the latest report for a session.
+
+    This is shared by completion and the report read path so completed legacy
+    sessions without a report can be repaired on first view.
+    """
+    questions = (
+        client.table("interview_questions")
+        .select("id,position,question,question_type")
+        .eq("session_id", str(session_id))
+        .eq("user_id", str(user.id))
+        .order("position")
+        .execute()
+        .data
+        or []
+    )
+    responses = (
+        client.table("interview_responses")
+        .select("*")
+        .eq("session_id", str(session_id))
+        .eq("user_id", str(user.id))
+        .execute()
+        .data
+        or []
+    )
+    latest_by_q: dict[str, dict[str, Any]] = {}
+    for row in responses:
+        qid = str(row.get("question_id") or "")
+        if not qid:
+            continue
+        previous = latest_by_q.get(qid)
+        if previous is None or str(row.get("created_at") or "") >= str(previous.get("created_at") or ""):
+            latest_by_q[qid] = row
+
+    turns: list[dict[str, Any]] = []
+    for question in questions:
+        qid = str(question.get("id") or "")
+        response = latest_by_q.get(qid)
+        if not response:
+            continue
+        answer = (response.get("transcript") or response.get("typed_response") or "").strip()
+        evaluation = response.get("evaluation") or {}
+        if not evaluation and answer:
+            evaluation = await evaluate_interview_answer(
+                settings,
+                question=str(question.get("question") or ""),
+                answer=answer,
+                question_type=question.get("question_type"),
+                target_role=session.get("target_role"),
+                mode=session.get("mode"),
+            )
+        turns.append(
+            {
+                "question_id": qid,
+                "position": question.get("position"),
+                "question": question.get("question"),
+                "question_type": question.get("question_type"),
+                "answer": answer,
+                "evaluation": evaluation,
+            }
+        )
+
+    report_body = await generate_interview_session_report(
+        settings,
+        turns=turns,
+        target_role=session.get("target_role"),
+        mode=session.get("mode"),
+    )
+    report_row = {
+        "user_id": str(user.id),
+        "session_id": str(session_id),
+        "created_at": utc_now(),
+        "status": "ready",
+        "overall_score": report_body.get("overall_score"),
+        "communication_score": report_body.get("communication_score"),
+        "structure_score": report_body.get("structure_score"),
+        "content_score": report_body.get("content_score"),
+        "summary": report_body.get("overall_summary"),
+        "report": report_body,
+        "provider": report_body.get("provider"),
+        "model": report_body.get("model"),
+    }
+    existing_reports = (
+        client.table("interview_reports")
+        .select("id")
+        .eq("session_id", str(session_id))
+        .eq("user_id", str(user.id))
+        .execute()
+        .data
+        or []
+    )
+    for old in existing_reports:
+        if old.get("id"):
+            client.table("interview_reports").delete().eq("id", str(old["id"])).eq(
+                "user_id", str(user.id)
+            ).execute()
+    return client.table("interview_reports").insert(report_row).execute().data[0]
 
 
 @router.post("/interviews/{session_id}/complete")
-def complete_interview(
+async def complete_interview(
     session_id: UUID,
     user: CurrentUser = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ):
+    """Mark session complete and persist a detailed debrief report."""
     client = client_for(settings, user)
-    owned_row(client, "interview_sessions", session_id, user)
+    session = owned_row(client, "interview_sessions", session_id, user)
     result = (
         client.table("interview_sessions")
         .update({"status": "completed", "completed_at": utc_now()})
@@ -2567,19 +2718,50 @@ def complete_interview(
         .execute()
         .data[0]
     )
+    saved_report = await _create_interview_report(client, settings, user, session_id, session)
     write_activity(
         client,
         user,
         "interview_completed",
-        "Interview session completed",
+        "Interview session completed with debrief report",
         "interview_session",
         str(session_id),
     )
     return {
         "session": result,
-        "report": None,
-        "message": "No evaluator is configured; no report was generated.",
+        "report": saved_report,
+        "message": "Session completed. Review your detailed debrief report.",
     }
+
+
+@router.get("/interviews/{session_id}/report")
+async def get_interview_report(
+    session_id: UUID,
+    user: CurrentUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+):
+    client = client_for(settings, user)
+    session = owned_row(client, "interview_sessions", session_id, user)
+    rows = (
+        client.table("interview_reports")
+        .select("*")
+        .eq("session_id", str(session_id))
+        .eq("user_id", str(user.id))
+        .execute()
+        .data
+        or []
+    )
+    if not rows:
+        if session.get("status") != "completed":
+            raise ApiError(
+                404,
+                "report_not_found",
+                "No debrief report for this session yet. Complete the session to generate one.",
+            )
+        rows = [await _create_interview_report(client, settings, user, session_id, session)]
+    # Prefer newest by created_at when multiple exist.
+    rows = sort_rows_by_recency(rows, desc=True, preferred="created_at")
+    return {"session": session, "report": rows[0]}
 
 
 @router.get("/learning-paths")
@@ -2869,6 +3051,9 @@ _external_sync_lock = __import__("threading").Lock()
 _external_sync_last: dict[str, float] = {}
 _EXTERNAL_SYNC_COOLDOWN_SECONDS = 60.0
 
+_recommendation_generation_lock = threading.Lock()
+_recommendation_generation_by_user: dict[str, int] = {}
+
 
 @router.post("/jobs/external/sync")
 def sync_external_jobs(
@@ -3004,7 +3189,16 @@ def list_job_recommendations(
 ):
     client = client_for(settings, user)
     rows = owned_rows(client, "job_recommendations", user, "generated_at")
-    jobs = client.table("jobs").select("*").in_("id", [row["job_id"] for row in rows]).execute().data if rows else []
+    jobs = (
+        client.table("jobs")
+        .select("*")
+        .in_("id", [row["job_id"] for row in rows])
+        .eq("is_active", True)
+        .execute()
+        .data
+        if rows
+        else []
+    )
     by_id = {str(job["id"]): job for job in jobs}
     return [{**row, "job": by_id.get(str(row.get("job_id")))} for row in rows]
 
@@ -3017,6 +3211,10 @@ def generate_job_recommendations(
 ):
     """Score active local job records against the candidate's confirmed resume evidence."""
     client = client_for(settings, user)
+    user_key = str(user.id)
+    with _recommendation_generation_lock:
+        generation = _recommendation_generation_by_user.get(user_key, 0) + 1
+        _recommendation_generation_by_user[user_key] = generation
     if payload.resume_version_id:
         version = owned_row(client, "resume_versions", payload.resume_version_id, user)
         if version.get("extraction_status") != "confirmed":
@@ -3071,7 +3269,15 @@ def generate_job_recommendations(
         jobs = [
             job
             for job in jobs
-            if job.get("salary_max") is not None and float(job.get("salary_max") or 0) >= float(payload.salary_min)
+            if (
+                job.get("salary_max") is not None
+                and float(job.get("salary_max") or 0) >= float(payload.salary_min)
+            )
+            or (
+                job.get("salary_max") is None
+                and job.get("salary_min") is not None
+                and float(job.get("salary_min") or 0) >= float(payload.salary_min)
+            )
         ]
     ranked = sorted(
         (score_job(job, skills, evidence_text) for job in jobs),
@@ -3081,27 +3287,30 @@ def generate_job_recommendations(
     page = ranked[payload.offset : payload.offset + payload.limit]
     # Always clear prior recommendations for this resume version before writing a page
     # so offset>0 pagination cannot accumulate duplicate (user, resume, job) rows.
-    if payload.offset == 0:
-        client.table("job_recommendations").delete().eq("user_id", str(user.id)).eq(
-            "resume_version_id", str(version["id"])
-        ).execute()
     recommendations = []
-    for row in page:
-        job_id = str(row["job"]["id"])
-        # Upsert-like: remove any existing row for this job+resume then insert.
-        client.table("job_recommendations").delete().eq("user_id", str(user.id)).eq(
-            "resume_version_id", str(version["id"])
-        ).eq("job_id", job_id).execute()
-        stored = client.table("job_recommendations").insert({
-            "user_id": str(user.id),
-            "job_id": job_id,
-            "resume_version_id": str(version["id"]),
-            "match_score": row["match_score"],
-            "match_breakdown": row["match_breakdown"],
-            "evidence": row["evidence"],
-            "algorithm_version": CAREER_MATCH_ALGORITHM_VERSION,
-        }).execute().data[0]
-        recommendations.append({**stored, "job": row["job"]})
+    with _recommendation_generation_lock:
+        if _recommendation_generation_by_user.get(user_key) != generation:
+            recommendations = [{**row, "job": row["job"]} for row in page]
+        else:
+            if payload.offset == 0:
+                client.table("job_recommendations").delete().eq("user_id", str(user.id)).eq(
+                    "resume_version_id", str(version["id"])
+                ).execute()
+            for row in page:
+                job_id = str(row["job"]["id"])
+                client.table("job_recommendations").delete().eq("user_id", str(user.id)).eq(
+                    "resume_version_id", str(version["id"])
+                ).eq("job_id", job_id).execute()
+                stored = client.table("job_recommendations").insert({
+                    "user_id": str(user.id),
+                    "job_id": job_id,
+                    "resume_version_id": str(version["id"]),
+                    "match_score": row["match_score"],
+                    "match_breakdown": row["match_breakdown"],
+                    "evidence": row["evidence"],
+                    "algorithm_version": CAREER_MATCH_ALGORITHM_VERSION,
+                }).execute().data[0]
+                recommendations.append({**stored, "job": row["job"]})
     return {
         "resume_version_id": version["id"],
         "algorithm_version": CAREER_MATCH_ALGORITHM_VERSION,
@@ -3119,14 +3328,24 @@ def list_saved_jobs(
         client.table("saved_jobs")
         .select("*")
         .eq("user_id", str(user.id))
-        .order("saved_at", desc=True)
         .execute()
         .data
         or []
     )
+    rows.sort(
+        key=lambda row: str(row.get("updated_at") or row.get("saved_at") or ""),
+        reverse=True,
+    )
     job_ids = [str(row.get("job_id")) for row in rows if row.get("job_id")]
     jobs = (
-        client.table("jobs").select("*").in_("id", job_ids).execute().data if job_ids else []
+        client.table("jobs")
+        .select("*")
+        .in_("id", job_ids)
+        .eq("is_active", True)
+        .execute()
+        .data
+        if job_ids
+        else []
     )
     by_id = {str(job["id"]): job for job in (jobs or [])}
     return [{**row, "jobs": by_id.get(str(row.get("job_id")))} for row in rows]
@@ -3160,16 +3379,10 @@ def patch_saved_job(
     user: CurrentUser = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ):
-    result = (
-        client_for(settings, user)
-        .table("saved_jobs")
-        .update(payload.model_dump())
-        .eq("job_id", str(job_id))
-        .eq("user_id", str(user.id))
-        .execute()
-        .data
-        or []
-    )
+    client = client_for(settings, user)
+    result = client.table("saved_jobs").upsert(
+        {"user_id": str(user.id), "job_id": str(job_id), **payload.model_dump()}
+    ).execute().data or []
     if not result:
         raise ApiError(404, "saved_job_not_found", "The job is not saved to your account.")
     return result[0]
@@ -3180,8 +3393,9 @@ def unsave_job(
     job_id: UUID, user: CurrentUser = Depends(get_current_user), settings: Settings = Depends(get_settings)
 ):
     client = client_for(settings, user)
-    client.table("saved_jobs").delete().eq("job_id", str(job_id)).eq("user_id", str(user.id)).execute()
-    write_activity(client, user, "job_unsaved", "Job removed from saved jobs", "job", str(job_id))
+    result = client.table("saved_jobs").delete().eq("job_id", str(job_id)).eq("user_id", str(user.id)).execute()
+    if result.data:
+        write_activity(client, user, "job_unsaved", "Job removed from saved jobs", "job", str(job_id))
 
 
 @router.get("/settings")
@@ -3277,10 +3491,33 @@ def delete_account(
         )
         if user_rows:
             firebase_uid = str(user_rows[0].get("firebase_uid") or "").strip()
-    except Exception:
+    except Exception as exc:
         logger.exception("account_delete_firebase_uid_lookup_failed user_id=%s", user.id)
+        raise ApiError(
+            500,
+            "account_deletion_incomplete",
+            "The linked identity could not be verified. No local data was removed.",
+        ) from exc
 
     admin = database_client(settings)
+    # Remove the provider identity before deleting local records. If this fails,
+    # stop before destructive local deletion so the identity cannot resurrect a
+    # new account after a partial purge.
+    if firebase_uid and settings.firebase_configured:
+        try:
+            from firebase_admin import auth as firebase_auth
+
+            from app.database.client import firebase_admin_app
+
+            firebase_auth.delete_user(firebase_uid, app=firebase_admin_app(settings))
+        except Exception as exc:
+            logger.exception("account_delete_firebase_auth_failed user_id=%s", user.id)
+            raise ApiError(
+                500,
+                "account_deletion_incomplete",
+                "The linked identity provider account could not be deleted. No local data was removed.",
+            ) from exc
+
     # Fail closed: do not erase Firestore identity while storage blobs may remain.
     try:
         purge_user_storage(admin, settings, user, storage_paths)
@@ -3301,19 +3538,3 @@ def delete_account(
             "account_deletion_failed",
             "The account could not be deleted from the local database.",
         ) from exc
-
-    # Best-effort: remove the Firebase Auth identity so re-login cannot resurrect a
-    # half-deleted account. Failure here is logged only — Firestore is already gone.
-    if firebase_uid and settings.firebase_configured:
-        try:
-            from firebase_admin import auth as firebase_auth
-
-            from app.database.client import firebase_admin_app
-
-            firebase_auth.delete_user(firebase_uid, app=firebase_admin_app(settings))
-        except Exception:
-            logger.exception(
-                "account_delete_firebase_auth_failed user_id=%s firebase_uid=%s",
-                user.id,
-                firebase_uid,
-            )

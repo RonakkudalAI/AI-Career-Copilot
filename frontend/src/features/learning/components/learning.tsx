@@ -127,7 +127,7 @@ export function LearningHome() {
   }
 
   return (
-    <>
+    <div className="feature-page">
       <PageHeader
         eyebrow="Learning"
         title="Learning paths"
@@ -144,11 +144,9 @@ export function LearningHome() {
         }
       />
       {error && (
-        <Card>
-          <p role="alert" className="field-error">
-            {error}
-          </p>
-        </Card>
+        <div className="feature-alert" role="alert">
+          <p className="field-error">{error}</p>
+        </div>
       )}
       {paths.length === 0 && !error ? (
         <EmptyState
@@ -158,11 +156,13 @@ export function LearningHome() {
       ) : (
         <div className="grid-2">
           {paths.map((path) => (
-            <Card key={path.id}>
-              <div className="row">
+            <Card key={path.id} className="path-card">
+              <div className="entity-card-head">
                 <div>
-                  <span className="eyebrow">{path.status}</span>
-                  <h2>{path.title}</h2>
+                  <span className="status-chip" data-tone={path.progress_percentage === 100 ? "success" : "info"}>
+                    {(path.status || "active").replaceAll("_", " ")}
+                  </span>
+                  <h2 style={{ marginTop: 10 }}>{path.title}</h2>
                 </div>
                 <Badge variant={path.progress_percentage === 100 ? "default" : "secondary"}>
                   {path.progress_percentage}%
@@ -173,13 +173,13 @@ export function LearningHome() {
                   "Built from stored ATS evidence with free YouTube learning steps."}
               </p>
               <Progress value={path.progress_percentage} label="Path progress" />
-              <div className="cluster" style={{ marginTop: 12 }}>
+              <div className="cluster">
                 <Badge variant="secondary">YouTube steps</Badge>
                 {(path.items || []).length > 0 && (
                   <span className="muted">{path.items?.length} items</span>
                 )}
               </div>
-              <div className="cluster" style={{ marginTop: 12 }}>
+              <div className="entity-card-actions">
                 <Link className="button button-secondary" href={`/learning/${path.id}`}>
                   Open path & track progress
                 </Link>
@@ -197,7 +197,7 @@ export function LearningHome() {
           ))}
         </div>
       )}
-    </>
+    </div>
   );
 }
 

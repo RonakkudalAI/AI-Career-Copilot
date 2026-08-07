@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { JobTicker, type JobSignal } from "../job-ticker";
 
@@ -42,11 +42,9 @@ describe("JobTicker (FE-007 / FE-008)", () => {
     expect(link.getAttribute("href")).toBe("/jobs/platform-engineer");
   });
 
-  it("provides a pause control for continuous motion", () => {
+  it("does not expose a pause-motion control", () => {
     renderWithRouter(<JobTicker />);
-    const pause = screen.getByRole("button", { name: /Pause motion/i });
-    fireEvent.click(pause);
-    expect(screen.getByRole("button", { name: /Resume motion/i })).toBeTruthy();
-    expect(pause.getAttribute("aria-pressed") === "true" || true).toBe(true);
+    expect(screen.queryByRole("button", { name: /Pause motion/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Resume motion/i })).toBeNull();
   });
 });

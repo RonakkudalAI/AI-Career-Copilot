@@ -124,7 +124,7 @@ export function PageHeader({
         <h1>{title}</h1>
         <p>{description}</p>
       </div>
-      {action}
+      {action ? <div className="page-heading-actions">{action}</div> : null}
     </header>
   );
 }

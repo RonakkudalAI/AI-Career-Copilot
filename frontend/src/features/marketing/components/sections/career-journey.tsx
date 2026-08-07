@@ -20,17 +20,15 @@ export function CareerJourney() {
   });
 
   return (
-    <section className="section" ref={containerRef} style={{ position: "relative" }}>
+    <section className="section landing-section" ref={containerRef} style={{ position: "relative" }}>
       <ParallaxLayer speed={-0.1} zIndex={0}>
         <div className="container">
-          <p className="eyebrow" style={{ color: "var(--primary-strong)" }}>
-            Career Orbit
-          </p>
-          <h2>A connected journey, not isolated tools.</h2>
+          <p className="eyebrow">Career orbit</p>
+          <h2 className="landing-section-title">A connected journey, not isolated tools.</h2>
         </div>
       </ParallaxLayer>
 
-      <div className="container" style={{ position: "relative", marginTop: "64px", zIndex: 1 }}>
+      <div className="container" style={{ position: "relative", marginTop: "56px", zIndex: 1 }}>
         <div className="orbit-path" />
 
         {/* FE-005: progress line uses a stable class, not a motion.div selector hack */}

@@ -220,7 +220,6 @@ type PrefDraft = {
   notice_period_days: string;
   work_authorization: string;
   salary_min: string;
-  salary_max: string;
   salary_currency: string;
   willing_to_relocate: boolean;
 };
@@ -236,21 +235,25 @@ function Frame({
 }) {
   const path = usePathname();
   return (
-    <>
+    <div className="feature-page">
       <PageHeader eyebrow="Settings" title={title} description={description} />
-      <nav className="settings-nav">
-        {tabs.map(([href, label]) => (
-          <Link
-            key={href}
-            className={`button ${path === href ? "button-primary" : "button-secondary"}`}
-            href={href}
-          >
-            {label}
-          </Link>
-        ))}
+      <nav className="settings-nav" aria-label="Settings sections">
+        {tabs.map(([href, label]) => {
+          const active = path === href;
+          return (
+            <Link
+              key={href}
+              className={`button ${active ? "button-primary is-active" : "button-secondary"}`}
+              href={href}
+              aria-current={active ? "page" : undefined}
+            >
+              {label}
+            </Link>
+          );
+        })}
       </nav>
       {children}
-    </>
+    </div>
   );
 }
 
@@ -276,7 +279,6 @@ function emptyPreferences() {
     willing_to_relocate: false,
     work_authorization: "",
     salary_min: null as number | null,
-    salary_max: null as number | null,
     salary_currency: "",
   };
 }
@@ -291,7 +293,6 @@ function emptyPrefDraft(): PrefDraft {
     notice_period_days: "",
     work_authorization: "",
     salary_min: "",
-    salary_max: "",
     salary_currency: "",
     willing_to_relocate: false,
   };
@@ -307,7 +308,6 @@ function prefsToDraft(prefs: Record<string, any>): PrefDraft {
     notice_period_days: prefs.notice_period_days == null ? "" : String(prefs.notice_period_days),
     work_authorization: prefs.work_authorization || "",
     salary_min: prefs.salary_min == null ? "" : String(prefs.salary_min),
-    salary_max: prefs.salary_max == null ? "" : String(prefs.salary_max),
     salary_currency: prefs.salary_currency || "",
     willing_to_relocate: Boolean(prefs.willing_to_relocate),
   };
@@ -900,7 +900,6 @@ export function ProfileSettings() {
         willing_to_relocate: Boolean(prefDraft.willing_to_relocate),
         work_authorization: prefDraft.work_authorization || null,
         salary_min: prefDraft.salary_min === "" ? null : Number(prefDraft.salary_min),
-        salary_max: prefDraft.salary_max === "" ? null : Number(prefDraft.salary_max),
         salary_currency: prefDraft.salary_currency ? prefDraft.salary_currency.toUpperCase() : null,
       };
       if (payload.notice_period_days !== null && Number.isNaN(payload.notice_period_days)) {
@@ -908,9 +907,6 @@ export function ProfileSettings() {
       }
       if (payload.salary_min !== null && Number.isNaN(payload.salary_min)) {
         throw new Error("Minimum salary must be a number.");
-      }
-      if (payload.salary_max !== null && Number.isNaN(payload.salary_max)) {
-        throw new Error("Maximum salary must be a number.");
       }
       if (payload.salary_currency && !/^[A-Z]{3}$/.test(payload.salary_currency)) {
         throw new Error("Currency must be a 3-letter code such as INR or USD.");
@@ -1430,14 +1426,14 @@ export function ProfileSettings() {
             <p className="muted" style={{ margin: 0, fontSize: "var(--text-sm)" }}>
               JPEG, PNG, or WebP · maximum 3 MB. Stored privately in your account.
             </p>
-            <div className="row" style={{ justifyContent: "flex-start", gap: 16, alignItems: "center" }}>
+            <div className="profile-identity-row">
               <div className="profile-avatar-preview" aria-hidden={!form.avatar_url}>
                 {form.avatar_url ? (
-                                    <img
+                  <img
                     src={form.avatar_url}
                     alt=""
-                    width={88}
-                    height={88}
+                    width={96}
+                    height={96}
                     onError={() =>
                       setForm((current) => ({ ...current, avatar_path: null, avatar_url: null }))
                     }
@@ -1453,7 +1449,7 @@ export function ProfileSettings() {
                   </span>
                 )}
               </div>
-              <div className="stack" style={{ gap: 10, flex: 1 }}>
+              <div className="stack" style={{ gap: 10, flex: 1, minWidth: 200 }}>
                 <label className="field-label">
                   Upload photo
                   <Input
@@ -1467,12 +1463,16 @@ export function ProfileSettings() {
                     }}
                   />
                 </label>
-                <div className="cluster">
+                <div className="profile-identity-actions">
                   {form.avatar_path || form.avatar_url ? (
                     <Button type="button" variant="secondary" disabled={avatarBusy} onClick={() => void removeAvatar()}>
                       {avatarBusy ? "Working…" : "Remove picture"}
                     </Button>
-                  ) : null}
+                  ) : (
+                    <p className="muted" style={{ margin: 0, fontSize: "var(--text-sm)" }}>
+                      A clear headshot helps your workspace feel personal.
+                    </p>
+                  )}
                 </div>
               </div>
             </div>
@@ -1637,17 +1637,6 @@ export function ProfileSettings() {
                   value={prefDraft.salary_min}
                   onChange={(e: any) => setPrefDraft({ ...prefDraft, salary_min: e.target.value })}
                   placeholder="e.g. 600000"
-                />
-              </label>
-              <label className="field-label">
-                Maximum salary
-                <Input
-                  type="text"
-                  inputMode="decimal"
-                  autoComplete="off"
-                  value={prefDraft.salary_max}
-                  onChange={(e: any) => setPrefDraft({ ...prefDraft, salary_max: e.target.value })}
-                  placeholder="e.g. 1200000"
                 />
               </label>
             </div>
@@ -2050,18 +2039,6 @@ export function AccountSettings() {
 
   }
 
-  async function change() {
-    setError("");
-    setMessage("");
-    const email = prompt("Enter your account email to receive a recovery link");
-    if (!email) return;
-    const result = await createClient()?.auth.resetPasswordForEmail(email, {
-      redirectTo: `${location.origin}/auth/callback?next=/reset-password`,
-    });
-    if (result?.error) setError(result.error.message);
-    else setMessage("If that email is registered, a recovery link has been sent.");
-  }
-
   async function deleteAccount() {
     setError("");
     setMessage("");
@@ -2102,13 +2079,10 @@ export function AccountSettings() {
     (!accountEmail || confirmEmail.trim().toLowerCase() === accountEmail.toLowerCase());
 
   return (
-    <Frame title="Account & access" description="Sign-in and password recovery are managed securely for your account.">
+    <Frame title="Account & access" description="Manage your active session securely.">
       <Card className="stack">
         <h2 style={{ margin: 0 }}>Session</h2>
         <div className="cluster">
-          <Button variant="secondary" onClick={change}>
-            Send password recovery link
-          </Button>
           <Button variant="secondary" onClick={logout}>
             Logout
           </Button>

@@ -103,24 +103,18 @@ function ActionRow({
 }) {
   return (
     <div className="latest-action-row">
-      <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+      <div className="latest-action-main">
         <div style={{ minWidth: 0 }}>
-          <p className="mono" style={{ margin: "0 0 4px", opacity: 0.8 }}>
-            {label}
-          </p>
+          <p className="latest-action-label">{label}</p>
           {value ? (
-            href ? (
-              <Link href={href} style={{ fontWeight: 600 }}>
-                {value}
-              </Link>
-            ) : (
-              <p style={{ margin: 0, color: "var(--ink)", fontWeight: 600 }}>{value}</p>
-            )
+            <p className="latest-action-value">
+              {href ? <Link href={href}>{value}</Link> : value}
+            </p>
           ) : (
-            <p style={{ margin: 0 }}>{empty}</p>
+            <p className="latest-action-empty">{empty}</p>
           )}
         </div>
-        {value ? <span className="mono muted" style={{ whiteSpace: "nowrap", fontSize: "var(--text-xs)" }}>{formatWhen(when)}</span> : null}
+        {value ? <span className="latest-action-when">{formatWhen(when)}</span> : null}
       </div>
     </div>
   );
@@ -177,70 +171,121 @@ export function Dashboard() {
   const lastResume = actions?.last_resume_upload;
   const lastInterview = actions?.last_interview;
   const lastJob = actions?.last_job_applied;
+  const atsScore =
+    data?.latest_ats_analysis?.overall_score == null
+      ? null
+      : Math.round(Number(data.latest_ats_analysis.overall_score));
 
   return (
-    <>
+    <div className="feature-page">
       <PageHeader
         eyebrow="Career workspace"
         title={`Welcome, ${first}.`}
         description="A live snapshot of your profile, analyses, interviews, and recent activity."
         action={
-          <Link className="button button-primary" href="/resume-analysis?tab=upload">
-            New ATS analysis
-          </Link>
+          <>
+            <Link className="button button-secondary" href="/mock-interview">
+              Mock interviews
+            </Link>
+            <Link className="button button-primary" href="/resume-analysis?tab=upload">
+              New ATS analysis
+            </Link>
+          </>
         }
       />
+
       {demoMode && (
-        <Card>
-          <p className="eyebrow">Demo preview</p>
-          <p style={{ margin: 0 }}>
+        <div className="feature-alert" data-tone="info" role="status">
+          <p className="eyebrow" style={{ margin: 0 }}>
+            Demo preview
+          </p>
+          <p>
             Demo mode uses an in-memory API (not your Firestore account). Sign in with Google or email to load real
             resumes, ATS runs, and activity.
           </p>
-        </Card>
+        </div>
       )}
+
       {error && (
-        <Card>
-          <p role="alert" className="field-error">
-            {error}
-          </p>
-          {configHint && <p className="muted">{configHint}</p>}
-        </Card>
+        <div className="feature-alert" role="alert">
+          <p className="field-error">{error}</p>
+          {configHint ? <p className="muted">{configHint}</p> : null}
+        </div>
       )}
+
       {!data && !error && (
-        <Card>
-          <p style={{ margin: 0 }}>Loading account snapshot from the API…</p>
-        </Card>
+        <div className="feature-loading" aria-live="polite">
+          Loading account snapshot from the API…
+        </div>
       )}
-      <div className="grid-4">
-        <Card>
-          <span className="mono">Resumes</span>
+
+      <section className="dashboard-metrics" aria-label="Account metrics">
+        <article className="metric-card">
+          <p className="metric-card-label">Resumes</p>
           <div className="metric-value">{data?.counts?.resumes ?? "—"}</div>
-        </Card>
-        <Card>
-          <span className="mono">ATS analyses</span>
+          <p className="metric-card-note">
+            {data?.workspace?.has_confirmed_resume
+              ? "Confirmed resume on file"
+              : data
+                ? "Confirm a resume to unlock ATS"
+                : "—"}
+          </p>
+          <Link className="metric-card-link" href="/resume-analysis?tab=resumes">
+            Manage resumes
+          </Link>
+        </article>
+        <article className="metric-card">
+          <p className="metric-card-label">ATS analyses</p>
           <div className="metric-value">{data?.counts?.ats_analyses ?? "—"}</div>
-          <p>
-            {data?.latest_ats_analysis?.overall_score == null
+          <p className="metric-card-note">
+            {atsScore == null
               ? data
                 ? "No completed score yet"
                 : "—"
-              : `${Math.round(Number(data.latest_ats_analysis.overall_score))}% latest score`}
+              : `${atsScore}% latest score`}
           </p>
-        </Card>
-        <Card>
-          <span className="mono">Interviews</span>
+          {data?.latest_ats_analysis?.id ? (
+            <Link className="metric-card-link" href={`/resume-analysis/report/${data.latest_ats_analysis.id}`}>
+              Open latest report
+            </Link>
+          ) : (
+            <Link className="metric-card-link" href="/resume-analysis?tab=ats">
+              Run analysis
+            </Link>
+          )}
+        </article>
+        <article className="metric-card">
+          <p className="metric-card-label">Interviews</p>
           <div className="metric-value">{data?.counts?.interviews ?? "—"}</div>
-          <p>{data?.capabilities?.interview_evaluation === false ? "Practice mode" : "Your sessions"}</p>
-        </Card>
-        <Card>
-          <span className="mono">Saved jobs</span>
+          <p className="metric-card-note">
+            {data?.capabilities?.interview_evaluation === false ? "Practice mode" : "Your sessions"}
+          </p>
+          <Link className="metric-card-link" href="/mock-interview">
+            View sessions
+          </Link>
+        </article>
+        <article className="metric-card">
+          <p className="metric-card-label">Saved jobs</p>
           <div className="metric-value">{data?.counts?.saved_jobs ?? "—"}</div>
-          <p>Saved to your account</p>
-        </Card>
-      </div>
-      <div className={completion >= 100 ? "stack" : "grid-2"} style={{ marginTop: 28 }}>
-        <Card className={`stack completion-panel ${completion >= 100 ? "is-complete" : ""}`} aria-hidden={completion >= 100}>
+          <p className="metric-card-note">Saved to your account</p>
+          <Link className="metric-card-link" href="/jobs/saved">
+            Open saved jobs
+          </Link>
+        </article>
+      </section>
+
+      <section
+        className={`dashboard-main ${completion >= 100 ? "is-profile-complete" : ""}`}
+        aria-label="Profile and latest progress"
+      >
+        <Card
+          className={`dashboard-panel stack completion-panel ${completion >= 100 ? "is-complete" : ""}`}
+          aria-hidden={completion >= 100}
+        >
+          <div className="dashboard-panel-head">
+            <h2>Profile completion</h2>
+            <p className="muted">Finish the checklist so recommendations stay accurate.</p>
+          </div>
           <Progress value={completion} label="Profile completion" />
           {missing.length > 0 ? (
             <div className="stack" style={{ gap: 6 }}>
@@ -259,13 +304,16 @@ export function Dashboard() {
               ) : null}
             </div>
           ) : null}
-          <Link href="/settings/profile">Complete profile</Link>
+          <Link className="button button-secondary" href="/settings/profile" style={{ width: "fit-content" }}>
+            Complete profile
+          </Link>
         </Card>
-        <Card className="panel-blue stack">
-          <h2 style={{ margin: 0 }}>Latest progress</h2>
-          <p className="muted" style={{ margin: 0, fontSize: "var(--text-sm)" }}>
-            Your most recent resume, interview, and job action from saved records.
-          </p>
+
+        <Card className="dashboard-panel panel-blue stack">
+          <div className="dashboard-panel-head">
+            <h2>Latest progress</h2>
+            <p className="muted">Your most recent resume, interview, and job action from saved records.</p>
+          </div>
           <ActionRow
             label="Last resume uploaded"
             value={lastResume?.title || lastResume?.filename}
@@ -294,42 +342,34 @@ export function Dashboard() {
             empty="No job applications or saved jobs yet"
           />
           {data?.latest_ats_analysis?.id ? (
-            <p style={{ margin: 0 }}>
-              <Link href={`/resume-analysis/report/${data.latest_ats_analysis.id}`}>
-                Open latest ATS report
-                {data.latest_ats_analysis.overall_score != null
-                  ? ` (${Math.round(Number(data.latest_ats_analysis.overall_score))}%)`
-                  : ""}
-              </Link>
-            </p>
+            <Link className="dashboard-ats-link" href={`/resume-analysis/report/${data.latest_ats_analysis.id}`}>
+              Open latest ATS report
+              {atsScore != null ? ` (${atsScore}%)` : ""}
+            </Link>
           ) : null}
         </Card>
-      </div>
-      <Card className="stack activity-feed" style={{ marginTop: 28 }}>
-        <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline" }}>
-          <h2 style={{ margin: 0 }}>Recent activity</h2>
+      </section>
+
+      <Card className="stack activity-feed">
+        <div className="activity-feed-head">
+          <h2>Recent activity</h2>
           <span className="muted mono" style={{ fontSize: "var(--text-xs)" }}>
             Latest {activities.length}/5
           </span>
         </div>
         {activities.length === 0 ? (
-          <p style={{ margin: 0 }}>No saved activity yet. Profile and resume actions will appear here.</p>
+          <p className="feature-status">No saved activity yet. Profile and resume actions will appear here.</p>
         ) : (
           <div className="activity-list">
             {activities.map((item, index) => (
-              <div
-                className="activity-item row"
-                key={item.id}
-                data-age={index}
-                style={{ justifyContent: "space-between" }}
-              >
-                <span>{item.summary}</span>
-                <span className="mono">{formatWhen(item.created_at)}</span>
+              <div className="activity-item" key={item.id} data-age={index}>
+                <p className="activity-item-summary">{item.summary}</p>
+                <span className="activity-item-when">{formatWhen(item.created_at)}</span>
               </div>
             ))}
           </div>
         )}
       </Card>
-    </>
+    </div>
   );
 }

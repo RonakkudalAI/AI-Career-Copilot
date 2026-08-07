@@ -111,16 +111,9 @@ export function LandingPage() {
   }, []);
 
   return (
-    <>
+    <div className="landing-page">
       <nav
-        className={`marketing-nav ${scrolled ? "nav-scrolled" : ""}`}
-        style={{
-          position: "fixed",
-          width: "100%",
-          background: scrolled ? undefined : "transparent",
-          borderBottom: scrolled ? undefined : "none",
-          transition: "all 0.3s ease",
-        }}
+        className={`marketing-nav ${scrolled ? "nav-scrolled" : ""} ${open ? "nav-open" : ""}`}
         aria-label="Primary"
       >
         <div className="container nav-inner">
@@ -129,8 +122,8 @@ export function LandingPage() {
           </Link>
           <div className="nav-links">
             <a href="#journey">How it works</a>
-            <a href="#analysis">Resume Analysis</a>
-            <a href="#interview">Mock Interview</a>
+            <a href="#analysis">Resume analysis</a>
+            <a href="#interview">Mock interview</a>
             <Link href="/sign-in" className="button button-quiet">
               Sign in
             </Link>
@@ -168,10 +161,10 @@ export function LandingPage() {
             How it works
           </a>
           <a href="#analysis" onClick={closeDrawer}>
-            Resume Analysis
+            Resume analysis
           </a>
           <a href="#interview" onClick={closeDrawer}>
-            Mock Interview
+            Mock interview
           </a>
           <Link href="/sign-in" onClick={closeDrawer}>
             Sign in
@@ -185,27 +178,28 @@ export function LandingPage() {
       <main id="main-content">
         <section className="container landing-hero">
           <div className="hero-copy">
-            <h1 style={{ marginBottom: "24px", maxWidth: "100%" }}>
+            <p className="eyebrow hero-eyebrow">Evidence-led career ops</p>
+            <h1 className="hero-title">
               Navigate your career with evidence, not guesswork.
             </h1>
-            <p style={{ fontSize: "var(--text-lg)", marginBottom: "40px", maxWidth: "480px" }}>
+            <p className="hero-lede">
               Analyze your resume, understand your gaps, practice real interviews, build the right
               skills, and discover roles that match your progress.
             </p>
-            <div className="cluster">
-              <ButtonLink href="/sign-up">Start Your Career Journey</ButtonLink>
+            <div className="cluster hero-actions">
+              <ButtonLink href="/sign-up">Start your career journey</ButtonLink>
               <a href="#journey" className="button button-secondary">
-                Explore How It Works
+                See how it works
               </a>
             </div>
-            <p className="hero-note" style={{ marginTop: "32px" }}>
+            <p className="hero-note">
               <ShieldCheck size={16} aria-hidden />
               <span>
                 Your career profile evolves with every analysis, interview, and learning milestone.
               </span>
             </p>
           </div>
-          <div className="globe-frame">
+          <div className="globe-frame" aria-label="Interactive map of opportunities">
             <Suspense fallback={<div className="globe-loading" data-testid="mock-globe">Loading map...</div>}>
               <Globe />
             </Suspense>
@@ -232,28 +226,12 @@ export function LandingPage() {
           <LivingProfile />
         </div>
 
-        <section
-          className="section"
-          style={{
-            background: "var(--surface)",
-            borderTop: "1px solid var(--border)",
-            borderBottom: "1px solid var(--border)",
-          }}
-        >
-          <div className="container" style={{ textAlign: "center", maxWidth: "800px" }}>
+        <section className="section landing-outcomes">
+          <div className="container landing-outcomes-inner">
             <ParallaxLayer speed={0.05}>
+              <p className="eyebrow">What you gain</p>
               <h2>Meaningful outcomes.</h2>
-              <ul
-                style={{
-                  listStyle: "none",
-                  padding: 0,
-                  display: "grid",
-                  gap: "16px",
-                  fontSize: "var(--text-lg)",
-                  color: "var(--muted)",
-                  margin: "48px 0",
-                }}
-              >
+              <ul className="landing-outcome-list">
                 <li>Know why a role matches.</li>
                 <li>See which skills are actually missing.</li>
                 <li>Improve without inventing experience.</li>
@@ -264,82 +242,42 @@ export function LandingPage() {
           </div>
         </section>
 
-        <section
-          className="section"
-          style={{
-            padding: "160px 0",
-            textAlign: "center",
-            position: "relative",
-            overflow: "hidden",
-          }}
-        >
-          <div className="container" style={{ position: "relative", zIndex: 2 }}>
-            <h2 style={{ fontSize: "clamp(2rem, 4vw, 3rem)", marginBottom: "24px" }}>
+        <section className="section landing-cta">
+          <div className="container landing-cta-inner">
+            <h2 className="landing-cta-title">
               Your next role should not depend on guesswork.
             </h2>
-            <p style={{ fontSize: "var(--text-lg)", margin: "0 auto 48px", maxWidth: "600px" }}>
+            <p className="landing-cta-copy">
               Build a career profile that becomes more useful every time you analyze, practice,
               learn, and apply.
             </p>
-            <div className="cluster" style={{ justifyContent: "center" }}>
-              <ButtonLink href="/sign-up">Create Your Profile</ButtonLink>
+            <div className="cluster landing-cta-actions">
+              <ButtonLink href="/sign-up">Create your profile</ButtonLink>
               <ButtonLink href="/sign-in" className="button-secondary">
-                Sign In
+                Sign in
               </ButtonLink>
             </div>
           </div>
-
-          <div
-            style={{
-              position: "absolute",
-              top: "50%",
-              left: "50%",
-              transform: "translate(-50%, -50%)",
-              width: "min(800px, 90vw)",
-              height: "min(800px, 90vw)",
-              borderRadius: "50%",
-              border: "1px solid color-mix(in srgb, var(--primary-strong) 20%, transparent)",
-              zIndex: 1,
-              pointerEvents: "none",
-            }}
-            aria-hidden
-          >
-            <div
-              style={{
-                position: "absolute",
-                top: "50%",
-                left: "50%",
-                transform: "translate(-50%, -50%)",
-                width: "75%",
-                height: "75%",
-                borderRadius: "50%",
-                border: "1px solid color-mix(in srgb, var(--primary-strong) 15%, transparent)",
-              }}
-            />
-            <div
-              style={{
-                position: "absolute",
-                top: "50%",
-                left: "50%",
-                transform: "translate(-50%, -50%)",
-                width: "50%",
-                height: "50%",
-                borderRadius: "50%",
-                background: "color-mix(in srgb, var(--primary-strong) 5%, transparent)",
-              }}
-            />
+          <div className="landing-cta-rings" aria-hidden>
+            <span />
+            <span />
+            <span />
           </div>
         </section>
       </main>
       <footer className="footer">
-        <div className="container row">
-          <div className="brand">Career Copilot</div>
-          <div className="cluster">
+        <div className="container footer-inner">
+          <div>
+            <div className="brand">Career Copilot</div>
+            <p className="footer-tagline">Private career records. Evidence you can review.</p>
+          </div>
+          <div className="footer-links">
             <Link href="/sign-in">Sign in</Link>
             <Link href="/sign-up">Create account</Link>
+            <a href="#journey">How it works</a>
           </div>
         </div>
       </footer>
-    </>
+    </div>
   );
 }

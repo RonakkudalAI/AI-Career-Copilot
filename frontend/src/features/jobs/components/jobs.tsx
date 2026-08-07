@@ -94,10 +94,12 @@ export function JobsHome({ savedOnly = false }: { savedOnly?: boolean }) {
           setHasMore(newRecs.length === limit);
         }
       } catch (e) {
-        setError((e as Error).message);
+        if (sequence === requestSequence.current) setError((e as Error).message);
       } finally {
-        setIsLoading(false);
-        setIsLoadingMore(false);
+        if (sequence === requestSequence.current) {
+          setIsLoading(false);
+          setIsLoadingMore(false);
+        }
       }
     },
     [savedOnly, filterLocation, filterWorkMode, filterSalaryMin],
@@ -158,7 +160,6 @@ export function JobsHome({ savedOnly = false }: { savedOnly?: boolean }) {
     });
     if (selectedJob === jobId) setSelectedJob(null);
     try {
-      await apiRequest(`/saved-jobs/${jobId}`, { method: "POST" }).catch(() => undefined);
       await apiRequest(`/saved-jobs/${jobId}`, {
         method: "PATCH",
         body: JSON.stringify({ status: "dismissed" }),
@@ -186,8 +187,14 @@ export function JobsHome({ savedOnly = false }: { savedOnly?: boolean }) {
         .map((job) => ({
           id: job.id,
           title: job.title,
-          country: job.location || job.company,
           company: job.company,
+          location: job.location,
+          work_mode: job.work_mode,
+          description: job.description,
+          requirements: job.requirements,
+          application_url: job.application_url,
+          salary_min: job.salary_min,
+          salary_max: job.salary_max,
           latitude: job.latitude as number,
           longitude: job.longitude as number,
         })),
@@ -198,14 +205,14 @@ export function JobsHome({ savedOnly = false }: { savedOnly?: boolean }) {
   const selectedRec = recommendations.find((row) => row.job.id === selectedJob);
 
   return (
-    <>
+    <div className="feature-page">
       <PageHeader
         eyebrow="Jobs"
         title={savedOnly ? "Saved jobs" : "Job recommendations"}
         description="Recommendations are scored from confirmed resume evidence only."
       />
       {!savedOnly ? (
-        <div className="cluster" style={{ marginBottom: 16 }}>
+        <div className="filters-bar" role="search" aria-label="Filter job recommendations">
           <label className="field">
             <span className="field-label">Location</span>
             <input
@@ -238,17 +245,12 @@ export function JobsHome({ savedOnly = false }: { savedOnly?: boolean }) {
         </div>
       ) : null}
       {error ? (
-        <p role="alert" className="field-error">
-          {error}
-        </p>
+        <div className="feature-alert" role="alert">
+          <p className="field-error">{error}</p>
+        </div>
       ) : null}
       {globeJobs.length > 0 ? (
         <Card className="jobs-globe-card">
-          <div>
-            <span className="mono">Verified job locations</span>
-            <h2>Where opportunities are located</h2>
-            <p className="muted">Pins come only from job records with valid coordinates.</p>
-          </div>
           <div className="jobs-globe">
             <CareerGlobe jobs={globeJobs} />
           </div>
@@ -335,7 +337,7 @@ export function JobsHome({ savedOnly = false }: { savedOnly?: boolean }) {
           onDismiss={() => void dismissJob(selected.id)}
         />
       ) : null}
-    </>
+    </div>
   );
 }
 

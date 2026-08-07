@@ -8,6 +8,7 @@ export type InterviewTurnPhase =
   | "asking"
   | "listening"
   | "saving"
+  | "feedback"
   | "between"
   | "complete";
 

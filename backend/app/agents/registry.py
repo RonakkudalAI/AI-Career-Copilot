@@ -11,6 +11,7 @@ from app.features.resume_improvement.agents.crew import crew_capability, crew_ru
 AGENT_RESUME_IMPROVEMENT = "resume_improvement"
 AGENT_PROFILE_FILL = "profile_fill"
 AGENT_INTERVIEW_QUESTIONS = "interview_questions"
+AGENT_INTERVIEW_EVALUATION = "interview_evaluation"
 AGENT_ATS_IMPROVEMENT_BRIEF = "ats_improvement_brief"
 AGENT_RESUME_IMPROVEMENT_CREW = "resume_improvement_crew"
 AGENT_LEARNING_YOUTUBE_CREW = "learning_youtube_crew"
@@ -99,6 +100,21 @@ def list_agents(settings: Settings) -> list[dict[str, Any]]:
             "model": groq.get("model") if groq.get("configured") else None,
             "endpoint": "POST /api/v1/interviews/{session_id}/start",
             "fallback": "Local templates when Groq is unavailable (NVIDIA is never used here).",
+        },
+        {
+            "id": AGENT_INTERVIEW_EVALUATION,
+            "name": "Interview answer evaluation & debrief",
+            "description": (
+                "After each answer: interviewer feedback, strengths, better approach, filler-word "
+                "detection. On complete: full session report with Q&A review."
+            ),
+            "provider": "groq" if groq.get("configured") else "deterministic",
+            "prompt": "interview_answer_eval_v1.txt + interview_session_report_v1.txt",
+            "configured": True,
+            "ready": True,
+            "model": groq.get("model") if groq.get("configured") else None,
+            "endpoint": "POST /api/v1/interviews/{session_id}/responses | complete",
+            "fallback": "Heuristic scoring + filler detection when Groq is unavailable.",
         },
         {
             "id": AGENT_ATS_IMPROVEMENT_BRIEF,

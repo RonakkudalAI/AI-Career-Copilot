@@ -28,6 +28,14 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
         "app.features.interview.agent",
         "generate_interview_questions",
     ),
+    "evaluate_interview_answer": (
+        "app.features.interview.agent",
+        "evaluate_interview_answer",
+    ),
+    "generate_interview_session_report": (
+        "app.features.interview.agent",
+        "generate_interview_session_report",
+    ),
     "list_agents": ("app.agents.registry", "list_agents"),
     "profile_draft_response_payload": (
         "app.features.profile.agent",
@@ -57,6 +65,8 @@ __all__ = [
     "draft_counts",
     "generate_ats_improvement_brief",
     "generate_interview_questions",
+    "evaluate_interview_answer",
+    "generate_interview_session_report",
     "list_agents",
     "profile_draft_response_payload",
     "run_resume_improvement_crew",

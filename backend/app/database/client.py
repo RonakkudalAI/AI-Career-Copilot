@@ -425,12 +425,13 @@ class FirestoreQuery:
                 post_filters.append((operator, column, value))
                 continue
             query = query.where(filter=self.client.field_filter(column, operator, value))
-        for column, desc in self.orders:
-            query = query.order_by(column, direction=self.client.direction(desc))
+        # Firestore excludes documents that do not contain an ordered field.
+        # Several legacy records legitimately lack recency fields, so apply
+        # ordering after retrieval and keep missing values at the end.
         # Soft-delete (is_null_or_missing) is applied client-side. Never apply a
         # server-side limit before that filter — soft-deleted docs would consume
         # the window and hide live rows (e.g. the one active resume among many deleted).
-        if self.max_rows is not None and not post_filters:
+        if self.max_rows is not None and not post_filters and not self.orders:
             query = query.limit(self.max_rows)
         docs = list(query.stream())
         if post_filters:
@@ -446,8 +447,21 @@ class FirestoreQuery:
                 if ok:
                     kept.append(document)
             docs = kept
-            if self.max_rows is not None:
-                docs = docs[: self.max_rows]
+        for column, desc in reversed(self.orders):
+            present = []
+            missing = []
+            for document in docs:
+                value = (document.to_dict() or {}).get(column)
+                (missing if value is None else present).append(document)
+            present.sort(
+                key=lambda document: str((document.to_dict() or {}).get(column)),
+                reverse=desc,
+            )
+            docs = present + missing
+        if self.max_rows is not None and self.orders:
+            docs = docs[: self.max_rows]
+        elif self.max_rows is not None:
+            docs = docs[: self.max_rows]
         return docs
 
     def _project(self, document):

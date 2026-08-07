@@ -238,7 +238,7 @@ export function AnalysisHistory() {
   }, [searchParams]);
 
   return (
-    <>
+    <div className="feature-page">
       <PageHeader
         eyebrow="Resume analysis"
         title="Resume analysis"
@@ -247,28 +247,31 @@ export function AnalysisHistory() {
       <nav className="settings-nav" aria-label="Resume analysis sections">
         <button
           type="button"
-          className={`button ${tab === "ats" ? "button-primary" : "button-secondary"}`}
+          className={`button ${tab === "ats" ? "button-primary is-active" : "button-secondary"}`}
           onClick={() => setTab("ats")}
+          aria-current={tab === "ats" ? "page" : undefined}
         >
           ATS analyses
         </button>
         <button
           type="button"
-          className={`button ${tab === "resumes" ? "button-primary" : "button-secondary"}`}
+          className={`button ${tab === "resumes" ? "button-primary is-active" : "button-secondary"}`}
           onClick={() => setTab("resumes")}
+          aria-current={tab === "resumes" ? "page" : undefined}
         >
           Resumes
         </button>
         <button
           type="button"
-          className={`button ${tab === "upload" ? "button-primary" : "button-secondary"}`}
+          className={`button ${tab === "upload" ? "button-primary is-active" : "button-secondary"}`}
           onClick={() => setTab("upload")}
+          aria-current={tab === "upload" ? "page" : undefined}
         >
           New upload
         </button>
       </nav>
       {tab === "ats" ? <AtsHistoryList /> : tab === "resumes" ? <ResumeLibrary /> : <NewAnalysis embedded />}
-    </>
+    </div>
   );
 }
 
@@ -1358,12 +1361,6 @@ export function AtsReport() {
         {sectionGuidance.length > 0 ? <div className="stack" style={{ gap: 6 }}><strong>Section guidance</strong><ul style={{ margin: 0, paddingLeft: 18 }}>{sectionGuidance.map((item) => <li key={item}>{item}</li>)}</ul></div> : null}
         {doNotClaim.length > 0 ? <div className="stack" style={{ gap: 6 }}><strong>Evidence safeguards</strong><ul style={{ margin: 0, paddingLeft: 18 }}>{doNotClaim.map((item) => <li key={item}>{item}</li>)}</ul></div> : null}
 
-      </Card>
-      <Card>
-        <p className="muted">
-          Method: {analysis.summary?.method || "Keyword coverage"}. Score is the weighted share of JD requirements found
-          in your resume text (see <code>backend/app/features/ats/ats_score.py</code>).
-        </p>
       </Card>
     </div>
   );

@@ -68,12 +68,15 @@ def owned_rows(
     user: CurrentUser,
     order: str | None = None,
     *,
-    desc: bool = False,
+    desc: bool = True,
 ) -> list[dict[str, Any]]:
     """List user-owned rows.
 
     Ordering is applied in-process. Server-side ``order_by(created_at)`` is unsafe
     on Firestore when some legacy documents omit ``created_at`` (they vanish).
+
+    When ``order`` is set, default is newest-first (``desc=True``) so list pages
+    stay in sync with dashboard "latest" cards that also use recency sort.
     """
     rows = (
         client.table(table)

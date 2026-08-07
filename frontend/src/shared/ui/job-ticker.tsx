@@ -1,5 +1,5 @@
 
-import { useId, useState } from "react";
+import { useId } from "react";
 import { Link } from "@/shared/ui/router-link";
 
 export interface JobSignal {
@@ -22,7 +22,6 @@ const defaultJobs: JobSignal[] = [
 ];
 
 export function JobTicker({ jobs = defaultJobs }: { jobs?: JobSignal[] }) {
-  const [paused, setPaused] = useState(false);
   const headingId = useId();
   const mid = Math.ceil(jobs.length / 2);
   const row1Jobs = jobs.slice(0, mid);
@@ -31,37 +30,17 @@ export function JobTicker({ jobs = defaultJobs }: { jobs?: JobSignal[] }) {
   return (
     <section className="job-ticker-section section" aria-labelledby={headingId}>
       <div className="container">
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: "16px",
-            flexWrap: "wrap",
-            marginBottom: "32px",
-          }}
+        <h2
+          id={headingId}
+          className="text-center"
+          style={{ fontSize: "var(--text-lg)", margin: "0 0 32px", textAlign: "center" }}
         >
-          <h2
-            id={headingId}
-            className="text-center"
-            style={{ fontSize: "var(--text-lg)", margin: 0, textAlign: "center" }}
-          >
-            Illustrative global roles — opportunity patterns, not live openings.
-          </h2>
-          <button
-            type="button"
-            className="button button-secondary"
-            onClick={() => setPaused((p) => !p)}
-            aria-pressed={paused}
-            style={{ minHeight: 36, padding: "6px 12px", fontSize: "var(--text-xs)" }}
-          >
-            {paused ? "Resume motion" : "Pause motion"}
-          </button>
-        </div>
+          Illustrative global roles — opportunity patterns, not live openings.
+        </h2>
       </div>
 
       <div
-        className={`ticker-container${paused ? " is-paused" : ""}`}
+        className="ticker-container"
         style={{ overflow: "hidden", display: "grid", gap: "16px", padding: "10px 0" }}
         aria-label="Illustrative global roles carousel"
       >
@@ -81,7 +60,6 @@ export function JobTicker({ jobs = defaultJobs }: { jobs?: JobSignal[] }) {
           animation: slide-right 40s linear infinite;
           transform: translateX(-50%);
         }
-        .ticker-container.is-paused .ticker-row,
         .ticker-row:hover,
         .ticker-row:focus-within {
           animation-play-state: paused;

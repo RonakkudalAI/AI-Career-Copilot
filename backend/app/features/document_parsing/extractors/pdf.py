@@ -19,6 +19,7 @@ def parse_pdf_to_blocks(content: bytes) -> list[SourceBlock]:
     through.
     """
     errors: list[str] = []
+    empty_result = False
 
     for name, runner in (
         ("pymupdf", _try_fitz),
@@ -26,7 +27,12 @@ def parse_pdf_to_blocks(content: bytes) -> list[SourceBlock]:
         ("pypdf", _parse_pdf_pypdf),
     ):
         try:
-            return runner(content)
+            blocks = runner(content)
+            if blocks:
+                return blocks
+            empty_result = True
+            errors.append(f"{name}: no text blocks returned")
+            logger.warning("pdf_backend_empty backend=%s", name)
         except ApiError as exc:
             if exc.code == "encrypted_pdf":
                 raise
@@ -35,11 +41,13 @@ def parse_pdf_to_blocks(content: bytes) -> list[SourceBlock]:
         except ImportError:
             continue
         except Exception as exc:
-            errors.append(f"{name}: {exc}")
+            errors.append(f"{name}: extractor failed")
             logger.warning("pdf_backend_failed backend=%s error=%s", name, exc)
 
     detail = "; ".join(errors) if errors else "no PDF backend available"
-    raise ApiError(400, "pdf_parse_failed", f"Failed to parse PDF document: {detail}")
+    if empty_result:
+        return []
+    raise ApiError(400, "pdf_parse_failed", f"Failed to parse PDF document: {detail[:500]}")
 
 
 def _try_fitz(content: bytes) -> list[SourceBlock]:
@@ -119,7 +127,7 @@ def _parse_pdf_fitz(content: bytes) -> list[SourceBlock]:
         if "encrypted" in str(exc).lower() or "password" in str(exc).lower():
             raise ApiError(400, "encrypted_pdf", "Password-protected PDFs are not supported.") from exc
         logger.error("fitz parsing failed: %s", exc)
-        raise ApiError(400, "pdf_parse_failed", f"Failed to parse PDF document: {exc}") from exc
+        raise ApiError(400, "pdf_parse_failed", "Failed to parse PDF document with this extractor.") from exc
 
     return blocks
 
@@ -171,7 +179,7 @@ def _parse_pdf_pdfplumber(content: bytes) -> list[SourceBlock]:
         if "encrypted" in exc_str or "password" in exc_str:
             raise ApiError(400, "encrypted_pdf", "Password-protected PDFs are not supported.") from exc
         logger.error("pdfplumber parsing failed: %s", exc)
-        raise ApiError(400, "pdf_parse_failed", f"Failed to parse PDF document: {exc}") from exc
+        raise ApiError(400, "pdf_parse_failed", "Failed to parse PDF document with this extractor.") from exc
 
     return blocks
 
@@ -256,4 +264,4 @@ def _parse_pdf_pypdf(content: bytes) -> list[SourceBlock]:
     except Exception as exc:
         if "encrypted" in str(exc).lower() or "password" in str(exc).lower():
             raise ApiError(400, "encrypted_pdf", "Password-protected PDFs are not supported.") from exc
-        raise ApiError(400, "pdf_parse_failed", f"Failed to parse PDF document: {exc}") from exc
+        raise ApiError(400, "pdf_parse_failed", "Failed to parse PDF document with this extractor.") from exc
