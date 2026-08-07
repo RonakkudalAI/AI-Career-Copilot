@@ -13,6 +13,7 @@ import { apiRequest, subscribeToBackgroundJob, type BackgroundJobEvent } from "@
 import { BACKGROUND_JOBS_ENABLED } from "@/shared/config";
 import { jdLabel, resumeLabel } from "@/features/resume/analysis-labels";
 import { isValidCareerFile } from "@/shared/utils";
+import { BookLoader } from "@/shared/ui/book-loader";
 import { Badge, Button, Card, Input, PageHeader, Progress, Textarea } from "@/shared/ui/primitives";
 
 type StructuredContent = {
@@ -892,6 +893,7 @@ export function NewAnalysis({ embedded = false }: { embedded?: boolean }) {
         ? "Using your saved resume and saving job description…"
         : "Saving resume and job description…",
     );
+    let waitingOnBackgroundJob = false;
     try {
       let resolvedResume: Resume;
       let resolvedVersion: ResumeVersion | null = null;
@@ -949,6 +951,7 @@ export function NewAnalysis({ embedded = false }: { embedded?: boolean }) {
         );
         setStep("review");
       } else if (backgroundJobId) {
+        waitingOnBackgroundJob = true;
         setMessage(`Resume queued. Analyzing it in the background…`);
         resumeJobCancelRef.current = subscribeToBackgroundJob(
           backgroundJobId,
@@ -958,6 +961,7 @@ export function NewAnalysis({ embedded = false }: { embedded?: boolean }) {
               const versionId = event.result?.version_id;
               if (typeof versionId !== "string") {
                 setError("Resume processing completed without a version result.");
+                setBusy(false);
                 return;
               }
               void apiRequest<ResumeVersion>(`/resume-versions/${versionId}`)
@@ -971,19 +975,24 @@ export function NewAnalysis({ embedded = false }: { embedded?: boolean }) {
                   resumeJobCancelRef.current?.();
                   resumeJobCancelRef.current = null;
                 })
-                .catch((reason) => setError((reason as Error).message));
+                .catch((reason) => setError((reason as Error).message))
+                .finally(() => setBusy(false));
             } else if (event.status === "failed") {
               setError(event.error || "Resume processing failed.");
+              setBusy(false);
             }
           },
-          (reason) => setError(reason.message),
+          (reason) => {
+            setError(reason.message);
+            setBusy(false);
+          },
         );
       }
     } catch (reason) {
       setError((reason as Error).message);
       setMessage("");
     } finally {
-      setBusy(false);
+      if (!waitingOnBackgroundJob) setBusy(false);
     }
   }
 
@@ -1069,15 +1078,33 @@ export function NewAnalysis({ embedded = false }: { embedded?: boolean }) {
           {error}
         </p>
       )}
-      {message && (
+      {busy ? (
+        <Card className="stack">
+          <BookLoader
+            title={
+              step === "review"
+                ? "Calculating ATS score"
+                : message.toLowerCase().includes("analyz")
+                  ? "Analyzing your resume"
+                  : "Preparing your documents"
+            }
+            message={
+              message ||
+              (step === "review"
+                ? "Matching keywords and building your evidence report…"
+                : "Flipping through your resume so scoring feels snappy when ready…")
+            }
+          />
+        </Card>
+      ) : message ? (
         <Card>
           <p role="status" style={{ margin: 0 }}>
             {message}
           </p>
         </Card>
-      )}
+      ) : null}
 
-      {step === "upload" && (
+      {step === "upload" && !busy && (
         <div className="stack">
           <div className="grid-2">
             <Card className="stack">
@@ -1222,7 +1249,7 @@ export function NewAnalysis({ embedded = false }: { embedded?: boolean }) {
         </div>
       )}
 
-      {step === "review" && resumeVersion && job && (
+      {step === "review" && resumeVersion && job && !busy && (
         <div className="review-workspace">
           <div className="review-hero">
             <div>
@@ -1346,11 +1373,19 @@ export function AtsReport() {
   }
   if (!analysis) {
     return (
-      <PageHeader
-        eyebrow="ATS analysis"
-        title="Loading evidence report"
-        description="Loading your analysis report…"
-      />
+      <>
+        <PageHeader
+          eyebrow="ATS analysis"
+          title="Loading evidence report"
+          description="Opening your analysis report…"
+        />
+        <Card>
+          <BookLoader
+            title="Opening your report"
+            message="Gathering scores and keyword evidence…"
+          />
+        </Card>
+      </>
     );
   }
 

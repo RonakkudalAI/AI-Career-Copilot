@@ -1,21 +1,17 @@
 import { dynamic } from "@/shared/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Bookmark,
   RefreshCw,
   MapPin,
   CheckCircle2,
-  Building2,
-  Briefcase,
-  Send,
-  ThumbsDown,
 } from "lucide-react";
 import { Link } from "@/shared/ui/router-link";
 import { apiRequest } from "@/shared/api/client";
+import { JobCard } from "./job-card";
 import { JobCardSkeleton } from "./job-card-skeleton";
 import { JobModal } from "./job-modal";
 import type { Job, Recommendation, SavedJobRow, SavedJobStatus } from "./job-types";
-import { isPipelineStatus, statusLabel, statusTone } from "./job-types";
+import { isPipelineStatus } from "./job-types";
 import { Badge, Button, Card, EmptyState, PageHeader } from "@/shared/ui/primitives";
 
 export type { Job, Recommendation } from "./job-types";
@@ -400,7 +396,9 @@ export function JobsHome({ savedOnly = false }: { savedOnly?: boolean }) {
       ) : null}
 
       {isLoading ? (
-        <div className="stack">
+        <div className="jobs-grid" aria-busy="true" aria-label="Loading job recommendations">
+          <JobCardSkeleton />
+          <JobCardSkeleton />
           <JobCardSkeleton />
           <JobCardSkeleton />
         </div>
@@ -419,87 +417,41 @@ export function JobsHome({ savedOnly = false }: { savedOnly?: boolean }) {
         />
       ) : (
         <div className="stack">
-          {visibleJobs.map((job) => {
-            const rec = recommendations.find((row) => row.job.id === job.id);
-            const status = statusByJobId[job.id];
-            const busy = statusBusyId === job.id;
-            return (
-              <Card key={job.id} className="job-card" onClick={() => setSelectedJob(job.id)}>
-                <div className="cluster" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
-                  <div>
-                    <div className="cluster" style={{ marginBottom: 6 }}>
-                      {status ? (
-                        <span className="status-chip" data-tone={statusTone(status)}>
-                          {statusLabel(status)}
-                        </span>
-                      ) : null}
-                      {rec ? (
-                        <Badge variant="secondary">
-                          <CheckCircle2 size={14} aria-hidden /> {Math.round(rec.match_score)}%
-                        </Badge>
-                      ) : null}
-                      {job.work_mode ? (
-                        <Badge variant="secondary">
-                          <Briefcase size={14} aria-hidden /> {job.work_mode}
-                        </Badge>
-                      ) : null}
-                    </div>
-                    <h3 style={{ margin: 0 }}>{job.title}</h3>
-                    <p className="muted" style={{ margin: "4px 0 0" }}>
-                      <Building2 size={14} aria-hidden /> {job.company}
-                      {job.location ? (
-                        <>
-                          {" · "}
-                          <MapPin size={14} aria-hidden /> {job.location}
-                        </>
-                      ) : null}
-                    </p>
-                  </div>
-                  <div className="cluster" onClick={(e: React.MouseEvent) => e.stopPropagation()}>
-                    <Button
-                      variant="secondary"
-                      disabled={busy}
-                      onClick={(e: React.MouseEvent) => void toggleSave(job.id, e)}
-                      aria-label={status === "saved" ? "Unsave job" : "Save job"}
-                      title={status === "saved" ? "Unsave" : "Save"}
-                    >
-                      <Bookmark size={16} />
-                    </Button>
-                    <Button
-                      variant="secondary"
-                      disabled={busy || status === "applied"}
-                      onClick={(e: React.MouseEvent) => void setJobStatus(job.id, "applied", e)}
-                      aria-label="Mark as applied"
-                      title="Mark applied"
-                    >
-                      <Send size={16} />
-                    </Button>
-                    <Button
-                      variant="secondary"
-                      disabled={busy || status === "rejected"}
-                      onClick={(e: React.MouseEvent) => void setJobStatus(job.id, "rejected", e)}
-                      aria-label="Mark as rejected"
-                      title="Mark rejected"
-                    >
-                      <ThumbsDown size={16} />
-                    </Button>
-                  </div>
+          <div className="jobs-grid" role="list" aria-label={savedOnly ? "Pipeline jobs" : "Recommended jobs"}>
+            {visibleJobs.map((job) => {
+              const rec = recommendations.find((row) => row.job.id === job.id);
+              const status = statusByJobId[job.id];
+              const busy = statusBusyId === job.id;
+              return (
+                <div key={job.id} role="listitem">
+                  <JobCard
+                    job={job}
+                    recommendation={rec}
+                    status={status}
+                    busy={busy}
+                    onOpen={() => setSelectedJob(job.id)}
+                    onToggleSave={(e) => void toggleSave(job.id, e)}
+                    onMarkApplied={(e) => void setJobStatus(job.id, "applied", e)}
+                    onMarkRejected={(e) => void setJobStatus(job.id, "rejected", e)}
+                  />
                 </div>
-              </Card>
-            );
-          })}
+              );
+            })}
+          </div>
           {!savedOnly && hasMore ? (
-            <Button
-              variant="secondary"
-              disabled={isLoadingMore}
-              onClick={() => {
-                const next = offset + limit;
-                setOffset(next);
-                void fetchJobs(next, true);
-              }}
-            >
-              {isLoadingMore ? "Loading…" : "Load more"}
-            </Button>
+            <div className="jobs-load-more">
+              <Button
+                variant="secondary"
+                disabled={isLoadingMore}
+                onClick={() => {
+                  const next = offset + limit;
+                  setOffset(next);
+                  void fetchJobs(next, true);
+                }}
+              >
+                {isLoadingMore ? "Loading…" : "Load more"}
+              </Button>
+            </div>
           ) : null}
         </div>
       )}
