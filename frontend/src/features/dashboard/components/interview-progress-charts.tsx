@@ -10,6 +10,7 @@ export type InterviewHistoryPoint = {
   communication_score?: number | null;
   structure_score?: number | null;
   content_score?: number | null;
+  eye_contact_score?: number | null;
 };
 
 export type DimensionStats = {
@@ -33,6 +34,7 @@ export type InterviewProgress = {
     communication?: DimensionStats;
     structure?: DimensionStats;
     content?: DimensionStats;
+    eye_contact?: DimensionStats;
   };
 };
 
@@ -112,27 +114,40 @@ export function ScoreRing({
 
 /** Area + line chart of overall scores across sessions (oldest → newest). */
 export function ScoreTrendChart({ history }: { history: InterviewHistoryPoint[] }) {
-  const points = history.filter((h) => h.overall_score != null);
-  if (points.length === 0) return null;
+  // Coerce string scores from Firestore and drop invalid points so the chart never blanks.
+  const points = history.filter((h) => {
+    const n = Number(h.overall_score);
+    return Number.isFinite(n) && h.session_id;
+  });
+  if (points.length === 0) {
+    return (
+      <p className="muted" style={{ margin: 0, fontSize: "var(--text-sm)" }}>
+        No plotted scores yet — complete a session debrief to unlock the trend line.
+      </p>
+    );
+  }
 
   const width = 560;
   const height = 180;
-  const padX = 16;
-  const padY = 20;
+  const padX = 28;
+  const padY = 24;
   const plotW = width - padX * 2;
   const plotH = height - padY * 2;
 
   const scores = points.map((p) => clampScore(Number(p.overall_score)));
-  const minScore = Math.max(0, Math.min(...scores) - 8);
-  const maxScore = Math.min(100, Math.max(...scores) + 8);
-  const range = Math.max(1, maxScore - minScore);
+  const minScore = Math.max(0, Math.min(...scores, 0));
+  const maxScore = Math.min(100, Math.max(...scores, 100));
+  // Always show a full 0–100 band when only one point so the chart is readable.
+  const lo = points.length === 1 ? 0 : Math.max(0, minScore - 8);
+  const hi = points.length === 1 ? 100 : Math.min(100, maxScore + 8);
+  const range = Math.max(1, hi - lo);
 
   const coords = points.map((point, index) => {
     const x =
       points.length === 1
         ? padX + plotW / 2
         : padX + (index / (points.length - 1)) * plotW;
-    const y = padY + plotH - ((clampScore(Number(point.overall_score)) - minScore) / range) * plotH;
+    const y = padY + plotH - ((clampScore(Number(point.overall_score)) - lo) / range) * plotH;
     return { x, y, point, score: clampScore(Number(point.overall_score)) };
   });
 
@@ -144,8 +159,8 @@ export function ScoreTrendChart({ history }: { history: InterviewHistoryPoint[] 
       ? `${linePath} L ${coords[coords.length - 1].x.toFixed(1)} ${(padY + plotH).toFixed(1)} L ${coords[0].x.toFixed(1)} ${(padY + plotH).toFixed(1)} Z`
       : "";
 
-  // Guide lines at ~25/50/75 within the visible range
-  const guides = [25, 50, 75].filter((g) => g >= minScore && g <= maxScore);
+  // Guide lines at 25/50/75 within the visible range
+  const guides = [25, 50, 75].filter((g) => g >= lo && g <= hi);
 
   return (
     <div className="trend-chart" role="img" aria-label="Mock interview score trend over sessions">
@@ -157,7 +172,7 @@ export function ScoreTrendChart({ history }: { history: InterviewHistoryPoint[] 
           </linearGradient>
         </defs>
         {guides.map((guide) => {
-          const y = padY + plotH - ((guide - minScore) / range) * plotH;
+          const y = padY + plotH - ((guide - lo) / range) * plotH;
           return (
             <g key={guide}>
               <line
@@ -167,7 +182,7 @@ export function ScoreTrendChart({ history }: { history: InterviewHistoryPoint[] 
                 y1={y}
                 y2={y}
               />
-              <text className="trend-chart-guide-label" x={padX + 2} y={y - 4}>
+              <text className="trend-chart-guide-label" x={4} y={y + 3}>
                 {guide}
               </text>
             </g>
@@ -175,8 +190,8 @@ export function ScoreTrendChart({ history }: { history: InterviewHistoryPoint[] 
         })}
         {areaPath ? <path className="trend-chart-area" d={areaPath} fill="url(#interviewTrendFill)" /> : null}
         <path className="trend-chart-line" d={linePath} fill="none" />
-        {coords.map((c) => (
-          <g key={c.point.session_id}>
+        {coords.map((c, index) => (
+          <g key={`${c.point.session_id}-${index}`}>
             <circle className="trend-chart-dot" cx={c.x} cy={c.y} r={5} />
             <title>
               {c.point.label || "Session"} · {c.score}/100 · {formatShortDate(c.point.at)}
@@ -185,8 +200,8 @@ export function ScoreTrendChart({ history }: { history: InterviewHistoryPoint[] 
         ))}
       </svg>
       <div className="trend-chart-axis" aria-hidden="true">
-        {points.map((point) => (
-          <span key={point.session_id} className="trend-chart-tick">
+        {points.map((point, index) => (
+          <span key={`${point.session_id}-tick-${index}`} className="trend-chart-tick">
             {formatShortDate(point.at)}
           </span>
         ))}
@@ -205,6 +220,7 @@ export function DimensionBars({
     { key: "communication", label: "Communication", stats: dimensions?.communication },
     { key: "structure", label: "Structure", stats: dimensions?.structure },
     { key: "content", label: "Content depth", stats: dimensions?.content },
+    { key: "eye_contact", label: "Camera presence", stats: dimensions?.eye_contact },
   ];
 
   const hasAny = rows.some((row) => row.stats?.latest != null);
@@ -364,7 +380,8 @@ export function InterviewProgressPanel({ progress }: { progress?: InterviewProgr
           </p>
           <h2>How your interviews are improving</h2>
           <p className="muted">
-            Scores from completed debriefs — overall trend plus communication, structure, and content.
+            Scores from completed debriefs — overall trend plus communication, structure, content, and
+            camera presence when measured.
           </p>
         </div>
         <div className="interview-progress-actions">

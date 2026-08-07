@@ -1,9 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  analyzeLiveSpeaking,
+  buildProceedPrompt,
+  buildShortInterviewerLine,
   extractSpeechTranscript,
+  isHoldIntent,
+  isProceedIntent,
   mediaReadyMessage,
   mergeSpokenAnswer,
   nextActiveIndex,
+  phaseAfterFeedbackSpoken,
   phaseAfterQuestionSpoken,
   sessionMediaFlags,
   shouldAutoSubmitOnSilence,
@@ -107,5 +113,60 @@ describe("session media flags", () => {
     expect(mediaReadyMessage(true, true)).toMatch(/Camera and microphone/);
     expect(mediaReadyMessage(true, false)).toBe("Camera is ready.");
     expect(mediaReadyMessage(false, true)).toBe("Microphone is ready.");
+  });
+});
+
+describe("analyzeLiveSpeaking", () => {
+  it("counts fillers and estimates steady pace", () => {
+    const text = "Um I fixed the bug because uh it was urgent and we shipped the fix.";
+    // 12 words in 6 seconds => 120 wpm
+    const metrics = analyzeLiveSpeaking(text, 6000);
+    expect(metrics.word_count).toBeGreaterThan(8);
+    expect(metrics.filler_count).toBeGreaterThanOrEqual(2);
+    expect(metrics.words_per_minute).toBeGreaterThan(90);
+    expect(metrics.words_per_minute).toBeLessThan(160);
+    expect(metrics.pace_band).toBe("steady");
+  });
+
+  it("returns unknown pace without duration", () => {
+    const metrics = analyzeLiveSpeaking("Short answer", 0);
+    expect(metrics.pace_band).toBe("unknown");
+    expect(metrics.words_per_minute).toBeNull();
+  });
+});
+
+describe("short interviewer turn flow", () => {
+  it("builds a compact spoken coach line from evaluation fields only", () => {
+    const line = buildShortInterviewerLine({
+      verdict: "solid",
+      score: 72,
+      strengths: ["Clear ownership"],
+      improvements: ["End with a measurable result"],
+    });
+    expect(line.toLowerCase()).toContain("solid");
+    expect(line).toContain("72");
+    expect(line.toLowerCase()).toContain("measurable");
+    expect(line.length).toBeLessThanOrEqual(340);
+  });
+
+  it("detects proceed and hold voice intents", () => {
+    expect(isProceedIntent("yes")).toBe(true);
+    expect(isProceedIntent("proceed please")).toBe(true);
+    expect(isProceedIntent("let's go")).toBe(true);
+    expect(isProceedIntent("I fixed a bug")).toBe(false);
+    expect(isHoldIntent("wait a second")).toBe(true);
+    expect(isHoldIntent("not yet")).toBe(true);
+    expect(isHoldIntent("proceed")).toBe(false);
+  });
+
+  it("chooses auto-advance vs await-proceed after feedback", () => {
+    expect(phaseAfterFeedbackSpoken(true)).toBe("between");
+    expect(phaseAfterFeedbackSpoken(false)).toBe("awaiting_proceed");
+  });
+
+  it("asks to proceed only when not in hands-free mode", () => {
+    expect(buildProceedPrompt({ isLastQuestion: false, autoContinue: true })).toMatch(/Moving to the next/i);
+    expect(buildProceedPrompt({ isLastQuestion: false, autoContinue: false })).toMatch(/Shall we move/i);
+    expect(buildProceedPrompt({ isLastQuestion: true, autoContinue: true })).toMatch(/last question/i);
   });
 });

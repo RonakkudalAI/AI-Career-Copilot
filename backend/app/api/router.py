@@ -89,6 +89,7 @@ from app.features.interview.agent import (
     generate_interview_questions,
     generate_interview_session_report,
 )
+from app.features.interview.agent.evaluator import INTERVIEW_REPORT_VERSION
 from app.features.interview.preparation import generate_interview_preparation
 from app.features.learning.service import generate_learning_path_from_ats
 from app.features.profile.agent import build_profile_draft_enriched, profile_draft_response_payload
@@ -143,12 +144,30 @@ def ensure_preference_row(client, table: str, user_id: str) -> dict[str, Any]:
     return created[0]
 
 
+@router.get("/health/live")
+def health_live(settings: Settings = Depends(get_settings)) -> dict[str, Any]:
+    """Process liveness only — no Firestore/Storage network I/O.
+
+    Used by local ``npm run dev`` readiness waits so a slow remote probe cannot
+    block starting the frontend after uvicorn is already up.
+    """
+    return {
+        "status": "ok",
+        "service": settings.app_name,
+        "live": True,
+    }
+
+
 @router.get("/health")
 def health(settings: Settings = Depends(get_settings)) -> dict[str, Any]:
+    """App health with bounded dependency probes (never hangs indefinitely)."""
     status = agents_status(settings)
-    probe = database_probe(settings)
+    # Short timeouts keep /health usable for load balancers and dev tooling.
+    probe = database_probe(settings, timeout_seconds=3.0)
+    probe_status = probe.get("status") or "unreachable"
+    overall = "ok" if probe_status == "reachable" else "degraded"
     return {
-        "status": "ok" if probe["status"] == "reachable" else "degraded",
+        "status": overall,
         "service": settings.app_name,
         "database_engine": "firestore",
         "storage_engine": probe.get("storage_engine")
@@ -163,6 +182,9 @@ def health(settings: Settings = Depends(get_settings)) -> dict[str, Any]:
         "llm_agents_configured": status["llm_configured_agent_count"],
         "database_status": probe["database_status"],
         "storage_status": probe["storage_status"],
+        "probe_status": probe_status,
+        "database_error": probe.get("database_error"),
+        "storage_error": probe.get("storage_error"),
     }
 
 
@@ -174,7 +196,8 @@ def agent_status(settings: Settings = Depends(get_settings)) -> dict[str, Any]:
 
 @router.get("/health/database")
 def health_database(settings: Settings = Depends(get_settings)) -> dict[str, Any]:
-    return database_probe(settings)
+    """Deep dependency probe with bounded timeouts (ops / diagnostics)."""
+    return database_probe(settings, timeout_seconds=5.0)
 
 
 @router.get("/files/{bucket}/{path:path}")
@@ -376,6 +399,7 @@ def _interview_progress(client, user: CurrentUser) -> dict[str, Any]:
             "communication": {"latest": None, "previous": None, "average": None},
             "structure": {"latest": None, "previous": None, "average": None},
             "content": {"latest": None, "previous": None, "average": None},
+            "eye_contact": {"latest": None, "previous": None, "average": None},
         },
     }
     uid = str(user.id)
@@ -394,7 +418,7 @@ def _interview_progress(client, user: CurrentUser) -> dict[str, Any]:
             client.table("interview_reports")
             .select(
                 "id,session_id,overall_score,communication_score,structure_score,"
-                "content_score,created_at,status"
+                "content_score,created_at,status,report"
             )
             .eq("user_id", uid)
             .execute()
@@ -403,6 +427,19 @@ def _interview_progress(client, user: CurrentUser) -> dict[str, Any]:
         )
     except Exception:
         return empty
+
+    def _score_from_report(report: dict[str, Any], key: str) -> int | None:
+        """Prefer top-level score columns; fall back to nested report JSON."""
+        direct = _safe_score(report.get(key))
+        if direct is not None:
+            return direct
+        nested = report.get("report") if isinstance(report.get("report"), dict) else {}
+        return _safe_score(nested.get(key))
+
+    def _eye_from_report(report: dict[str, Any]) -> int | None:
+        nested = report.get("report") if isinstance(report.get("report"), dict) else {}
+        gaze = nested.get("gaze_summary") if isinstance(nested.get("gaze_summary"), dict) else {}
+        return _safe_score(gaze.get("average_eye_contact_score"))
 
     sessions_total = len(sessions)
     sessions_completed = sum(1 for row in sessions if row.get("status") == "completed")
@@ -414,7 +451,7 @@ def _interview_progress(client, user: CurrentUser) -> dict[str, Any]:
         sid = str(report.get("session_id") or "")
         if not sid or sid in best_report_by_session:
             continue
-        if _safe_score(report.get("overall_score")) is None:
+        if _score_from_report(report, "overall_score") is None:
             continue
         best_report_by_session[sid] = report
 
@@ -441,10 +478,11 @@ def _interview_progress(client, user: CurrentUser) -> dict[str, Any]:
                 "mode": session.get("mode"),
                 "status": session.get("status") or "completed",
                 "at": at,
-                "overall_score": _safe_score(report.get("overall_score")),
-                "communication_score": _safe_score(report.get("communication_score")),
-                "structure_score": _safe_score(report.get("structure_score")),
-                "content_score": _safe_score(report.get("content_score")),
+                "overall_score": _score_from_report(report, "overall_score"),
+                "communication_score": _score_from_report(report, "communication_score"),
+                "structure_score": _score_from_report(report, "structure_score"),
+                "content_score": _score_from_report(report, "content_score"),
+                "eye_contact_score": _eye_from_report(report),
             }
         )
 
@@ -499,6 +537,7 @@ def _interview_progress(client, user: CurrentUser) -> dict[str, Any]:
             "communication": _dim_stats("communication_score"),
             "structure": _dim_stats("structure_score"),
             "content": _dim_stats("content_score"),
+            "eye_contact": _dim_stats("eye_contact_score"),
         },
     }
 
@@ -2549,12 +2588,22 @@ def create_interview(
     user: CurrentUser = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ):
+    """Create a draft mock-interview session (mode, role, optional pasted JD text)."""
     client = client_for(settings, user)
+    body = payload.model_dump(mode="json")
+    # Normalize empty strings so Firestore does not store noise fields.
+    for key in ("target_role", "target_company", "topic", "difficulty", "job_description_text"):
+        value = body.get(key)
+        if isinstance(value, str):
+            cleaned = value.strip()
+            body[key] = cleaned or None
+    if body.get("job_description_text"):
+        body["job_description_text"] = str(body["job_description_text"])[:20_000]
     return (
         client.table("interview_sessions")
         .insert(
             {
-                **payload.model_dump(mode="json"),
+                **body,
                 "user_id": str(user.id),
                 "created_at": utc_now(),
                 "status": "draft",
@@ -2652,6 +2701,32 @@ async def start_interview(
     questions_payload: dict[str, Any] = {"questions": [], "provider": None, "model": None}
     if not existing:
         count = int(session.get("question_count") or 3)
+        resume_text: str | None = None
+        candidate_skills: list[str] | None = None
+        if session.get("resume_version_id"):
+            res_rows = (
+                client.table("resume_versions")
+                .select("plain_text,structured_content")
+                .eq("id", str(session["resume_version_id"]))
+                .eq("user_id", str(user.id))
+                .limit(1)
+                .execute()
+                .data
+                or []
+            )
+            if res_rows:
+                resume_text = str(res_rows[0].get("plain_text") or "")
+            skill_rows = (
+                client.table("candidate_skills")
+                .select("name")
+                .eq("user_id", str(user.id))
+                .execute()
+                .data
+                or []
+            )
+            if skill_rows:
+                candidate_skills = [str(r.get("name")) for r in skill_rows if r.get("name")]
+
         questions_payload = await generate_interview_questions(
             settings,
             mode=str(session.get("mode") or "mixed"),
@@ -2660,6 +2735,9 @@ async def start_interview(
             target_company=session.get("target_company"),
             difficulty=session.get("difficulty"),
             topic=session.get("topic"),
+            job_description_text=session.get("job_description_text"),
+            resume_text=resume_text,
+            candidate_skills=candidate_skills,
         )
         rows = []
         for index, item in enumerate(questions_payload.get("questions") or [], start=1):
@@ -2728,6 +2806,8 @@ async def add_response(
         raise ApiError(404, "question_not_found", "The question does not belong to this interview session.")
     question = question_rows[0]
     answer_text = (payload.transcript or payload.typed_response or "").strip()
+    client_speech = payload.speech_metrics if isinstance(payload.speech_metrics, dict) else None
+    client_gaze = payload.gaze_metrics if isinstance(payload.gaze_metrics, dict) else None
     evaluation = await evaluate_interview_answer(
         settings,
         question=str(question.get("question") or ""),
@@ -2735,9 +2815,28 @@ async def add_response(
         question_type=question.get("question_type"),
         target_role=session.get("target_role"),
         mode=session.get("mode"),
+        duration_seconds=payload.duration_seconds,
+        gaze_metrics=client_gaze,
     )
+    # Prefer server-measured delivery; optionally merge client speech_metrics duration if server lacks it.
+    if client_speech and not evaluation.get("speaking_delivery", {}).get("duration_seconds"):
+        raw_dur = client_speech.get("duration_seconds")
+        try:
+            if raw_dur is not None and float(raw_dur) > 0:
+                from app.features.interview.agent.evaluator import analyze_speaking_delivery
+
+                evaluation["speaking_delivery"] = analyze_speaking_delivery(
+                    answer_text, float(raw_dur)
+                )
+        except (TypeError, ValueError):
+            pass
     row = {
-        **payload.model_dump(mode="json"),
+        "question_id": str(payload.question_id),
+        "typed_response": payload.typed_response,
+        "transcript": payload.transcript,
+        "duration_seconds": payload.duration_seconds,
+        "speech_metrics": client_speech,
+        "gaze_metrics": evaluation.get("gaze_metrics") or client_gaze,
         "session_id": str(session_id),
         "user_id": str(user.id),
         "created_at": utc_now(),
@@ -2745,6 +2844,7 @@ async def add_response(
         "score": evaluation.get("score"),
         "verdict": evaluation.get("verdict"),
         "filler_analysis": evaluation.get("filler_analysis") or {},
+        "speaking_delivery": evaluation.get("speaking_delivery") or {},
     }
     saved = client.table("interview_responses").insert(row).execute().data[0]
     return {
@@ -2804,6 +2904,24 @@ async def _create_interview_report(
         qid = str(question.get("id") or "")
         response = latest_by_q.get(qid)
         if not response:
+            turns.append(
+                {
+                    "question_id": qid,
+                    "position": question.get("position"),
+                    "question": question.get("question"),
+                    "question_type": question.get("question_type"),
+                    "answer": "[No answer provided]",
+                    "unattempted": True,
+                    "evaluation": {
+                        "verdict": "unattempted",
+                        "score": 0,
+                        "interviewer_feedback": "This question was skipped or not answered.",
+                        "strengths": [],
+                        "improvements": ["Attempt every question to practice full interview coverage."],
+                    },
+                    "gaze_metrics": None,
+                }
+            )
             continue
         answer = (response.get("transcript") or response.get("typed_response") or "").strip()
         evaluation = response.get("evaluation") or {}
@@ -2816,6 +2934,10 @@ async def _create_interview_report(
                 target_role=session.get("target_role"),
                 mode=session.get("mode"),
             )
+        if isinstance(evaluation, dict) and not evaluation.get("gaze_metrics"):
+            # Prefer metrics stored on the response document when eval payload is older.
+            if response.get("gaze_metrics"):
+                evaluation = {**evaluation, "gaze_metrics": response.get("gaze_metrics")}
         turns.append(
             {
                 "question_id": qid,
@@ -2824,6 +2946,9 @@ async def _create_interview_report(
                 "question_type": question.get("question_type"),
                 "answer": answer,
                 "evaluation": evaluation,
+                "gaze_metrics": (evaluation or {}).get("gaze_metrics")
+                if isinstance(evaluation, dict)
+                else response.get("gaze_metrics"),
             }
         )
 
@@ -2846,6 +2971,7 @@ async def _create_interview_report(
         "report": report_body,
         "provider": report_body.get("provider"),
         "model": report_body.get("model"),
+        "report_version": report_body.get("report_version") or INTERVIEW_REPORT_VERSION,
     }
     existing_reports = (
         client.table("interview_reports")
@@ -2914,7 +3040,8 @@ async def get_interview_report(
         .data
         or []
     )
-    if not rows:
+    current = rows[0] if rows else None
+    if not rows or current.get("report_version") != INTERVIEW_REPORT_VERSION:
         if session.get("status") != "completed":
             raise ApiError(
                 404,

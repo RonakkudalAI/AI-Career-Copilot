@@ -7,13 +7,17 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-ALGORITHM_VERSION = "evidence-keyword-coverage-v3"
+ALGORITHM_VERSION = "evidence-keyword-coverage-v4"
 EVIDENCE_MATCH_STATUS = {
     "strong": "strong_match",
     "partial": "partial_match",
     "missing": "not_found",
 }
-TOKEN_PATTERN = re.compile(r"[a-zA-Z][a-zA-Z0-9+#./-]*")
+# Leading ".X" captures .NET-style tokens; mid-token . / + # - stay allowed.
+TOKEN_PATTERN = re.compile(r"(?:[a-zA-Z]|\.[a-zA-Z])[a-zA-Z0-9+#./-]*")
+# Slash-compound segments (CI, CD, TCP, IP, PL, SQL, …) stay joined when every
+# piece is this short; longer words (Python/Java) are treated as list items.
+_SLASH_COMPOUND_MAX_SEGMENT_LEN = 4
 SHORT_TECH_TERMS = {"ai", "bi", "go", "ml", "r", "ui", "ux", "js", "ts", "c", "c++", "c#"}
 STOP_WORDS = {
     "about", "also", "and", "are", "been", "being", "candidate", "company",
@@ -50,6 +54,7 @@ ALIAS_GROUPS: dict[str, tuple[str, ...]] = {
     "machine learning": ("machine learning", "ml"),
     "artificial intelligence": ("artificial intelligence", "ai"),
     "ci/cd": ("ci/cd", "ci cd", "continuous integration", "continuous delivery"),
+    ".net": (".net", "dotnet", "dot net", "asp.net"),
     "rest api": ("rest api", "rest apis", "restful api", "restful apis"),
     "api": ("api", "apis"),
     "llm": ("llm", "llms", "large language model", "large language models"),
@@ -152,11 +157,79 @@ def _normalize(text: str) -> str:
     value = re.sub(r"[\u2018\u2019]", "'", value)
     value = re.sub(r"[^a-z0-9+#./\s-]", " ", value)
     return re.sub(r"\s+", " ", value).strip()
+
+
+def _clean_token(raw: str) -> str:
+    """Normalize a matched tech token without dropping a leading '.' (.net)."""
+    token = (raw or "").casefold().strip()
+    token = token.rstrip(".-/")
+    if token.startswith("."):
+        # Keep the leading dot; only strip other edge junk after it if any.
+        return token
+    return token.lstrip(".-/")
+
+
 def _tokens(text: str) -> list[str]:
-    return [match.group(0).casefold().strip(".-/") for match in TOKEN_PATTERN.finditer(text)]
+    return [
+        cleaned
+        for match in TOKEN_PATTERN.finditer(text or "")
+        if (cleaned := _clean_token(match.group(0)))
+    ]
+
+
 def _canonical(value: str) -> str:
     normalized = _normalize(value)
-    return ALIAS_TO_CANONICAL.get(normalized, normalized)
+    # Preserve leading '.' for .net-style tokens after normalize/strip.
+    if normalized.startswith("."):
+        return ALIAS_TO_CANONICAL.get(normalized, normalized)
+    stripped = normalized.strip(".-/")
+    return ALIAS_TO_CANONICAL.get(stripped, stripped) if stripped else normalized
+
+
+def _is_slash_compound_segment(segment: str) -> bool:
+    """True when a slash piece looks like part of a compound tech token (CI, SQL).
+
+    Shape-based only — no hard-coded term list. Long words (Python) fail so
+    slash-delimited skill lists still split.
+    """
+    cleaned = (segment or "").strip()
+    if not cleaned or len(cleaned) > _SLASH_COMPOUND_MAX_SEGMENT_LEN:
+        return False
+    return bool(re.fullmatch(r"[A-Za-z0-9+#.\-]+", cleaned))
+
+
+def _split_slash_separated(text: str) -> list[str]:
+    """Split on '/' only when segments look like a list, not a compound token."""
+    value = (text or "").strip()
+    if not value or "/" not in value:
+        return [value] if value else []
+    segments = [part.strip() for part in value.split("/")]
+    if not all(segments):
+        return [value]
+    if all(_is_slash_compound_segment(part) for part in segments):
+        return [value]
+    return [part for part in segments if part]
+
+
+def _split_requirement_chunks(payload: str) -> list[str]:
+    """Split list-style skill payloads without breaking CI/CD-style compounds.
+
+    Clear list separators first; '/' is handled shape-first so short/short
+    compounds stay one chunk while Python/Java still splits.
+    """
+    chunks: list[str] = []
+    # Do not split on '.' so Node.js / Next.js stay intact.
+    for part in re.split(r"[,;|\u2022]|\s+and\s+", payload or "", flags=re.IGNORECASE):
+        cleaned = part.strip()
+        if not cleaned:
+            continue
+        chunks.extend(_split_slash_separated(cleaned))
+    return chunks
+
+
+def _requirement_kind_rank(kind: str) -> int:
+    """Higher rank wins when the same term appears under multiple labels."""
+    return 1 if kind == "required" else 0
 def _section_from_heading(line: str) -> str | None:
     header = _normalize(line).strip("-:| ")
     if not header or len(header) > 60:
@@ -254,7 +327,8 @@ def _classify_requirement(line: str, previous_type: str) -> str:
     return previous_type
 def _candidate_terms_legacy(text: str, limit: int = 80) -> list[tuple[str, str]]:
     candidates: list[tuple[str, str]] = []
-    seen: set[tuple[str, str]] = set()
+    # Canonical term -> requirement kind (upgrade preferred → required on re-hit).
+    seen: dict[str, str] = {}
     current_type = "required"
     known = set(ALIAS_GROUPS)
     for raw in (text or "").splitlines() or [text]:
@@ -277,8 +351,7 @@ def _candidate_terms_legacy(text: str, limit: int = 80) -> list[tuple[str, str]]
                 else current_type
             )
             segment = re.sub(r"^[^:]{0,50}:\s*", "", segment)
-            chunks = re.split(r"[,;|•]|\s+and\s+", segment, flags=re.IGNORECASE)
-            for chunk in chunks:
+            for chunk in _split_requirement_chunks(segment):
                 tokens = [token for token in _tokens(chunk) if token not in STOP_WORDS]
                 if not tokens:
                     continue
@@ -292,36 +365,63 @@ def _candidate_terms_legacy(text: str, limit: int = 80) -> list[tuple[str, str]]
                         if size == 1 and phrase in STOP_WORDS:
                             continue
                         canonical = _canonical(phrase)
-                        key = (canonical, segment_type)
-                        if key in seen:
-                            continue
                         if size == 1 and any(
                             canonical in multi.split() and multi_kind == segment_type
-                            for multi, multi_kind in seen
+                            for multi, multi_kind in seen.items()
                             if " " in multi
                         ):
                             continue
                         if size >= 2 or canonical in known or len(phrase) >= 3:
-                            seen.add(key)
+                            if canonical in seen:
+                                if _requirement_kind_rank(segment_type) > _requirement_kind_rank(
+                                    seen[canonical]
+                                ):
+                                    seen[canonical] = segment_type
+                                    for idx, (term, _kind) in enumerate(candidates):
+                                        if term == canonical:
+                                            candidates[idx] = (canonical, segment_type)
+                                            break
+                                continue
+                            if len(candidates) >= limit:
+                                continue
+                            seen[canonical] = segment_type
                             candidates.append((canonical, segment_type))
     indexed = list(enumerate(candidates))
     indexed.sort(key=lambda pair: (0 if pair[1][0] in known else 1, pair[0]))
     return [item for _, item in indexed[:limit]]
+
+
 def _term_boundary_pattern(alias: str) -> str:
     """Word-boundary pattern for aliases.
 
     Short tech tokens (go, r, ai, …) also treat hyphen as a boundary so
     ``go`` does not match inside ``go-to-market``.
+    Leading-dot aliases (.net) must not match email TLDs (creative.net).
     """
     escaped = re.escape(alias)
+    if alias.startswith("."):
+        # Require a non-alnum boundary before the dot (start, space, punctuation).
+        return rf"(?<![a-z0-9+#]){escaped}(?![a-z0-9+#])"
     if alias in SHORT_TECH_TERMS or len(alias) <= 2:
         return rf"(?<![a-z0-9+#.-]){escaped}(?![a-z0-9+#.-])"
     return rf"(?<![a-z0-9+#]){escaped}(?![a-z0-9+#])"
 
 
+def _strip_requirement_value(value: str) -> str:
+    """Strip list junk from a term without erasing a leading '.' (.net)."""
+    text = _normalize(value).strip()
+    text = re.sub(r"^[\s,:;|]+|[\s,:;|]+$", "", text)
+    text = text.rstrip(".-/")
+    if text.startswith("."):
+        return text
+    return text.lstrip(".-/")
+
+
 def _candidate_terms(text: str, limit: int = 80) -> list[tuple[str, str]]:
     candidates: list[tuple[str, str]] = []
-    seen: set[tuple[str, str]] = set()
+    # Canonical term only — same skill under required+preferred must not double-count.
+    # Value is the stronger requirement kind seen so far (required wins over preferred).
+    seen: dict[str, str] = {}
     current_type = "required"
     # When True, following plain (non-bullet) lines still yield known tech terms
     # until a non-skill section header ends the block.
@@ -329,16 +429,24 @@ def _candidate_terms(text: str, limit: int = 80) -> list[tuple[str, str]]:
     known = set(ALIAS_GROUPS) | KNOWN_TECH_TERMS
 
     def add(value: str, kind: str) -> None:
-        normalized = _normalize(value).strip(" .,:;|-")
+        normalized = _strip_requirement_value(value)
         if not normalized:
             return
         canonical = _canonical(normalized)
         if canonical in STOP_WORDS or len(canonical) < 2:
             return
-        key = (canonical, kind)
-        if key in seen or len(candidates) >= limit:
+        if canonical in seen:
+            prior = seen[canonical]
+            if _requirement_kind_rank(kind) > _requirement_kind_rank(prior):
+                seen[canonical] = kind
+                for idx, (term, _existing_kind) in enumerate(candidates):
+                    if term == canonical:
+                        candidates[idx] = (canonical, kind)
+                        break
             return
-        seen.add(key)
+        if len(candidates) >= limit:
+            return
+        seen[canonical] = kind
         candidates.append((canonical, kind))
 
     def add_known_terms(line: str, kind: str) -> None:
@@ -393,9 +501,7 @@ def _candidate_terms(text: str, limit: int = 80) -> list[tuple[str, str]]:
                 continue
             add_known_terms(segment, segment_type)
             payload = re.sub(r"^[^:]{0,60}:\s*", "", segment).strip()
-            # Do not split on '.' so Node.js / Next.js stay intact.
-            chunks = re.split(r"[,;|/\u2022]|\s+and\s+", payload, flags=re.IGNORECASE)
-            for chunk in chunks:
+            for chunk in _split_requirement_chunks(payload):
                 cleaned = re.sub(r"^[\-*\s]+|[.!?]+$", "", chunk).strip()
                 words = _tokens(cleaned)
                 if not words or len(words) > 5:
@@ -408,9 +514,11 @@ def _candidate_terms(text: str, limit: int = 80) -> list[tuple[str, str]]:
                 ):
                     add(cleaned, segment_type)
                     continue
-                original_words = re.findall(r"[A-Za-z][A-Za-z0-9+#./-]*", cleaned)
+                original_words = [match.group(0) for match in TOKEN_PATTERN.finditer(cleaned)]
                 technical_shape = any(
-                    any(char in word for char in "+#./-") or word[:1].isupper()
+                    any(char in word for char in "+#./-")
+                    or word[:1].isupper()
+                    or (word.startswith(".") and len(word) > 1 and word[1:2].isalpha())
                     for word in original_words
                 )
                 if technical_shape and len(words) <= 3:

@@ -90,20 +90,39 @@ process.on("exit", () => {
 });
 
 async function waitForBackend() {
-  const healthUrl = `http://127.0.0.1:${backendPort(process.env)}/api/v1/health`;
-  const deadline = Date.now() + 30_000;
+  // Prefer the liveness endpoint: process is up without waiting on Firestore/Storage.
+  // Full /health still probes dependencies and can exceed short AbortSignal timeouts
+  // on cold networks — that was aborting npm run dev after uvicorn was already ready.
+  const port = backendPort(process.env);
+  const liveUrl = `http://127.0.0.1:${port}/api/v1/health/live`;
+  const fullUrl = `http://127.0.0.1:${port}/api/v1/health`;
+  const deadline = Date.now() + 45_000;
   let lastError = "not started";
   while (Date.now() < deadline) {
-    try {
-      const response = await fetch(healthUrl, { signal: AbortSignal.timeout(2_000) });
-      if (response.ok) return;
-      lastError = `HTTP ${response.status}`;
-    } catch (error) {
-      lastError = error instanceof Error ? error.message : String(error);
+    for (const healthUrl of [liveUrl, fullUrl]) {
+      try {
+        // Live is instant; full health is bounded server-side (~3s probes).
+        const timeoutMs = healthUrl.endsWith("/live") ? 3_000 : 12_000;
+        const response = await fetch(healthUrl, { signal: AbortSignal.timeout(timeoutMs) });
+        if (response.ok) {
+          if (healthUrl.endsWith("/live")) {
+            console.log(`[dev] Backend live at ${liveUrl}`);
+          } else {
+            console.log(`[dev] Backend ready at ${fullUrl}`);
+          }
+          return;
+        }
+        lastError = `HTTP ${response.status} from ${healthUrl}`;
+      } catch (error) {
+        lastError = `${healthUrl}: ${error instanceof Error ? error.message : String(error)}`;
+      }
     }
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    await new Promise((resolve) => setTimeout(resolve, 400));
   }
-  throw new Error(`Backend did not become ready at ${healthUrl} (${lastError}).`);
+  throw new Error(
+    `Backend did not become ready (tried ${liveUrl} and ${fullUrl}): ${lastError}. ` +
+      `Confirm nothing else is blocking port ${port} and that uvicorn started without import errors.`,
+  );
 }
 
 try {

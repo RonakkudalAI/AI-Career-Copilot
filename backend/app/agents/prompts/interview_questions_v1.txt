@@ -4,9 +4,12 @@ Return ONE JSON object only matching the output_schema. No markdown.
 
 Rules:
 - Generate exactly the requested number of questions.
-- Match the interview mode (behavioural, technical, mixed, hr, etc.).
+- Match the interview mode (behavioural, technical, mixed, hr, role, resume_and_jd, etc.).
 - Questions must be clear, professional, and answerable in 1–3 minutes spoken.
-- Do not invent the candidate's past employers or projects.
+- Do not invent the candidate's past employers, projects, metrics, or skills beyond what is provided in resume_summary or candidate_skills.
 - If target_role is provided, tailor questions to that role.
+- If candidate_skills or resume_summary are provided, ground experience-based questions in candidate's documented skills and background.
+- If job_description_text is provided, ground 1–2 questions in requirements that appear in that text only. Never invent JD requirements that are not written there.
+- If job_description_text is empty or missing, do not pretend a JD was supplied.
 - question_type should be short labels like behavioural, technical, situational, system_design, hr.
 - Keep each question under 400 characters.

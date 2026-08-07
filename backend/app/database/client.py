@@ -562,7 +562,39 @@ def database_client(settings: Settings):
     return FirestoreClient(settings)
 
 
-def database_probe(settings: Settings) -> dict[str, Any]:
+def _probe_with_timeout(label: str, fn, timeout_seconds: float = 3.0) -> tuple[bool, str | None]:
+    """Run a probe in a worker thread so a hung network call cannot block the API forever.
+
+    Important: do not use ``with ThreadPoolExecutor`` here — its default
+    ``shutdown(wait=True)`` would still wait for the hung worker after a timeout,
+    re-introducing the hang we are trying to prevent.
+    """
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+
+    timeout = max(0.5, float(timeout_seconds))
+    pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"probe-{label}")
+    try:
+        future = pool.submit(fn)
+        try:
+            future.result(timeout=timeout)
+            return True, None
+        except FuturesTimeout:
+            future.cancel()
+            return False, f"{label}_probe_timeout_after_{timeout:.1f}s"
+        except Exception as exc:  # noqa: BLE001 — probe surfaces any failure as status text
+            return False, f"{type(exc).__name__}: {exc}"[:240]
+    finally:
+        # wait=False so a stuck Firestore/Storage call cannot delay the HTTP response.
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
+def database_probe(settings: Settings, *, timeout_seconds: float = 3.0) -> dict[str, Any]:
+    """Reachability check for Firestore + object storage with hard timeouts.
+
+    Used by /health and /health/database. Timeouts keep readiness checks from
+    hanging when a remote dependency is slow (common cause of ``npm run dev``
+    failing after uvicorn has already started).
+    """
     storage_engine = "supabase_storage" if settings.supabase_storage_configured else "unconfigured"
     storage_bucket = settings.supabase_storage_bucket or None
     result: dict[str, Any] = {
@@ -576,18 +608,31 @@ def database_probe(settings: Settings) -> dict[str, Any]:
         "database_status": "unreachable",
         "storage_status": "unreachable",
     }
-    try:
-        database_client(settings).db.collection("_setup_checks").limit(1).stream()
+
+    def _db_ping() -> None:
+        # Force materialization of the stream so the call is not lazy-noop.
+        list(database_client(settings).db.collection("_setup_checks").limit(1).stream())
+
+    ok_db, db_err = _probe_with_timeout("firestore", _db_ping, timeout_seconds)
+    if ok_db:
         result["database_status"] = "reachable"
-    except Exception as exc:
-        result["database_error"] = str(exc)
-    try:
+    elif db_err:
+        result["database_error"] = db_err
+
+    def _storage_ping() -> None:
         if not settings.storage_configured:
             raise RuntimeError("Object storage is not configured")
         ObjectStorage(settings).from_(settings.document_bucket).list("_setup_checks")
+
+    ok_st, st_err = _probe_with_timeout("storage", _storage_ping, timeout_seconds)
+    if ok_st:
         result["storage_status"] = "reachable"
-    except Exception as exc:
-        result["storage_error"] = str(exc)
+    elif st_err:
+        result["storage_error"] = st_err
+
     if result["database_status"] == "reachable" and result["storage_status"] == "reachable":
         result["status"] = "reachable"
+    elif result["database_status"] == "reachable" or result["storage_status"] == "reachable":
+        # Partial connectivity — still useful for ops; not fully healthy.
+        result["status"] = "degraded"
     return result

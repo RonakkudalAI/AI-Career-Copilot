@@ -3253,6 +3253,7 @@ select option { color: var(--ink); background: var(--surface); }
   left: 0;
   top: 0;
   bottom: 0;
+  min-width: 0;
   border-radius: 999px;
   background: linear-gradient(
     90deg,
@@ -3263,9 +3264,18 @@ select option { color: var(--ink); background: var(--surface); }
   z-index: 1;
 }
 .dimension-fill-prev {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  min-width: 0;
+  border-radius: 999px;
   background: color-mix(in srgb, var(--ink) 18%, transparent);
   z-index: 0;
   transition: width 500ms var(--ease-out);
+}
+.trend-chart-area {
+  opacity: 1;
 }
 .dimension-avg {
   margin: 0;

@@ -121,10 +121,12 @@ class InterviewCreate(BaseModel):
     ]
     resume_version_id: UUID | None = None
     job_description_id: UUID | None = None
-    target_role: str | None = None
-    target_company: str | None = None
-    topic: str | None = None
-    difficulty: str | None = None
+    # Optional pasted JD text for this practice session (not persisted as a job_descriptions row).
+    job_description_text: str | None = Field(default=None, max_length=20_000)
+    target_role: str | None = Field(default=None, max_length=200)
+    target_company: str | None = Field(default=None, max_length=200)
+    topic: str | None = Field(default=None, max_length=200)
+    difficulty: str | None = Field(default=None, max_length=40)
     question_count: int = Field(default=5, ge=1, le=20)
     duration_minutes: int = Field(default=20, ge=5, le=180)
     # Practice defaults: live camera/mic on unless the candidate opts out.
@@ -135,7 +137,11 @@ class InterviewResponseCreate(BaseModel):
     question_id: UUID
     typed_response: str | None = Field(default=None, max_length=20_000)
     transcript: str | None = Field(default=None, max_length=50_000)
-    duration_seconds: int | None = Field(default=None, ge=0)
+    duration_seconds: int | None = Field(default=None, ge=0, le=3600)
+    # Client-measured speaking metrics (pace / live fillers) — never invent values server-side.
+    speech_metrics: dict[str, Any] | None = None
+    # Client-measured camera presence / eye-contact samples — never invent server-side.
+    gaze_metrics: dict[str, Any] | None = None
 class InterviewPreparationCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     resume_version_id: UUID

@@ -20,8 +20,15 @@ class InterviewQuestionItem(BaseModel):
 class InterviewQuestionsResult(BaseModel):
     model_config = ConfigDict(extra="ignore")
     questions: list[InterviewQuestionItem] = Field(min_length=1, max_length=20)
-def _template_questions(mode: str, count: int, target_role: str | None) -> list[dict[str, str]]:
+def _template_questions(
+    mode: str,
+    count: int,
+    target_role: str | None,
+    *,
+    job_description_text: str | None = None,
+) -> list[dict[str, str]]:
     role = (target_role or "this role").strip() or "this role"
+    jd_present = bool((job_description_text or "").strip())
     bank = {
         "behavioural": [
             ("Tell me about a time you handled a difficult stakeholder.", "behavioural"),
@@ -51,10 +58,39 @@ def _template_questions(mode: str, count: int, target_role: str | None) -> list[
             ("How do you handle feedback from managers?", "behavioural"),
             ("What motivates you in a team environment?", "hr"),
         ],
+        "role": [
+            (f"What makes you a strong fit for {role}?", "hr"),
+            (f"Describe a project that prepared you for {role}.", "behavioural"),
+            (f"What would your first 90 days look like as a {role}?", "situational"),
+            ("Tell me about a technical challenge you owned end-to-end.", "technical"),
+            ("How do you collaborate with product and design?", "behavioural"),
+        ],
+        "resume_and_jd": [
+            (f"Walk me through how your experience maps to {role}.", "hr"),
+            ("Which requirement in this role do you meet most strongly? Give evidence.", "behavioural"),
+            ("Where would you need the most ramp-up, and how would you close the gap?", "situational"),
+            ("Describe a project that is closest to the work this job requires.", "technical"),
+            ("How would you measure success in the first six months?", "situational"),
+        ],
     }
-    pool = bank.get(mode, bank["mixed"])
+    if jd_present and mode not in bank:
+        pool = bank["resume_and_jd"]
+    else:
+        pool = bank.get(mode, bank["mixed"])
+    if jd_present:
+        # Surface one JD-grounded prompt without inventing JD contents.
+        pool = [
+            (
+                "Based on the job description you provided, which requirement do you meet "
+                "most strongly? Support it with one concrete example from your experience.",
+                "behavioural",
+            ),
+            *pool,
+        ]
     selected = [pool[i % len(pool)] for i in range(max(1, min(count, 20)))]
     return [{"question": q, "question_type": t} for q, t in selected]
+
+
 async def generate_interview_questions(
     settings: Settings,
     *,
@@ -64,9 +100,15 @@ async def generate_interview_questions(
     target_company: str | None = None,
     difficulty: str | None = None,
     topic: str | None = None,
+    job_description_text: str | None = None,
+    resume_text: str | None = None,
+    candidate_skills: list[str] | None = None,
 ) -> dict[str, Any]:
     count = max(1, min(int(count or 3), 20))
     mode = (mode or "mixed").strip().lower()
+    jd_text = (job_description_text or "").strip()[:12_000] or None
+    res_text = (resume_text or "").strip()[:8_000] or None
+    skills = [s.strip() for s in (candidate_skills or []) if str(s).strip()][:20] or None
     if settings.groq_configured:
         try:
             prompt = _PROMPT_PATH.read_text(encoding="utf-8")
@@ -80,6 +122,10 @@ async def generate_interview_questions(
                     "target_company": target_company,
                     "difficulty": difficulty,
                     "topic": topic,
+                    # Only user-pasted JD text — never invent requirements.
+                    "job_description_text": jd_text,
+                    "resume_summary": res_text,
+                    "candidate_skills": skills,
                 },
                 schema_model=InterviewQuestionsResult,
             )
@@ -110,7 +156,9 @@ async def generate_interview_questions(
             reason = exc.code if isinstance(exc, ApiError) else type(exc).__name__
             logger.warning("groq_interview_questions_failed reason=%s", reason)
             return {
-                "questions": _template_questions(mode, count, target_role),
+                "questions": _template_questions(
+                    mode, count, target_role, job_description_text=jd_text
+                ),
                 "provider": "template",
                 "model": None,
                 "agent": "interview_questions",
@@ -119,7 +167,9 @@ async def generate_interview_questions(
             }
     # Groq not configured: templates are the explicit non-AI path, not a silent fallback.
     return {
-        "questions": _template_questions(mode, count, target_role),
+        "questions": _template_questions(
+            mode, count, target_role, job_description_text=jd_text
+        ),
         "provider": "template",
         "model": None,
         "agent": "interview_questions",

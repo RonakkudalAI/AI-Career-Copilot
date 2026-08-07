@@ -12,6 +12,12 @@
       "sourceType": "github",
       "skillPath": "skills/engineering/diagnosing-bugs/SKILL.md",
       "computedHash": "b69bc2ee03ee31200639deed65168ab9e48db43af3ed47889a66c4bd190601eb"
+    },
+    "fix-errors": {
+      "source": "microsoft/vscode",
+      "sourceType": "github",
+      "skillPath": ".github/skills/fix-errors/SKILL.md",
+      "computedHash": "356d24d2637dd0db3a783381929755dcf7ae563564cd62032bbc0a6d69eb404c"
     }
   }
 }

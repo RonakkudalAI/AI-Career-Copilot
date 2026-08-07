@@ -54,6 +54,7 @@ function seedDemoInterviewProgress(): Pick<DemoState, "interviews" | "reports"> 
       communication: 48,
       structure: 55,
       content: 54,
+      eye: 42,
     },
     {
       id: "demo-interview-2",
@@ -65,6 +66,7 @@ function seedDemoInterviewProgress(): Pick<DemoState, "interviews" | "reports"> 
       communication: 58,
       structure: 64,
       content: 62,
+      eye: 55,
     },
     {
       id: "demo-interview-3",
@@ -76,6 +78,7 @@ function seedDemoInterviewProgress(): Pick<DemoState, "interviews" | "reports"> 
       communication: 66,
       structure: 70,
       content: 69,
+      eye: 68,
     },
     {
       id: "demo-interview-4",
@@ -87,6 +90,7 @@ function seedDemoInterviewProgress(): Pick<DemoState, "interviews" | "reports"> 
       communication: 74,
       structure: 78,
       content: 77,
+      eye: 82,
     },
   ];
 
@@ -122,6 +126,13 @@ function seedDemoInterviewProgress(): Pick<DemoState, "interviews" | "reports"> 
       strengths: ["Clearer structure than earlier practice", "Stronger examples"],
       improvements: ["Tighten openings", "End with measurable impact"],
       practice_plan: ["Rehearse one STAR story", "Record and review fillers"],
+      gaze_summary: {
+        average_eye_contact_score: s.eye,
+        looking_samples: Math.round(s.eye * 0.4),
+        away_samples: Math.round((100 - s.eye) * 0.4),
+        answers_with_gaze: 4,
+        notes: `Demo camera presence ~${s.eye}% of tracked answer time.`,
+      },
       provider: "demo",
     },
     provider: "demo",
@@ -221,6 +232,59 @@ function jsonBody(init: RequestInit) {
   }
 }
 
+function buildDemoReport(session: DemoRecord, responses: DemoRecord[]): DemoRecord {
+  const reviews = responses.map((response, index) => {
+    const evaluation = (response.evaluation || {}) as DemoRecord;
+    const answer = String(response.transcript || response.typed_response || "").trim();
+    return {
+      question: String(state.questions.find((q) => q.id === response.question_id)?.question || `Question ${index + 1}`),
+      answer,
+      score: Number(evaluation.score || 0),
+      verdict: String(evaluation.verdict || "unreviewed"),
+      interviewer_feedback: String(evaluation.interviewer_feedback || "No interviewer feedback was recorded."),
+      strengths: Array.isArray(evaluation.strengths) ? evaluation.strengths : [],
+      improvements: Array.isArray(evaluation.improvements) ? evaluation.improvements : [],
+      better_approach: evaluation.better_approach,
+      filler_analysis: evaluation.filler_analysis || {},
+      speaking_delivery: evaluation.speaking_delivery || {},
+    };
+  });
+  const scores = reviews.map((review) => Number(review.score)).filter(Number.isFinite);
+  const overall = scores.length ? Math.round(scores.reduce((sum, score) => sum + score, 0) / scores.length) : 0;
+  const allImprovements = reviews.flatMap((review) => review.improvements as string[]).filter(Boolean);
+  const allStrengths = reviews.flatMap((review) => review.strengths as string[]).filter(Boolean);
+  const fillers = reviews.reduce((sum, review) => sum + Number((review.filler_analysis as DemoRecord).total_count || 0), 0);
+  const words = reviews.reduce((sum, review) => sum + Number((review.filler_analysis as DemoRecord).word_count || 0), 0);
+  const lowest = reviews.reduce<DemoRecord | null>((current, review) =>
+    !current || Number(review.score) < Number(current.score) ? review : current, null);
+  const role = String(session.target_role || "this role");
+  const summary = reviews.length
+    ? `Evidence-only demo debrief for ${role}: ${reviews.length} recorded answer(s) averaged ${overall}/100. The feedback below is derived from those answers; no employer decision is implied.`
+    : "No answers were recorded for this demo session, so no performance report was generated.";
+  return {
+    overall_summary: summary,
+    overall_score: overall,
+    communication_score: words ? Math.max(0, Math.min(100, 88 - Math.round((fillers / words) * 400))) : 0,
+    structure_score: overall,
+    content_score: overall,
+    strengths: [...new Set(allStrengths)].slice(0, 8),
+    improvements: [...new Set(allImprovements)].slice(0, 8),
+    practice_plan: lowest ? [`Re-answer question ${reviews.indexOf(lowest) + 1} and address the recorded feedback: ${String((lowest.improvements as string[])[0] || "add a specific result")}.`] : [],
+    filler_summary: words ? `${fillers} filler token(s) across ~${words} recorded words.` : "No transcript words were recorded.",
+    speaking_summary: {
+      average_words_per_minute: null,
+      total_fillers: fillers,
+      total_words: words,
+      filler_rate: words ? fillers / words : 0,
+    },
+    score_series: reviews.map((review, index) => ({ position: index + 1, score: review.score, label: `Q${index + 1}` })),
+    question_reviews: reviews,
+    provider: "demo_evidence",
+    generation_status: "evidence_only",
+    report_version: "evidence-report-v2",
+  };
+}
+
 function resource(resource: string) {
   const table: Record<string, DemoRecord[]> = {
     skills: state.skills,
@@ -264,6 +328,14 @@ function buildDemoInterviewProgress() {
         communication_score: report.communication_score ?? null,
         structure_score: report.structure_score ?? null,
         content_score: report.content_score ?? null,
+        eye_contact_score:
+          (report.report as DemoRecord | undefined)?.gaze_summary &&
+          typeof (report.report as DemoRecord).gaze_summary === "object"
+            ? Number(
+                ((report.report as DemoRecord).gaze_summary as DemoRecord)
+                  .average_eye_contact_score,
+              ) || null
+            : null,
       };
     })
     .sort((a, b) => String(a.at || "").localeCompare(String(b.at || "")));
@@ -275,7 +347,9 @@ function buildDemoInterviewProgress() {
   const previous = overalls.length >= 2 ? overalls[overalls.length - 2] : null;
   const delta = latest != null && previous != null ? latest - previous : null;
 
-  const dim = (key: "communication_score" | "structure_score" | "content_score") => {
+  const dim = (
+    key: "communication_score" | "structure_score" | "content_score" | "eye_contact_score",
+  ) => {
     const values = history
       .map((h) => h[key])
       .filter((v): v is number => typeof v === "number");
@@ -304,6 +378,7 @@ function buildDemoInterviewProgress() {
       communication: dim("communication_score"),
       structure: dim("structure_score"),
       content: dim("content_score"),
+      eye_contact: dim("eye_contact_score"),
     },
   };
 }
@@ -706,6 +781,9 @@ export async function demoApiRequest<T>(path: string, init: RequestInit = {}): P
   if (parts[0] === "interviews" && parts[2] === "responses" && method === "POST") {
     const answer = String((body as DemoRecord)?.transcript || (body as DemoRecord)?.typed_response || "");
     const fillers = (answer.toLowerCase().match(/\b(um|uh|like|you know)\b/g) || []).length;
+    const wordCount = answer.split(/\s+/).filter(Boolean).length;
+    const duration = Number((body as DemoRecord)?.duration_seconds || 0);
+    const wpm = duration >= 1 && wordCount > 0 ? Math.round((wordCount / duration) * 60 * 10) / 10 : null;
     const evaluation = {
       verdict: answer.length > 80 ? "solid" : "partial",
       score: Math.min(92, 40 + Math.floor(answer.length / 4) - fillers * 3),
@@ -719,9 +797,21 @@ export async function demoApiRequest<T>(path: string, init: RequestInit = {}): P
         total_count: fillers,
         unique: fillers ? ["um/uh/like/you know"] : [],
         counts: fillers ? { filler: fillers } : {},
-        word_count: answer.split(/\s+/).filter(Boolean).length,
-        filler_rate: 0,
+        word_count: wordCount,
+        filler_rate: wordCount ? fillers / wordCount : 0,
         notes: fillers ? "Practice pausing instead of fillers." : "Clean delivery.",
+      },
+      speaking_delivery: {
+        word_count: wordCount,
+        duration_seconds: duration || null,
+        words_per_minute: wpm,
+        pace_band: wpm == null ? "unknown" : wpm < 90 ? "slow" : wpm <= 165 ? "steady" : "fast",
+        pace_notes:
+          wpm == null
+            ? "Demo mode: pace needs a timed spoken answer."
+            : `Demo pace ~${wpm} wpm.`,
+        filler_count: fillers,
+        filler_rate: wordCount ? fillers / wordCount : 0,
       },
       provider: "demo",
     };
@@ -740,6 +830,7 @@ export async function demoApiRequest<T>(path: string, init: RequestInit = {}): P
     const session = state.interviews.find((item) => item.id === parts[1]);
     if (session) session.status = "completed";
     const sessionResponses = state.responses.filter((r) => r.session_id === parts[1]);
+    const reportBody = buildDemoReport(session || {}, sessionResponses);
     const report = {
       id: id("demo-report"),
       session_id: parts[1],
@@ -759,6 +850,25 @@ export async function demoApiRequest<T>(path: string, init: RequestInit = {}): P
         improvements: ["Add measurable outcomes", "Tighten openings"],
         practice_plan: ["Re-answer one question with STAR", "Record and count fillers"],
         filler_summary: "Demo filler summary for this session.",
+        speaking_summary: {
+          average_words_per_minute: 130,
+          total_fillers: 2,
+          total_words: 80,
+          filler_rate: 0.025,
+        },
+        practice_readiness: {
+          band: "needs_targeted_practice",
+          label: "Developing — targeted practice recommended",
+          composite_score: 72,
+          next_step: "Close the gap on structure and results before real interviews.",
+          disclaimer:
+            "Practice coaching only. This is not a hiring decision and does not predict whether any employer will hire the candidate.",
+        },
+        score_series: sessionResponses.map((r, index) => ({
+          position: index + 1,
+          score: Number(((r.evaluation || {}) as DemoRecord).score || 70),
+          label: `Q${index + 1}`,
+        })),
         question_reviews: sessionResponses.map((r, index) => {
           const evaluation = (r.evaluation || {}) as DemoRecord;
           return {
@@ -771,12 +881,22 @@ export async function demoApiRequest<T>(path: string, init: RequestInit = {}): P
             improvements: (evaluation.improvements as string[]) || [],
             better_approach: evaluation.better_approach,
             filler_analysis: evaluation.filler_analysis,
+            speaking_delivery: evaluation.speaking_delivery,
           };
         }),
         provider: "demo",
       },
       provider: "demo",
     };
+    Object.assign(report, {
+      overall_score: reportBody.overall_score,
+      communication_score: reportBody.communication_score,
+      structure_score: reportBody.structure_score,
+      content_score: reportBody.content_score,
+      summary: reportBody.overall_summary,
+      report: reportBody,
+      provider: "demo_evidence",
+    });
     state.reports = state.reports.filter((item) => item.session_id !== parts[1]);
     state.reports.push(report);
     return { session, report, message: "Demo session completed with debrief report." } as T;
@@ -787,7 +907,12 @@ export async function demoApiRequest<T>(path: string, init: RequestInit = {}): P
     if (!session) throw new Error("Session not found.");
     if (session.status !== "completed") throw new Error("Complete the demo session before viewing its report.");
     const storedReport = state.reports.find((item) => item.session_id === parts[1]);
-    if (storedReport) return { session, report: storedReport } as T;
+    if (storedReport) {
+      const generatedReport = buildDemoReport(session, sessionResponses);
+      const refreshed = { ...storedReport, ...generatedReport, report: generatedReport };
+      state.reports = state.reports.map((item) => item.session_id === parts[1] ? refreshed : item);
+      return { session, report: refreshed } as T;
+    }
     return {
       session,
       report: {
