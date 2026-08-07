@@ -1230,26 +1230,24 @@ export function ProfileSettings() {
         </Card>
       ) : (
         <div className="stack">
-          <Card className="stack">
-            <Progress value={completion} label="Profile completion" />
-            {!profileComplete && missingFromDetails.length > 0 ? (
-              <div className="stack" style={{ gap: 6 }}>
-                <p style={{ margin: 0, fontWeight: 600 }}>Still needed to complete your profile</p>
-                <ul style={{ margin: 0, paddingLeft: 18 }}>
-                  {missingFromDetails.map((item) => (
-                    <li key={item.key}>
-                      {item.label}
-                      {item.points != null ? ` (+${item.points}%)` : ""}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : profileComplete ? (
-              <p className="muted" style={{ margin: 0 }}>
-                Profile complete — great work.
-              </p>
-            ) : null}
-          </Card>
+          {!profileComplete ? (
+            <Card className="stack">
+              <Progress value={completion} label="Profile completion" />
+              {missingFromDetails.length > 0 ? (
+                <div className="stack" style={{ gap: 6 }}>
+                  <p style={{ margin: 0, fontWeight: 600 }}>Still needed to complete your profile</p>
+                  <ul style={{ margin: 0, paddingLeft: 18 }}>
+                    {missingFromDetails.map((item) => (
+                      <li key={item.key}>
+                        {item.label}
+                        {item.points != null ? ` (+${item.points}%)` : ""}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+            </Card>
+          ) : null}
 
           <Card className="stack panel-blue">
             <h2 style={{ margin: 0 }}>Fill profile from resume</h2>

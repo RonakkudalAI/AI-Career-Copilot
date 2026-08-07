@@ -8,7 +8,7 @@ const result = spawnSync(process.execPath, ["scripts/setup/firebase.mjs"], {
   cwd: process.cwd(),
   env: { ...process.env },
   stdio: "inherit",
-  timeout: Number(process.env.DEV_PREFLIGHT_TIMEOUT_MS || 15_000),
+  timeout: Number(process.env.DEV_PREFLIGHT_TIMEOUT_MS || 30_000),
 });
 if ((result.status ?? 1) !== 0) {
   const strict = process.argv.includes("--strict");

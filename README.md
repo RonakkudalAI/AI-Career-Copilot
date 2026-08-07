@@ -53,7 +53,7 @@ Career Copilot is a monorepo web app where a candidate can:
 | **Profile** | Structured fields, avatar, completion checklist (0–100), fill-from-resume preview → apply |
 | **Resume / JD** | Upload or paste → review → **confirm** |
 | **ATS** | Deterministic keyword coverage (`evidence-keyword-coverage-v3`); history shows resume + JD used |
-| **Interviews** | Question packs + practice sessions; optional TTS / speech-to-text; **no AI grading** |
+| **Interviews** | Question packs + practice sessions; optional TTS / speech-to-text; practice feedback (coaching, not hiring scores) |
 | **Learning** | ATS gaps → YouTube videos (API) or search-page URLs only |
 | **Jobs** | Evidence-based recommendations; optional Adzuna sync |
 | **Account wipe** | Confirm with `DELETE MY ACCOUNT` |
@@ -61,7 +61,7 @@ Career Copilot is a monorepo web app where a candidate can:
 ### Not included (by design)
 
 - Invented skills, employers, metrics, or YouTube video IDs  
-- AI interview scoring or “hiring prediction” scores  
+- AI **hiring** decisions or “you will get the job” prediction scores (practice coaching feedback may still exist)  
 - Product-path embedding / cosine-similarity ATS  
 - Direct browser access to Firestore or storage service keys  
 
@@ -170,7 +170,7 @@ Browser (Vite + React)
 | `backend/app/database/` | Firestore + storage adapters, ownership helpers |
 | `backend/app/agents/` | Provider clients, prompts, preferred-provider routing |
 | `backend/app/features/` | Domain logic (auth, parsing, ATS, interview, …) |
-| `docs/` | Deep technical documentation |
+| `docs/DOCUMENTATION.md` | Unified technical documentation |
 
 > [!NOTE]
 > Leave `VITE_API_BASE_URL` unset for local dev so the app uses the same-origin `/api/backend` proxy. Set it only for static hosting that cannot proxy.
@@ -195,11 +195,11 @@ ATS, learning generation, interview prep evidence, and job-match evidence requir
 
 - Questions: Groq structured output, or **local templates** if the provider fails  
 - Session UI can speak questions and capture speech to text in Chromium browsers  
-- Answers stored as text/transcript — **not graded by AI**  
+- Practice feedback + session report (Groq or deterministic heuristics) — **coaching only**, not a hiring decision  
 
 ### Agents
 
-Prefer `LLM_PROVIDER` (default **groq**), then the other configured provider. Status: `GET /api/v1/agents/status`.
+Prefer `LLM_PROVIDER` (default **groq**), then the other configured provider. Status: `GET /api/v1/agents/status`. Full agent table, prompts, and crews: [docs/DOCUMENTATION.md](./docs/DOCUMENTATION.md).
 
 ---
 
@@ -241,15 +241,11 @@ Full map: [docs/api-reference.md](./docs/api-reference.md).
 
 ## Documentation
 
-| Doc | Contents |
-|-----|----------|
-| [docs/README.md](./docs/README.md) | Index |
-| [docs/architecture.md](./docs/architecture.md) | Design and trust boundaries |
-| [docs/operations.md](./docs/operations.md) | Setup, scripts, troubleshooting |
-| [docs/data-model.md](./docs/data-model.md) | Firestore + storage layout |
-| [docs/flows.md](./docs/flows.md) | End-to-end flows |
-| [docs/frontend.md](./docs/frontend.md) | UI and BFF |
-| [docs/features/](./docs/features/) | Per-domain deep dives |
+**Single source of truth:** [docs/DOCUMENTATION.md](./docs/DOCUMENTATION.md)
+
+Covers aim, problem statement, tech stack, every application file purpose, agents, models/frameworks/libraries, project flow, data model, API map, operations, and Mermaid diagrams (architecture, flow, auth/db, Firebase, ATS, mock interview, job recommendation, learning path).
+
+Older paths under `docs/` redirect to that file.
 
 ---
 
@@ -286,4 +282,6 @@ cd frontend && npm run test && npm run typecheck
 1. **Evidence over invention** — confirmed text is the source of truth.  
 2. **Server-enforced ownership** — every row and file path is scoped to the signed-in user.  
 3. **Deterministic product ATS** — LLMs enrich; they do not own the score.  
-4. **Degrade gracefully** — missing LLM/YouTube/Adzuna reduces features, not the whole app.  
+4. **Degrade gracefully** — missing LLM/YouTube/Adzuna reduces features, not the whole app.
+
+Full technical detail: [docs/DOCUMENTATION.md](./docs/DOCUMENTATION.md).

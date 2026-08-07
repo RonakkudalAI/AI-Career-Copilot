@@ -37,8 +37,102 @@ function id(prefix: string) {
   return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function daysAgo(days: number) {
+  return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+}
+
+/** Seed completed mock sessions with an upward score trend for dashboard charts. */
+function seedDemoInterviewProgress(): Pick<DemoState, "interviews" | "reports"> {
+  const sessions = [
+    {
+      id: "demo-interview-1",
+      label: "Behavioural warm-up",
+      mode: "behavioural",
+      target_role: "Software Engineer",
+      days: 21,
+      overall: 52,
+      communication: 48,
+      structure: 55,
+      content: 54,
+    },
+    {
+      id: "demo-interview-2",
+      label: "Technical fundamentals",
+      mode: "technical",
+      target_role: "Backend Engineer",
+      days: 14,
+      overall: 61,
+      communication: 58,
+      structure: 64,
+      content: 62,
+    },
+    {
+      id: "demo-interview-3",
+      label: "Mixed practice",
+      mode: "mixed",
+      target_role: "Software Engineer",
+      days: 7,
+      overall: 68,
+      communication: 66,
+      structure: 70,
+      content: 69,
+    },
+    {
+      id: "demo-interview-4",
+      label: "Role-focused debrief",
+      mode: "mixed",
+      target_role: "Backend Engineer",
+      days: 2,
+      overall: 76,
+      communication: 74,
+      structure: 78,
+      content: 77,
+    },
+  ];
+
+  const interviews = sessions.map((s) => ({
+    id: s.id,
+    user_id: DEMO_USER_ID,
+    mode: s.mode,
+    target_role: s.target_role,
+    status: "completed",
+    question_count: 4,
+    created_at: daysAgo(s.days),
+    started_at: daysAgo(s.days),
+    completed_at: daysAgo(s.days - 0.02),
+  }));
+
+  const reports = sessions.map((s) => ({
+    id: `${s.id}-report`,
+    session_id: s.id,
+    user_id: DEMO_USER_ID,
+    status: "ready",
+    overall_score: s.overall,
+    communication_score: s.communication,
+    structure_score: s.structure,
+    content_score: s.content,
+    created_at: daysAgo(s.days - 0.02),
+    summary: `Demo debrief for ${s.label}: overall ${s.overall}/100.`,
+    report: {
+      overall_summary: `Demo debrief for ${s.label}: overall ${s.overall}/100. Practice shows steady improvement.`,
+      overall_score: s.overall,
+      communication_score: s.communication,
+      structure_score: s.structure,
+      content_score: s.content,
+      strengths: ["Clearer structure than earlier practice", "Stronger examples"],
+      improvements: ["Tighten openings", "End with measurable impact"],
+      practice_plan: ["Rehearse one STAR story", "Record and review fillers"],
+      provider: "demo",
+    },
+    provider: "demo",
+  }));
+
+  return { interviews, reports };
+}
+
 function initialState(): DemoState {
   const created = now();
+  const seeded = seedDemoInterviewProgress();
   return {
     profile: {
       id: DEMO_USER_ID,
@@ -92,10 +186,10 @@ function initialState(): DemoState {
     jobDescriptions: [],
     analyses: [],
     evidence: [],
-    interviews: [],
+    interviews: seeded.interviews,
     questions: [],
     responses: [],
-    reports: [],
+    reports: seeded.reports,
     savedJobs: [],
     jobs: [
       { id: "demo-job-1", title: "Software Engineer", company: "Northstar Labs", location: "Bengaluru", work_mode: "hybrid", description: "Build dependable product experiences with a small engineering team.", is_active: true, latitude: 12.9716, longitude: 77.5946 },
@@ -141,16 +235,105 @@ function profileResponse() {
   return { profile: state.profile, preferences: state.preferences };
 }
 
+function buildDemoInterviewProgress() {
+  const sessionById = new Map(state.interviews.map((row) => [String(row.id), row]));
+  const bestBySession = new Map<string, DemoRecord>();
+  const sortedReports = [...state.reports].sort((a, b) =>
+    String(b.created_at || "").localeCompare(String(a.created_at || "")),
+  );
+  for (const report of sortedReports) {
+    const sid = String(report.session_id || "");
+    if (!sid || bestBySession.has(sid)) continue;
+    if (report.overall_score == null) continue;
+    bestBySession.set(sid, report);
+  }
+
+  const history = [...bestBySession.entries()]
+    .map(([sid, report]) => {
+      const session = sessionById.get(sid) || {};
+      const labelParts = [session.target_role, session.target_company].filter(Boolean);
+      return {
+        session_id: sid,
+        label: labelParts.length
+          ? labelParts.join(" · ")
+          : String(session.mode || "Mock interview").replaceAll("_", " "),
+        mode: session.mode || null,
+        status: session.status || "completed",
+        at: session.completed_at || report.created_at || session.created_at || null,
+        overall_score: report.overall_score ?? null,
+        communication_score: report.communication_score ?? null,
+        structure_score: report.structure_score ?? null,
+        content_score: report.content_score ?? null,
+      };
+    })
+    .sort((a, b) => String(a.at || "").localeCompare(String(b.at || "")));
+
+  const overalls = history
+    .map((h) => h.overall_score)
+    .filter((v): v is number => typeof v === "number");
+  const latest = overalls.length ? overalls[overalls.length - 1] : null;
+  const previous = overalls.length >= 2 ? overalls[overalls.length - 2] : null;
+  const delta = latest != null && previous != null ? latest - previous : null;
+
+  const dim = (key: "communication_score" | "structure_score" | "content_score") => {
+    const values = history
+      .map((h) => h[key])
+      .filter((v): v is number => typeof v === "number");
+    if (!values.length) return { latest: null, previous: null, average: null };
+    return {
+      latest: values[values.length - 1],
+      previous: values.length >= 2 ? values[values.length - 2] : null,
+      average: Math.round((values.reduce((a, b) => a + b, 0) / values.length) * 10) / 10,
+    };
+  };
+
+  return {
+    sessions_total: state.interviews.length,
+    sessions_completed: state.interviews.filter((s) => s.status === "completed").length,
+    sessions_with_scores: history.length,
+    latest_overall: latest,
+    previous_overall: previous,
+    delta,
+    best_overall: overalls.length ? Math.max(...overalls) : null,
+    average_overall: overalls.length
+      ? Math.round((overalls.reduce((a, b) => a + b, 0) / overalls.length) * 10) / 10
+      : null,
+    trend: delta == null ? "none" : delta > 0 ? "up" : delta < 0 ? "down" : "flat",
+    history,
+    dimensions: {
+      communication: dim("communication_score"),
+      structure: dim("structure_score"),
+      content: dim("content_score"),
+    },
+  };
+}
+
 function bootstrap() {
   const activeResume = state.resumes.find((resume) => resume.is_active) || null;
   const latestAnalysis = state.analyses[0] || null;
+  const completedInterviews = state.interviews
+    .filter((row) => row.status === "completed")
+    .sort((a, b) => String(b.completed_at || b.created_at || "").localeCompare(String(a.completed_at || a.created_at || "")));
+  const lastInterview = completedInterviews[0] || state.interviews[0] || null;
   return {
     profile: state.profile,
     active_resume: activeResume ? { id: activeResume.id } : null,
     active_job_description: state.jobDescriptions[0] || null,
     latest_ats_analysis: latestAnalysis,
-    latest_actions: { last_resume_upload: null, last_interview: null, last_job_applied: null },
-    capabilities: { interview_evaluation: false },
+    latest_actions: {
+      last_resume_upload: null,
+      last_interview: lastInterview
+        ? {
+            id: lastInterview.id,
+            label: String(lastInterview.target_role || lastInterview.mode || "Mock interview"),
+            status: lastInterview.status,
+            at: lastInterview.completed_at || lastInterview.created_at,
+          }
+        : null,
+      last_job_applied: null,
+    },
+    interview_progress: buildDemoInterviewProgress(),
+    capabilities: { interview_evaluation: true },
     recent_activity: [],
     counts: {
       resumes: state.resumes.length,

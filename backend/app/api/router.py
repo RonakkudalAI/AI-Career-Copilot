@@ -263,6 +263,7 @@ def bootstrap(
             "latest_analysis": executor.submit(_read_latest_analysis),
             "recent_activity": executor.submit(list_recent_activity, client, user),
             "latest_actions": executor.submit(_latest_actions, client, user),
+            "interview_progress": executor.submit(_interview_progress, client, user),
         }
         profile = (futures["profile"].result().data or [{}])[0]
         active_resume = futures["active_resume"].result().data or []
@@ -271,6 +272,7 @@ def bootstrap(
         latest_analysis = futures["latest_analysis"].result() or []
         recent_activity = futures["recent_activity"].result()
         latest_actions = futures["latest_actions"].result()
+        interview_progress = futures["interview_progress"].result()
     def _count(table: str, *, deleted_only: bool = False, failed_only: bool = False) -> int:
         query = client.table(table).select("*", count="exact", head=True).eq("user_id", uid)
         if deleted_only:
@@ -300,6 +302,7 @@ def bootstrap(
         "active_job_description": latest_jd[0] if latest_jd else None,
         "latest_ats_analysis": latest_analysis[0] if latest_analysis else None,
         "latest_actions": latest_actions,
+        "interview_progress": interview_progress,
         "counts": counts,
         "recent_activity": recent_activity,
         "workspace": {
@@ -337,6 +340,166 @@ def bootstrap(
             "groq_configured": settings.groq_configured,
         },
         "agents": agents_status(settings),
+    }
+
+
+def _safe_score(value: Any) -> int | None:
+    """Coerce a report score to an int 0–100, or None when missing/invalid."""
+    if value is None or value == "":
+        return None
+    try:
+        score = int(round(float(value)))
+    except (TypeError, ValueError):
+        return None
+    return max(0, min(100, score))
+
+
+def _interview_progress(client, user: CurrentUser) -> dict[str, Any]:
+    """
+    Aggregate mock-interview scores for dashboard charts.
+
+    Joins interview_reports with sessions so the UI can plot improvement over time
+    without N+1 report fetches. Never raises — empty history is a valid state.
+    """
+    empty = {
+        "sessions_total": 0,
+        "sessions_completed": 0,
+        "sessions_with_scores": 0,
+        "latest_overall": None,
+        "previous_overall": None,
+        "delta": None,
+        "best_overall": None,
+        "average_overall": None,
+        "trend": "none",
+        "history": [],
+        "dimensions": {
+            "communication": {"latest": None, "previous": None, "average": None},
+            "structure": {"latest": None, "previous": None, "average": None},
+            "content": {"latest": None, "previous": None, "average": None},
+        },
+    }
+    uid = str(user.id)
+    try:
+        sessions = (
+            client.table("interview_sessions")
+            .select(
+                "id,mode,target_role,target_company,status,created_at,completed_at,started_at"
+            )
+            .eq("user_id", uid)
+            .execute()
+            .data
+            or []
+        )
+        reports = (
+            client.table("interview_reports")
+            .select(
+                "id,session_id,overall_score,communication_score,structure_score,"
+                "content_score,created_at,status"
+            )
+            .eq("user_id", uid)
+            .execute()
+            .data
+            or []
+        )
+    except Exception:
+        return empty
+
+    sessions_total = len(sessions)
+    sessions_completed = sum(1 for row in sessions if row.get("status") == "completed")
+    session_by_id = {str(row.get("id")): row for row in sessions if row.get("id")}
+
+    # Keep the newest report per session (created_at preferred).
+    best_report_by_session: dict[str, dict[str, Any]] = {}
+    for report in sort_rows_by_recency(reports, desc=True, preferred="created_at"):
+        sid = str(report.get("session_id") or "")
+        if not sid or sid in best_report_by_session:
+            continue
+        if _safe_score(report.get("overall_score")) is None:
+            continue
+        best_report_by_session[sid] = report
+
+    history: list[dict[str, Any]] = []
+    for sid, report in best_report_by_session.items():
+        session = session_by_id.get(sid) or {}
+        label_parts = [
+            part
+            for part in (session.get("target_role"), session.get("target_company"))
+            if part
+        ]
+        if not label_parts and session.get("mode"):
+            label_parts = [str(session["mode"]).replace("_", " ").title()]
+        at = (
+            session.get("completed_at")
+            or report.get("created_at")
+            or session.get("started_at")
+            or session.get("created_at")
+        )
+        history.append(
+            {
+                "session_id": sid,
+                "label": " · ".join(label_parts) if label_parts else "Mock interview",
+                "mode": session.get("mode"),
+                "status": session.get("status") or "completed",
+                "at": at,
+                "overall_score": _safe_score(report.get("overall_score")),
+                "communication_score": _safe_score(report.get("communication_score")),
+                "structure_score": _safe_score(report.get("structure_score")),
+                "content_score": _safe_score(report.get("content_score")),
+            }
+        )
+
+    # Chronological for charts (oldest → newest).
+    history = sorted(
+        history,
+        key=lambda row: str(row.get("at") or ""),
+    )
+    # Cap points so the sparkline stays readable on the dashboard.
+    if len(history) > 12:
+        history = history[-12:]
+
+    overalls = [int(h["overall_score"]) for h in history if h.get("overall_score") is not None]
+    latest_overall = overalls[-1] if overalls else None
+    previous_overall = overalls[-2] if len(overalls) >= 2 else None
+    delta = (
+        (latest_overall - previous_overall)
+        if latest_overall is not None and previous_overall is not None
+        else None
+    )
+    if delta is None:
+        trend = "none"
+    elif delta > 0:
+        trend = "up"
+    elif delta < 0:
+        trend = "down"
+    else:
+        trend = "flat"
+
+    def _dim_stats(key: str) -> dict[str, Any]:
+        values = [int(h[key]) for h in history if h.get(key) is not None]
+        if not values:
+            return {"latest": None, "previous": None, "average": None}
+        return {
+            "latest": values[-1],
+            "previous": values[-2] if len(values) >= 2 else None,
+            "average": round(sum(values) / len(values), 1),
+        }
+
+    return {
+        "sessions_total": sessions_total,
+        "sessions_completed": sessions_completed,
+        "sessions_with_scores": len(history),
+        "latest_overall": latest_overall,
+        "previous_overall": previous_overall,
+        "delta": delta,
+        "best_overall": max(overalls) if overalls else None,
+        "average_overall": round(sum(overalls) / len(overalls), 1) if overalls else None,
+        "trend": trend,
+        "history": history,
+        "dimensions": {
+            "communication": _dim_stats("communication_score"),
+            "structure": _dim_stats("structure_score"),
+            "content": _dim_stats("content_score"),
+        },
     }
 
 

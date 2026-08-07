@@ -12,6 +12,10 @@ import {
 } from "@/features/profile/model/profile-completion";
 import { isDemoSession } from "@/features/auth/demo-session";
 import { Card, PageHeader, Progress } from "@/shared/ui/primitives";
+import {
+  InterviewProgressPanel,
+  type InterviewProgress,
+} from "@/features/dashboard/components/interview-progress-charts";
 
 type Activity = {
   id: string;
@@ -60,6 +64,7 @@ type Bootstrap = {
   active_job_description: { title: string; role_title?: string | null } | null;
   latest_ats_analysis: { id: string; overall_score: number | null; status: string } | null;
   latest_actions?: LatestActions | null;
+  interview_progress?: InterviewProgress | null;
   capabilities: Record<string, boolean>;
   recent_activity?: Activity[];
   workspace?: {
@@ -175,13 +180,16 @@ export function Dashboard() {
     data?.latest_ats_analysis?.overall_score == null
       ? null
       : Math.round(Number(data.latest_ats_analysis.overall_score));
+  const interviewProgress = data?.interview_progress;
+  const interviewLatest = interviewProgress?.latest_overall ?? null;
+  const interviewDelta = interviewProgress?.delta ?? null;
 
   return (
     <div className="feature-page">
       <PageHeader
         eyebrow="Career workspace"
         title={`Welcome, ${first}.`}
-        description="A live snapshot of your profile, analyses, interviews, and recent activity."
+        description="A live snapshot of your profile, analyses, interview improvement, and recent activity."
         action={
           <>
             <Link className="button button-secondary" href="/mock-interview">
@@ -254,11 +262,32 @@ export function Dashboard() {
             </Link>
           )}
         </article>
-        <article className="metric-card">
+        <article className="metric-card metric-card-interview">
           <p className="metric-card-label">Interviews</p>
-          <div className="metric-value">{data?.counts?.interviews ?? "—"}</div>
+          <div className="metric-value-row">
+            <div className="metric-value">{data?.counts?.interviews ?? "—"}</div>
+            {interviewLatest != null ? (
+              <span
+                className="metric-inline-score"
+                title="Latest overall mock interview score"
+              >
+                {interviewLatest}
+                {interviewDelta != null ? (
+                  <small data-tone={interviewDelta > 0 ? "up" : interviewDelta < 0 ? "down" : "flat"}>
+                    {interviewDelta > 0 ? `+${interviewDelta}` : interviewDelta}
+                  </small>
+                ) : null}
+              </span>
+            ) : null}
+          </div>
           <p className="metric-card-note">
-            {data?.capabilities?.interview_evaluation === false ? "Practice mode" : "Your sessions"}
+            {interviewLatest != null
+              ? `Latest score ${interviewLatest}/100`
+              : data?.capabilities?.interview_evaluation === false
+                ? "Practice mode"
+                : data
+                  ? "Complete a session for scores"
+                  : "—"}
           </p>
           <Link className="metric-card-link" href="/mock-interview">
             View sessions
@@ -274,40 +303,41 @@ export function Dashboard() {
         </article>
       </section>
 
+      {data ? <InterviewProgressPanel progress={interviewProgress} /> : null}
+
       <section
         className={`dashboard-main ${completion >= 100 ? "is-profile-complete" : ""}`}
         aria-label="Profile and latest progress"
       >
-        <Card
-          className={`dashboard-panel stack completion-panel ${completion >= 100 ? "is-complete" : ""}`}
-          aria-hidden={completion >= 100}
-        >
-          <div className="dashboard-panel-head">
-            <h2>Profile completion</h2>
-            <p className="muted">Finish the checklist so recommendations stay accurate.</p>
-          </div>
-          <Progress value={completion} label="Profile completion" />
-          {missing.length > 0 ? (
-            <div className="stack" style={{ gap: 6 }}>
-              <p className="muted" style={{ margin: 0, fontSize: "var(--text-sm)" }}>
-                Still needed ({missing.length}):
-              </p>
-              <ul style={{ margin: 0, paddingLeft: 18, fontSize: "var(--text-sm)" }}>
-                {missing.slice(0, 5).map((item) => (
-                  <li key={item.key}>{item.label}</li>
-                ))}
-              </ul>
-              {missing.length > 5 ? (
-                <p className="muted" style={{ margin: 0, fontSize: "var(--text-xs)" }}>
-                  +{missing.length - 5} more
-                </p>
-              ) : null}
+        {completion < 100 ? (
+          <Card className="dashboard-panel stack completion-panel">
+            <div className="dashboard-panel-head">
+              <h2>Profile completion</h2>
+              <p className="muted">Finish the checklist so recommendations stay accurate.</p>
             </div>
-          ) : null}
-          <Link className="button button-secondary" href="/settings/profile" style={{ width: "fit-content" }}>
-            Complete profile
-          </Link>
-        </Card>
+            <Progress value={completion} label="Profile completion" />
+            {missing.length > 0 ? (
+              <div className="stack" style={{ gap: 6 }}>
+                <p className="muted" style={{ margin: 0, fontSize: "var(--text-sm)" }}>
+                  Still needed ({missing.length}):
+                </p>
+                <ul style={{ margin: 0, paddingLeft: 18, fontSize: "var(--text-sm)" }}>
+                  {missing.slice(0, 5).map((item) => (
+                    <li key={item.key}>{item.label}</li>
+                  ))}
+                </ul>
+                {missing.length > 5 ? (
+                  <p className="muted" style={{ margin: 0, fontSize: "var(--text-xs)" }}>
+                    +{missing.length - 5} more
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+            <Link className="button button-secondary" href="/settings/profile" style={{ width: "fit-content" }}>
+              Complete profile
+            </Link>
+          </Card>
+        ) : null}
 
         <Card className="dashboard-panel panel-blue stack">
           <div className="dashboard-panel-head">
