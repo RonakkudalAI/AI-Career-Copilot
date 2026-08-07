@@ -25,6 +25,7 @@ export default function CareerGlobe({ jobs = [] }: { jobs?: GlobeJobPin[] }) {
   const velocityRef = useRef({ phi: 0, theta: 0 });
   const anglesRef = useRef({ phi: 0, theta: 0.2 });
   const [webgl, setWebgl] = useState(true);
+  const [isDragging, setIsDragging] = useState(false);
 
   const markers = useMemo(
     () =>
@@ -134,20 +135,23 @@ export default function CareerGlobe({ jobs = [] }: { jobs?: GlobeJobPin[] }) {
       data-testid="career-globe"
       role="application"
       aria-label="Interactive globe of career opportunities. Drag to rotate the globe."
-      style={{ touchAction: "none", cursor: pointerRef.current.active ? "grabbing" : "grab" }}
+      style={{ touchAction: "none", cursor: isDragging ? "grabbing" : "grab" }}
       onPointerDown={(event) => {
         event.currentTarget.setPointerCapture(event.pointerId);
         pointerRef.current = { x: event.clientX, y: event.clientY, active: true, pointerId: event.pointerId };
         velocityRef.current = { phi: 0, theta: 0 };
+        setIsDragging(true);
       }}
       onPointerUp={(event) => {
         if (event.currentTarget.hasPointerCapture(event.pointerId)) {
           event.currentTarget.releasePointerCapture(event.pointerId);
         }
         pointerRef.current = { ...pointerRef.current, active: false, pointerId: -1 };
+        setIsDragging(false);
       }}
       onPointerCancel={() => {
         pointerRef.current = { ...pointerRef.current, active: false, pointerId: -1 };
+        setIsDragging(false);
       }}
       onPointerMove={(event) => {
         if (!pointerRef.current.active) return;

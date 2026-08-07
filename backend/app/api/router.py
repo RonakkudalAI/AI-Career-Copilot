@@ -2999,6 +2999,28 @@ async def complete_interview(
     """Mark session complete and persist a detailed debrief report."""
     client = client_for(settings, user)
     session = owned_row(client, "interview_sessions", session_id, user)
+    questions = (
+        client.table("interview_questions")
+        .select("id")
+        .eq("session_id", str(session_id))
+        .eq("user_id", str(user.id))
+        .execute()
+        .data
+        or []
+    )
+    answered = (
+        client.table("interview_responses")
+        .select("question_id")
+        .eq("session_id", str(session_id))
+        .eq("user_id", str(user.id))
+        .execute()
+        .data
+        or []
+    )
+    answered_ids = {str(row.get("question_id")) for row in answered if row.get("question_id")}
+    required_ids = {str(row.get("id")) for row in questions if row.get("id")}
+    if required_ids - answered_ids:
+        raise ApiError(409, "interview_questions_unanswered", "Answer every interview question before completing the session.")
     result = (
         client.table("interview_sessions")
         .update({"status": "completed", "completed_at": utc_now()})

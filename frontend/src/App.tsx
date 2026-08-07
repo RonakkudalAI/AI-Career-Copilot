@@ -126,6 +126,12 @@ function ProtectedRoute() {
     };
   }, [location.pathname]);
 
+  useEffect(() => {
+    const onAuthExpired = () => setState("no");
+    window.addEventListener("career-copilot:auth-expired", onAuthExpired);
+    return () => window.removeEventListener("career-copilot:auth-expired", onAuthExpired);
+  }, []);
+
   if (state === "loading") {
     return <main className="container" style={{ paddingBlock: "96px" }}>Checking session…</main>;
   }

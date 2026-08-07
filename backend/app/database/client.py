@@ -420,10 +420,18 @@ class FirestoreQuery:
     def _documents(self, collection):
         query = collection
         post_filters: list[tuple[str, str, Any]] = []
+        oversized_in: tuple[str, list[Any]] | None = None
         for operator, column, value in self.filters:
             if operator == "is_null_or_missing":
                 post_filters.append((operator, column, value))
                 continue
+            if operator == "in":
+                values = list(value or [])
+                if not values:
+                    return []
+                if len(values) > 30 and oversized_in is None:
+                    oversized_in = (column, values)
+                    continue
             query = query.where(filter=self.client.field_filter(column, operator, value))
         # Firestore excludes documents that do not contain an ordered field.
         # Several legacy records legitimately lack recency fields, so apply
@@ -431,9 +439,23 @@ class FirestoreQuery:
         # Soft-delete (is_null_or_missing) is applied client-side. Never apply a
         # server-side limit before that filter — soft-deleted docs would consume
         # the window and hide live rows (e.g. the one active resume among many deleted).
-        if self.max_rows is not None and not post_filters and not self.orders:
-            query = query.limit(self.max_rows)
-        docs = list(query.stream())
+        if oversized_in is not None:
+            in_column, in_values = oversized_in
+            docs = []
+            for offset in range(0, len(in_values), 30):
+                chunk_query = collection
+                for operator, column, value in self.filters:
+                    if operator == "is_null_or_missing":
+                        continue
+                    chunk_value = in_values[offset : offset + 30] if operator == "in" and column == in_column else value
+                    chunk_query = chunk_query.where(filter=self.client.field_filter(column, operator, chunk_value))
+                docs.extend(chunk_query.stream())
+            unique: dict[str, Any] = {document.id: document for document in docs}
+            docs = list(unique.values())
+        else:
+            if self.max_rows is not None and not post_filters and not self.orders:
+                query = query.limit(self.max_rows)
+            docs = list(query.stream())
         if post_filters:
             kept = []
             for document in docs:

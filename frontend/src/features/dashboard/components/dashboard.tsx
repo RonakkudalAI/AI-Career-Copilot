@@ -294,11 +294,11 @@ export function Dashboard() {
           </Link>
         </article>
         <article className="metric-card">
-          <p className="metric-card-label">Saved jobs</p>
+          <p className="metric-card-label">Job pipeline</p>
           <div className="metric-value">{data?.counts?.saved_jobs ?? "—"}</div>
-          <p className="metric-card-note">Saved to your account</p>
+          <p className="metric-card-note">Saved, applied, and tracked roles</p>
           <Link className="metric-card-link" href="/jobs/saved">
-            Open saved jobs
+            Open job pipeline
           </Link>
         </article>
       </section>

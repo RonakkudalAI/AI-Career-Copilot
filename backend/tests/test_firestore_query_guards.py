@@ -84,3 +84,48 @@ def test_direct_id_update_rejects_user_mismatch():
     query.update({"status": "completed"})
     query.eq("id", "analysis-1").eq("user_id", "user-1")
     assert query._direct_id_update(_Collection()) is None  # type: ignore[arg-type]
+
+
+def test_oversized_in_filter_is_chunked_and_deduplicated():
+    class _Document:
+        def __init__(self, doc_id: str):
+            self.id = doc_id
+
+        def to_dict(self):
+            return {"id": self.id}
+
+    class _Query:
+        def __init__(self, values=None):
+            self.values = values or []
+
+        def where(self, *, filter):
+            return _Query(filter[2])
+
+        def stream(self):
+            return [_Document(str(value)) for value in self.values]
+
+    class _Collection:
+        def where(self, *, filter):
+            return _Query(filter[2])
+
+    class _Client:
+        def field_filter(self, column, operator, value):
+            return (column, operator, value)
+
+    query = FirestoreQuery(_Client(), "jobs")  # type: ignore[arg-type]
+    query.in_("id", [f"job-{index}" for index in range(65)])
+    query.in_("id", ["job-0", "job-64"])
+
+    documents = query._documents(_Collection())  # type: ignore[arg-type]
+    assert len(documents) == 65
+    assert {document.id for document in documents} == {f"job-{index}" for index in range(65)}
+
+
+def test_empty_in_filter_returns_no_documents():
+    class _Collection:
+        def where(self, **_kwargs):
+            raise AssertionError("empty IN must not reach Firestore")
+
+    query = FirestoreQuery(_DummyClient(), "jobs")  # type: ignore[arg-type]
+    query.in_("id", [])
+    assert query._documents(_Collection()) == []  # type: ignore[arg-type]
