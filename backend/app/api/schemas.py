@@ -142,6 +142,17 @@ class InterviewResponseCreate(BaseModel):
     speech_metrics: dict[str, Any] | None = None
     # Client-measured camera presence / eye-contact samples — never invent server-side.
     gaze_metrics: dict[str, Any] | None = None
+
+
+class InterviewTtsRequest(BaseModel):
+    """Spoken interviewer line for mock interview (Fish Audio, server-proxied)."""
+
+    model_config = ConfigDict(extra="forbid")
+    text: str = Field(min_length=1, max_length=1200)
+    # Optional: question | feedback | bridge — reserved for future prosody tuning.
+    kind: Literal["question", "feedback", "bridge", "general"] = "general"
+
+
 class InterviewPreparationCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     resume_version_id: UUID

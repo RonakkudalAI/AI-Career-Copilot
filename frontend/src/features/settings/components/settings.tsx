@@ -590,6 +590,7 @@ function MultiOptionGroup({
 type ResumeListItem = {
   id: string;
   title: string;
+  is_active?: boolean;
   latest_version?: { id: string; original_filename?: string; extraction_status?: string } | null;
 };
 
@@ -704,8 +705,10 @@ export function ProfileSettings() {
         if (!active) return;
         applyLoaded(profilePayload, skillRows, experienceRows, educationRows, linkRows);
         setResumes(resumeRows || []);
-        const firstVersion = resumeRows?.find((r) => r.latest_version?.id)?.latest_version?.id || "";
-        setSelectedVersionId(firstVersion);
+        const preferred =
+          resumeRows?.find((r) => r.is_active && r.latest_version?.id) ||
+          resumeRows?.find((r) => r.latest_version?.id);
+        setSelectedVersionId(preferred?.latest_version?.id || "");
         const profile = profilePayload?.profile || {};
         const details = profile.profile_completion_details as
           | { missing?: Array<{ key: string; label: string; points?: number }> }
@@ -769,6 +772,23 @@ export function ProfileSettings() {
     }
   }
 
+  async function refreshResumes(preferVersionId?: string) {
+    try {
+      const resumeRows = await apiRequest<ResumeListItem[]>("/resumes");
+      setResumes(resumeRows || []);
+      if (preferVersionId) {
+        setSelectedVersionId(preferVersionId);
+        return;
+      }
+      const preferred =
+        resumeRows?.find((r) => r.is_active && r.latest_version?.id) ||
+        resumeRows?.find((r) => r.latest_version?.id);
+      setSelectedVersionId(preferred?.latest_version?.id || "");
+    } catch {
+      // Non-blocking: profile fill can still proceed with the draft in memory.
+    }
+  }
+
   async function previewFromUpload(file: File | null) {
     if (!file) return;
     setFillBusy(true);
@@ -782,10 +802,27 @@ export function ProfileSettings() {
         disclaimer?: string;
         counts?: Record<string, number>;
         ai_used?: boolean;
+        resume?: {
+          id?: string | null;
+          resume_id?: string | null;
+          original_filename?: string | null;
+          extraction_status?: string | null;
+          source?: string | null;
+          title?: string | null;
+        };
       }>("/profile/from-resume/preview-upload", { method: "POST", body: formData });
       setDraft(result.draft);
       setDraftDisclaimer(result.disclaimer || "");
-      setMessage("Draft ready from your resume. Review and apply only what is true for you.");
+      const storedVersionId = result.resume?.id || "";
+      if (storedVersionId) {
+        await refreshResumes(storedVersionId);
+      }
+      const storedTitle = result.resume?.title || result.resume?.original_filename || file.name;
+      setMessage(
+        storedVersionId
+          ? `Resume “${storedTitle}” saved to your library and draft ready. Review and apply only what is true for you. You can reuse this resume for analysis and mock interview without uploading again.`
+          : "Draft ready from your resume. Review and apply only what is true for you.",
+      );
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -1252,8 +1289,9 @@ export function ProfileSettings() {
           <Card className="stack panel-blue">
             <h2 style={{ margin: 0 }}>Fill profile from resume</h2>
             <p className="muted" style={{ margin: 0, fontSize: "var(--text-sm)" }}>
-              Upload a resume or pick one already saved. When AI is available, we use structured extraction
-              plus rules for better accuracy. You always review before anything is saved.
+              Upload a resume or pick one already saved. Uploads are stored in your resume library so Resume
+              Analysis and Mock Interview can reuse them — no need to upload again. You always review the
+              profile draft before anything is applied.
             </p>
             <div className="grid-2">
               <label className="field-label">
@@ -1262,13 +1300,21 @@ export function ProfileSettings() {
                   value={selectedVersionId}
                   onChange={(e: any) => setSelectedVersionId(e.target.value)}
                 >
-                  <option value="">Latest resume with text</option>
+                  <option value="">
+                    {resumes.some((r) => r.latest_version?.id)
+                      ? "Active / latest resume with text"
+                      : "No saved resume yet — upload below"}
+                  </option>
                   {resumes.map((resume) =>
                     resume.latest_version?.id ? (
                       <option key={resume.latest_version.id} value={resume.latest_version.id}>
                         {resume.title}
+                        {resume.is_active ? " (active)" : ""}
                         {resume.latest_version.original_filename
                           ? ` · ${resume.latest_version.original_filename}`
+                          : ""}
+                        {resume.latest_version.extraction_status
+                          ? ` · ${resume.latest_version.extraction_status}`
                           : ""}
                       </option>
                     ) : null,
@@ -1276,7 +1322,7 @@ export function ProfileSettings() {
                 </Select>
               </label>
               <label className="field-label">
-                Or upload PDF / DOCX
+                Or upload PDF / DOCX (saved to library)
                 <Input
                   type="file"
                   accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"

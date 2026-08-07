@@ -5,7 +5,8 @@ import re
 from typing import Any
 from urllib.parse import quote_plus, urlparse
 
-ALGORITHM_VERSION = "ats-youtube-api-v1"
+# Mixed media: YouTube (API / search) + educational blogs/articles (search only).
+ALGORITHM_VERSION = "ats-mixed-learning-v1"
 _YOUTUBE_HOSTS = {
     "www.youtube.com",
     "youtube.com",

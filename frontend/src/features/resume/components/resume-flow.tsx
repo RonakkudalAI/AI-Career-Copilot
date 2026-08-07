@@ -1,7 +1,7 @@
 
 import { Link } from "@/shared/ui/router-link";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { BriefcaseBusiness, CheckCircle2, FileText, RotateCcw, ShieldCheck } from "lucide-react";
 
 
@@ -9,7 +9,8 @@ import { BriefcaseBusiness, CheckCircle2, FileText, RotateCcw, ShieldCheck } fro
 
 
 
-import { apiRequest } from "@/shared/api/client";
+import { apiRequest, subscribeToBackgroundJob, type BackgroundJobEvent } from "@/shared/api/client";
+import { BACKGROUND_JOBS_ENABLED } from "@/shared/config";
 import { jdLabel, resumeLabel } from "@/features/resume/analysis-labels";
 import { isValidCareerFile } from "@/shared/utils";
 import { Badge, Button, Card, Input, PageHeader, Progress, Textarea } from "@/shared/ui/primitives";
@@ -792,6 +793,10 @@ function ExtractionPanel({
 export function NewAnalysis({ embedded = false }: { embedded?: boolean }) {
   const navigate = useNavigate();
   const [step, setStep] = useState<UploadStep>("upload");
+  const [resumeSource, setResumeSource] = useState<"stored" | "upload">("upload");
+  const [storedResumes, setStoredResumes] = useState<ResumeListItem[]>([]);
+  const [selectedResumeId, setSelectedResumeId] = useState("");
+  const [loadingResumes, setLoadingResumes] = useState(true);
   const [file, setFile] = useState<File | null>(null);
   const [jdMode, setJdMode] = useState<"text" | "file">("text");
   const [jd, setJd] = useState("");
@@ -804,14 +809,70 @@ export function NewAnalysis({ embedded = false }: { embedded?: boolean }) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const resumeJobCancelRef = useRef<(() => void) | null>(null);
 
-  const canProceed =
-    Boolean(file && isValidCareerFile(file)) &&
-    (jdMode === "text" ? jd.trim().length >= 20 : Boolean(jdFile && isValidCareerFile(jdFile)));
+  useEffect(() => () => resumeJobCancelRef.current?.(), []);
 
-  /** On Proceed: store resume + JD in DB, then open extraction review. */
+  useEffect(() => {
+    let active = true;
+    setLoadingResumes(true);
+    apiRequest<ResumeListItem[]>("/resumes")
+      .then((rows) => {
+        if (!active) return;
+        const list = rows || [];
+        setStoredResumes(list);
+        const preferred =
+          list.find((row) => row.is_active && row.latest_version?.id) ||
+          list.find((row) => row.latest_version?.id) ||
+          null;
+        if (preferred?.id) {
+          setSelectedResumeId(preferred.id);
+          setResumeSource("stored");
+        }
+      })
+      .catch(() => {
+        if (!active) return;
+        // Keep upload mode if the library cannot be loaded.
+        setStoredResumes([]);
+      })
+      .finally(() => {
+        if (active) setLoadingResumes(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const jdReady =
+    jdMode === "text" ? jd.trim().length >= 20 : Boolean(jdFile && isValidCareerFile(jdFile));
+  const resumeReady =
+    resumeSource === "stored"
+      ? Boolean(selectedResumeId)
+      : Boolean(file && isValidCareerFile(file));
+  const canProceed = resumeReady && jdReady;
+
+  async function saveJobDescription(): Promise<JobDescription> {
+    if (jdMode === "text") {
+      return apiRequest<JobDescription>("/job-descriptions", {
+        method: "POST",
+        body: JSON.stringify({ raw_text: jd }),
+      });
+    }
+    const jdBody = new FormData();
+    jdBody.set("file", jdFile as File);
+    return apiRequest<JobDescription>("/job-descriptions/upload", {
+      method: "POST",
+      body: jdBody,
+    });
+  }
+
+  /** On Proceed: reuse stored resume or upload new + JD, then open extraction review. */
   async function proceed() {
-    if (!file || !isValidCareerFile(file)) {
+    if (resumeSource === "stored" && !selectedResumeId) {
+      setError("Choose a saved resume, or switch to upload a new file.");
+      return;
+    }
+    if (resumeSource === "upload" && (!file || !isValidCareerFile(file))) {
       setError("Choose a PDF or DOCX resume no larger than 10 MB.");
       return;
     }
@@ -826,39 +887,98 @@ export function NewAnalysis({ embedded = false }: { embedded?: boolean }) {
 
     setBusy(true);
     setError("");
-    setMessage("Saving resume and job description…");
+    setMessage(
+      resumeSource === "stored"
+        ? "Using your saved resume and saving job description…"
+        : "Saving resume and job description…",
+    );
     try {
-      const resumeBody = new FormData();
-      resumeBody.set("file", file);
-      const resumeResult = await apiRequest<{ resume: Resume; version: ResumeVersion }>("/resumes", {
-        method: "POST",
-        body: resumeBody,
-      });
+      let resolvedResume: Resume;
+      let resolvedVersion: ResumeVersion | null = null;
+      let backgroundJobId: string | null = null;
 
-      let jobResult: JobDescription;
-      if (jdMode === "text") {
-        jobResult = await apiRequest<JobDescription>("/job-descriptions", {
-          method: "POST",
-          body: JSON.stringify({ raw_text: jd }),
-        });
+      if (resumeSource === "stored") {
+        const detail = await apiRequest<Resume & { versions?: ResumeVersion[] }>(
+          `/resumes/${selectedResumeId}`,
+        );
+        const version = (detail.versions || [])[0] || null;
+        if (!version?.id) {
+          throw new Error("The selected resume has no stored version. Upload a new file instead.");
+        }
+        resolvedResume = {
+          id: detail.id,
+          title: detail.title,
+          is_active: detail.is_active,
+          created_at: detail.created_at,
+        };
+        resolvedVersion = version;
       } else {
-        const jdBody = new FormData();
-        jdBody.set("file", jdFile as File);
-        jobResult = await apiRequest<JobDescription>("/job-descriptions/upload", {
+        const resumeBody = new FormData();
+        resumeBody.set("file", file as File);
+        const resumeResult = await apiRequest<{
+          resume: Resume;
+          version?: ResumeVersion;
+          job?: { id: string };
+          accepted?: boolean;
+        }>(BACKGROUND_JOBS_ENABLED ? "/resumes/async" : "/resumes", {
           method: "POST",
-          body: jdBody,
+          body: resumeBody,
         });
+        resolvedResume = resumeResult.resume;
+        if (resumeResult.version) {
+          resolvedVersion = resumeResult.version;
+        } else if (resumeResult.job?.id) {
+          backgroundJobId = resumeResult.job.id;
+        } else {
+          throw new Error("Resume upload returned no processing result.");
+        }
       }
 
-      setResume(resumeResult.resume);
-      setResumeVersion(resumeResult.version);
-      setEditedResumeSections(resumeResult.version.structured_content?.sections || {});
+      const jobResult = await saveJobDescription();
+      setResume(resolvedResume);
       setJob(jobResult);
       setReviewed(false);
-      setMessage(
-        `Saved “${resumeResult.resume.title}” and JD${jobResult.role_title ? ` (${jobResult.role_title})` : ""}. Review extractions below.`,
-      );
-      setStep("review");
+
+      if (resolvedVersion) {
+        setResumeVersion(resolvedVersion);
+        setEditedResumeSections(resolvedVersion.structured_content?.sections || {});
+        setMessage(
+          resumeSource === "stored"
+            ? `Using saved resume “${resolvedResume.title}” with JD${jobResult.role_title ? ` (${jobResult.role_title})` : ""}. Review extractions below.`
+            : `Saved “${resolvedResume.title}” and JD${jobResult.role_title ? ` (${jobResult.role_title})` : ""}. Review extractions below.`,
+        );
+        setStep("review");
+      } else if (backgroundJobId) {
+        setMessage(`Resume queued. Analyzing it in the background…`);
+        resumeJobCancelRef.current = subscribeToBackgroundJob(
+          backgroundJobId,
+          (event: BackgroundJobEvent) => {
+            setMessage(`Analyzing resume… ${Math.max(0, Math.min(100, event.progress))}%`);
+            if (event.status === "completed") {
+              const versionId = event.result?.version_id;
+              if (typeof versionId !== "string") {
+                setError("Resume processing completed without a version result.");
+                return;
+              }
+              void apiRequest<ResumeVersion>(`/resume-versions/${versionId}`)
+                .then((version) => {
+                  setResumeVersion(version);
+                  setEditedResumeSections(version.structured_content?.sections || {});
+                  setMessage(
+                    `Saved “${resolvedResume.title}” and JD${jobResult.role_title ? ` (${jobResult.role_title})` : ""}. Review extractions below.`,
+                  );
+                  setStep("review");
+                  resumeJobCancelRef.current?.();
+                  resumeJobCancelRef.current = null;
+                })
+                .catch((reason) => setError((reason as Error).message));
+            } else if (event.status === "failed") {
+              setError(event.error || "Resume processing failed.");
+            }
+          },
+          (reason) => setError(reason.message),
+        );
+      }
     } catch (reason) {
       setError((reason as Error).message);
       setMessage("");
@@ -929,7 +1049,7 @@ export function NewAnalysis({ embedded = false }: { embedded?: boolean }) {
         <PageHeader
           eyebrow="New analysis"
           title="Resume and JD analysis"
-          description="Select a resume and job description, then Proceed to save them and review extractions before analysis."
+          description="Use a resume already on your profile or upload a new one, add a job description, then review extractions before analysis."
           action={
             <Link className="button button-secondary" href="/resume-analysis">
               ATS analyses
@@ -962,19 +1082,80 @@ export function NewAnalysis({ embedded = false }: { embedded?: boolean }) {
           <div className="grid-2">
             <Card className="stack">
               <h2 style={{ margin: 0 }}>1. Resume</h2>
-              <p style={{ margin: 0 }}>PDF or DOCX only (max 10 MB). Saved when you click Proceed.</p>
-              <label className="field-label">
-                Resume file
-                <Input
-                  type="file"
-                  accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                  onChange={(event: any) => setFile(event.target.files?.[0] || null)}
-                />
-              </label>
-              {file && (
-                <p style={{ margin: 0 }} className="muted">
-                  Selected: {file.name}
+              <p style={{ margin: 0 }}>
+                Reuse a resume saved from profile completion or a previous upload. No need to upload the same file again.
+              </p>
+              {loadingResumes ? (
+                <p className="muted" style={{ margin: 0 }}>
+                  Loading saved resumes…
                 </p>
+              ) : (
+                <>
+                  <div className="cluster">
+                    <button
+                      type="button"
+                      className={`button ${resumeSource === "stored" ? "button-primary" : "button-secondary"}`}
+                      disabled={!storedResumes.some((row) => row.latest_version?.id)}
+                      onClick={() => setResumeSource("stored")}
+                    >
+                      Saved resume
+                    </button>
+                    <button
+                      type="button"
+                      className={`button ${resumeSource === "upload" ? "button-primary" : "button-secondary"}`}
+                      onClick={() => setResumeSource("upload")}
+                    >
+                      Upload new
+                    </button>
+                  </div>
+                  {resumeSource === "stored" ? (
+                    storedResumes.some((row) => row.latest_version?.id) ? (
+                      <label className="field-label">
+                        Choose saved resume
+                        <select
+                          className="field"
+                          value={selectedResumeId}
+                          onChange={(event) => setSelectedResumeId(event.target.value)}
+                        >
+                          {storedResumes
+                            .filter((row) => row.latest_version?.id)
+                            .map((row) => (
+                              <option key={row.id} value={row.id}>
+                                {row.title}
+                                {row.is_active ? " (active)" : ""}
+                                {row.latest_version?.original_filename
+                                  ? ` · ${row.latest_version.original_filename}`
+                                  : ""}
+                                {row.latest_version?.extraction_status
+                                  ? ` · ${row.latest_version.extraction_status}`
+                                  : ""}
+                              </option>
+                            ))}
+                        </select>
+                      </label>
+                    ) : (
+                      <p className="muted" style={{ margin: 0 }}>
+                        No saved resumes yet. Upload one here or from Complete profile.
+                      </p>
+                    )
+                  ) : (
+                    <>
+                      <label className="field-label">
+                        Resume file (PDF or DOCX, max 10 MB)
+                        <Input
+                          type="file"
+                          accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                          onChange={(event: any) => setFile(event.target.files?.[0] || null)}
+                        />
+                      </label>
+                      {file && (
+                        <p style={{ margin: 0 }} className="muted">
+                          Selected: {file.name}
+                        </p>
+                      )}
+                    </>
+                  )}
+                </>
               )}
             </Card>
 
@@ -1027,10 +1208,14 @@ export function NewAnalysis({ embedded = false }: { embedded?: boolean }) {
           <Card className="stack">
             <p style={{ margin: 0 }}>
               {canProceed
-                ? "Ready. Proceed will save the resume and job description, then show extractions."
-                : "Select a resume file and a job description (text or file) to continue."}
+                ? resumeSource === "stored"
+                  ? "Ready. Proceed will use your saved resume, save the job description, then show extractions."
+                  : "Ready. Proceed will save the resume and job description, then show extractions."
+                : resumeSource === "stored"
+                  ? "Choose a saved resume and a job description (text or file) to continue."
+                  : "Select a resume file and a job description (text or file) to continue."}
             </p>
-            <Button disabled={!canProceed || busy} onClick={proceed}>
+            <Button disabled={!canProceed || busy || loadingResumes} onClick={proceed}>
               {busy ? "Saving…" : "Proceed"}
             </Button>
           </Card>

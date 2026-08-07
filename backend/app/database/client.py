@@ -23,6 +23,7 @@ _TABLES = {
     "learning_paths", "learning_items", "learning_resources", "jobs", "job_recommendations",
     "saved_jobs", "notification_preferences", "privacy_preferences", "activity_events",
     "user_notifications",
+    "background_jobs",
 }
 _ID_TABLES = _TABLES - {"candidate_preferences", "notification_preferences", "privacy_preferences", "saved_jobs"}
 def _identifier(value: str) -> str:

@@ -77,9 +77,37 @@ function isExactVideo(resource: Resource) {
   return type === "youtube_video" || type === "video" || /youtube\.com\/watch\?v=|youtu\.be\//i.test(url);
 }
 
+function isArticleResource(resource: Resource) {
+  const type = (resource.resource_type || "").toLowerCase();
+  const url = resource.url || "";
+  if (isVideoResource(resource)) return false;
+  return (
+    type.includes("article") ||
+    type.includes("blog") ||
+    type.includes("docs") ||
+    type.includes("reading") ||
+    /developer\.mozilla\.org|freecodecamp\.org|dev\.to|css-tricks\.com|realpython\.com|docs\.|learn\.microsoft|medium\.com|digitalocean\.com/i.test(
+      url,
+    ) ||
+    // Educational Google/DuckDuckGo article searches
+    (/google\.com\/search|duckduckgo\.com/i.test(url) &&
+      /site:|article|guide|tutorial|docs/i.test(url))
+  );
+}
+
+function resourceBadgeLabel(resource: Resource) {
+  if (isExactVideo(resource)) return "Video lesson";
+  if (isVideoResource(resource)) return "Video search";
+  if ((resource.resource_type || "").toLowerCase() === "docs_search") return "Docs";
+  if (isArticleResource(resource)) return "Article / blog";
+  return "Resource";
+}
+
 function resourceActionLabel(resource: Resource) {
-  if (isExactVideo(resource)) return "Open lesson";
-  if (isVideoResource(resource)) return "Browse lessons";
+  if (isExactVideo(resource)) return "Watch lesson";
+  if (isVideoResource(resource)) return "Browse video lessons";
+  if ((resource.resource_type || "").toLowerCase() === "docs_search") return "Browse documentation";
+  if (isArticleResource(resource)) return "Browse articles";
   return "Open resource";
 }
 
@@ -148,7 +176,7 @@ export function LearningHome() {
       <PageHeader
         eyebrow="Learning"
         title="Learning paths"
-        description="Build a study plan from skill gaps in your completed ATS analysis. Each step maps a real evidence gap to free lesson resources — no invented skills."
+        description="Build a study plan from skill gaps in your completed ATS analysis. Each step maps a real evidence gap to free video lessons and blogs/articles — no invented skills."
         action={
           <Button onClick={generate} disabled={busy || Boolean(deletingId)}>
             {busy ? (
@@ -407,7 +435,9 @@ export function LearningPath({ pathId }: { pathId: string }) {
 
                   {(item.learning_resources || []).length > 0 && (
                     <div className="stack" style={{ gap: 12, marginTop: 8 }}>
-                      <strong style={{ fontSize: "var(--text-sm)" }}>Recommended lessons</strong>
+                      <strong style={{ fontSize: "var(--text-sm)" }}>
+                        Recommended resources (videos + articles)
+                      </strong>
                       {item.learning_resources?.map((resource) =>
                         resource.url ? (
                           <div
@@ -439,8 +469,14 @@ export function LearningPath({ pathId }: { pathId: string }) {
                             ) : null}
                             <div className="stack" style={{ gap: 6 }}>
                               <div className="cluster">
-                                <Badge variant={isExactVideo(resource) ? "default" : "secondary"}>
-                                  {isExactVideo(resource) ? "Lesson" : "Lesson search"}
+                                <Badge
+                                  variant={
+                                    isExactVideo(resource) || isArticleResource(resource)
+                                      ? "default"
+                                      : "secondary"
+                                  }
+                                >
+                                  {resourceBadgeLabel(resource)}
                                 </Badge>
                                 {resource.provider ? (
                                   <span className="muted" style={{ fontSize: "var(--text-xs)" }}>

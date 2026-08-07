@@ -1,19 +1,20 @@
-import hashlib
-import hmac
+import asyncio
+import json
 import logging
-import threading
 import mimetypes
-import secrets
+import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Depends, File, Form, Header, Response, UploadFile
+from fastapi import APIRouter, Body, Depends, File, Form, Header, UploadFile
 from fastapi.responses import Response as PlainResponse
+from fastapi.responses import StreamingResponse
 
 from app.agents.registry import agents_status
+from app.api.routers.auth import router as auth_router
 from app.api.schemas import (
     AccountDeleteRequest,
     AtsAnalysisCreate,
@@ -21,6 +22,7 @@ from app.api.schemas import (
     InterviewCreate,
     InterviewPreparationCreate,
     InterviewResponseCreate,
+    InterviewTtsRequest,
     JobDescriptionMetadataPatch,
     JobDescriptionTextCreate,
     JobRecommendationGenerate,
@@ -35,8 +37,8 @@ from app.api.schemas import (
     ProfilePatch,
     SavedJobPatch,
 )
+from app.background_jobs import TERMINAL_JOB_STATUSES, create_job, public_job
 from app.core.config import Settings, get_settings
-from app.core.constants import MIN_PASSWORD_LENGTH
 from app.core.errors import ApiError
 from app.database.client import database_client, database_probe
 from app.database.repository import (
@@ -64,7 +66,7 @@ from app.features.auth.account_deletion import (
     email_matches_account,
     purge_user_storage,
 )
-from app.features.auth.service import CurrentUser, create_access_token, get_current_user
+from app.features.auth.service import CurrentUser, get_current_user
 from app.features.career_matching import (
     ALGORITHM_VERSION as CAREER_MATCH_ALGORITHM_VERSION,
 )
@@ -102,6 +104,7 @@ from app.features.profile.avatars import (
 )
 from app.features.profile.importer import insert_validated_batch
 from app.features.resume_improvement.routes import router as resume_improvement_router
+from app.workers import evaluate_interview, extract_resume, worker_available
 
 router = APIRouter()
 router.include_router(resume_improvement_router)
@@ -110,7 +113,6 @@ SCORING_ALGORITHM_VERSION = ALGORITHM_VERSION
 
 
 
-from app.api.routers.auth import router as auth_router
 router.include_router(auth_router)
 
 def utc_now() -> str:
@@ -1001,11 +1003,19 @@ def import_skills_from_resume(
 def _load_resume_version_for_profile_fill(
     client, user: CurrentUser, resume_version_id: UUID | str | None
 ) -> dict[str, Any]:
-    """Load a candidate-owned **confirmed** resume version with extractable text."""
+    """Load a candidate-owned resume version that has extractable text.
+
+    Profile fill has its own review/apply gate, so any stored version with text
+    is allowed (confirmed preferred when no id is given). ATS/interview still
+    require confirmation separately.
+    """
+    select_cols = (
+        "id,resume_id,plain_text,structured_content,extraction_status,original_filename,created_at"
+    )
     if resume_version_id:
         rows = (
             client.table("resume_versions")
-            .select("id,resume_id,plain_text,structured_content,extraction_status,original_filename,created_at")
+            .select(select_cols)
             .eq("id", str(resume_version_id))
             .eq("user_id", str(user.id))
             .limit(1)
@@ -1016,16 +1026,11 @@ def _load_resume_version_for_profile_fill(
         if not rows:
             raise ApiError(404, "resume_version_not_found", "The selected resume version was not found.")
         version = rows[0]
-        if version.get("extraction_status") != "confirmed":
-            raise ApiError(
-                409,
-                "confirmed_resume_required",
-                "Confirm the extracted resume before filling the profile from it.",
-            )
     else:
+        # Prefer confirmed, then any version with text (newest first).
         confirmed = (
             client.table("resume_versions")
-            .select("id,resume_id,plain_text,structured_content,extraction_status,original_filename,created_at")
+            .select(select_cols)
             .eq("user_id", str(user.id))
             .eq("extraction_status", "confirmed")
             .order("created_at", desc=True)
@@ -1036,10 +1041,25 @@ def _load_resume_version_for_profile_fill(
         )
         version = confirmed[0] if confirmed else None
         if not version:
+            any_versions = (
+                client.table("resume_versions")
+                .select(select_cols)
+                .eq("user_id", str(user.id))
+                .order("created_at", desc=True)
+                .limit(10)
+                .execute()
+                .data
+                or []
+            )
+            version = next(
+                (row for row in any_versions if (row.get("plain_text") or "").strip()),
+                None,
+            )
+        if not version:
             raise ApiError(
                 409,
-                "confirmed_resume_required",
-                "Confirm a resume extraction before filling the profile, or upload a PDF/DOCX on preview-upload.",
+                "resume_required",
+                "Upload a resume to fill your profile, or save one under Resume Analysis first.",
             )
 
     plain = (version.get("plain_text") or "").strip()
@@ -1050,6 +1070,67 @@ def _load_resume_version_for_profile_fill(
             "The selected resume has no extractable text. Re-upload a text-based PDF or DOCX.",
         )
     return version
+
+
+async def _store_uploaded_resume(
+    client,
+    settings: Settings,
+    user: CurrentUser,
+    file: UploadFile,
+    content: bytes,
+    title: str | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Create a resumes row + stored version from an uploaded PDF/DOCX.
+
+    Shared by POST /resumes and profile fill upload so a resume used during
+    profile completion is available for ATS and mock interview without re-upload.
+    """
+    resume_id = str(uuid.uuid4())
+    profile_name = ""
+    try:
+        profile_rows = (
+            client.table("profiles").select("full_name").eq("id", str(user.id)).limit(1).execute().data or []
+        )
+        profile_name = str((profile_rows[0] if profile_rows else {}).get("full_name") or "").strip()
+    except Exception as exc:
+        logger.warning("resume_create_profile_lookup_failed type=%s", type(exc).__name__)
+        profile_name = ""
+    if (title or "").strip():
+        resume_title = title.strip()[:200]
+    elif profile_name:
+        resume_title = f"{profile_name} Resume"[:200]
+    else:
+        resume_title = infer_resume_title(file.filename)
+    has_existing = bool(
+        client.table("resumes")
+        .select("id")
+        .eq("user_id", str(user.id))
+        .is_("deleted_at", "null")
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    resume = (
+        client.table("resumes")
+        .insert(
+            {
+                "id": resume_id,
+                "user_id": str(user.id),
+                "title": resume_title,
+                "created_at": utc_now(),
+                "is_active": not has_existing,
+            }
+        )
+        .execute()
+        .data[0]
+    )
+    try:
+        version = await _upload_resume_version(client, settings, user, resume_id, file, content)
+    except Exception:
+        client.table("resumes").delete().eq("id", resume_id).eq("user_id", str(user.id)).execute()
+        raise
+    return resume, version
 
 
 @router.post("/profile/from-resume/preview")
@@ -1094,23 +1175,40 @@ async def preview_profile_from_resume_upload(
     settings: Settings = Depends(get_settings),
 ):
     """
-    Build a reviewable profile draft from an uploaded PDF/DOCX.
-    Uses NVIDIA structured extraction when configured, plus deterministic mapping.
+    Store an uploaded PDF/DOCX in the resume library, then build a reviewable
+    profile draft from it. The stored resume can be reused for ATS analysis and
+    mock interview without uploading again.
     """
     raw = await file.read()
-    mime = validate_document(
+    # Validate early so we fail before writing a resumes row.
+    validate_document(
         file.filename or "resume.pdf", file.content_type, raw, settings.document_max_bytes
     )
-    plain_text, structured = await _extract_resume_content(
-        raw, file.filename or "resume", mime, settings
-    )
+    client = client_for(settings, user)
+    resume, version = await _store_uploaded_resume(client, settings, user, file, raw)
+    write_activity(client, user, "resume_uploaded", "Resume uploaded for profile fill", "resume", str(resume["id"]))
+    plain_text = version.get("plain_text") or ""
+    if not str(plain_text).strip():
+        raise ApiError(
+            422,
+            "resume_has_no_text",
+            "The resume was stored but has no extractable text. Use a text-based PDF or DOCX.",
+        )
+    structured = version.get("structured_content") or {}
+    if not isinstance(structured, dict):
+        structured = {}
     draft = await build_profile_draft_enriched(plain_text, structured, settings)
     return profile_draft_response_payload(
         draft,
         {
-            "id": None,
-            "original_filename": safe_filename(file.filename or "resume"),
-            "source": "upload",
+            "id": version.get("id"),
+            "resume_id": resume.get("id"),
+            "original_filename": version.get("original_filename")
+            or safe_filename(file.filename or "resume"),
+            "extraction_status": version.get("extraction_status"),
+            "title": resume.get("title"),
+            "is_active": resume.get("is_active"),
+            "source": "upload_stored",
         },
     )
 
@@ -1588,54 +1686,138 @@ async def create_resume(
     settings: Settings = Depends(get_settings),
 ):
     client = client_for(settings, user)
-    resume_id = str(uuid.uuid4())
-    profile_name = ""
-    try:
-        profile_rows = (
-            client.table("profiles").select("full_name").eq("id", str(user.id)).single().execute().data or []
-        )
-        profile_row = profile_rows[0] if profile_rows else {}
-        profile_name = str(profile_row.get("full_name") or "").strip()
-    except Exception as exc:
-        logger.warning("resume_create_profile_lookup_failed type=%s", type(exc).__name__)
-        profile_name = ""
-    if (title or "").strip():
-        resume_title = title.strip()
-    elif profile_name:
-        resume_title = f"{profile_name} Resume"[:200]
-    else:
-        resume_title = infer_resume_title(file.filename)
-    resume = (
-        client.table("resumes")
-        .insert(
-            {
-                "id": resume_id,
-                "user_id": str(user.id),
-                "title": resume_title,
-                "created_at": utc_now(),
-                "is_active": not bool(
-                    client.table("resumes")
-                    .select("id")
-                    .eq("user_id", str(user.id))
-                    .is_("deleted_at", "null")
-                    .limit(1)
-                    .execute()
-                    .data
-                    or []
-                ),
-            }
-        )
-        .execute()
-        .data[0]
-    )
-    try:
-        content = await file.read()
-        version = await _upload_resume_version(client, settings, user, resume_id, file, content)
-    except Exception:
-        client.table("resumes").delete().eq("id", resume_id).eq("user_id", str(user.id)).execute()
-        raise
-    write_activity(client, user, "resume_uploaded", "Resume uploaded", "resume", resume_id)
+    content = await file.read()
+    resume, version = await _store_uploaded_resume(client, settings, user, file, content, title=title)
+    write_activity(client, user, "resume_uploaded", "Resume uploaded", "resume", str(resume["id"]))
     return {"resume": resume, "version": version}
+
+
+@router.post("/resumes/async", status_code=202)
+async def create_resume_async(
+    file: UploadFile = File(...),
+    title: str | None = Form(default=None),
+    user: CurrentUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+):
+    """Accept a resume quickly and move extraction/AI work to a Celery worker."""
+    if not worker_available():
+        raise ApiError(503, "background_jobs_unavailable", "Background resume processing is not enabled.")
+    content = await file.read()
+    mime = validate_document(file.filename or "document", file.content_type, content, settings.document_max_bytes)
+    client = client_for(settings, user)
+    resume_id = str(uuid.uuid4())
+    version_id = str(uuid.uuid4())
+    profile_rows = client.table("profiles").select("full_name").eq("id", str(user.id)).limit(1).execute().data or []
+    profile_name = str((profile_rows[0] if profile_rows else {}).get("full_name") or "").strip()
+    resume_title = (title or "").strip()[:200] or (f"{profile_name} Resume"[:200] if profile_name else infer_resume_title(file.filename))
+    active_exists = bool(
+        client.table("resumes")
+        .select("id")
+        .eq("user_id", str(user.id))
+        .is_("deleted_at", "null")
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    resume = client.table("resumes").insert(
+        {
+            "id": resume_id,
+            "user_id": str(user.id),
+            "title": resume_title,
+            "created_at": utc_now(),
+            "is_active": not active_exists,
+            "processing_status": "queued",
+        }
+    ).execute().data[0]
+    version_number = (
+        client.table("resume_versions")
+        .select("id", count="exact", head=True)
+        .eq("resume_id", resume_id)
+        .execute()
+        .count
+        or 0
+    ) + 1
+    suffix = ".pdf" if mime == "application/pdf" else ".docx"
+    storage_path = f"{user.id}/resumes/{resume_id}/{version_id}/{uuid.uuid4()}{suffix}"
+    try:
+        client.storage.from_(settings.document_bucket).upload(
+            storage_path, content, {"content-type": mime, "upsert": "false"}
+        )
+        job = create_job(
+            client,
+            user_id=str(user.id),
+            job_type="resume_extraction",
+            payload={
+                "resume_id": resume_id,
+                "version_id": version_id,
+                "version_number": version_number,
+                "storage_path": storage_path,
+                "filename": safe_filename(file.filename or "document"),
+                "mime_type": mime,
+            },
+        )
+        task = extract_resume.delay(str(job["id"]))
+        client.table("background_jobs").update({"task_id": task.id, "updated_at": utc_now()}).eq("id", str(job["id"])).execute()
+        return {"resume": resume, "job": public_job({**job, "task_id": task.id}), "accepted": True}
+    except Exception as exc:
+        try:
+            client.storage.from_(settings.document_bucket).remove([storage_path])
+            client.table("resumes").delete().eq("id", resume_id).eq("user_id", str(user.id)).execute()
+        except Exception:
+            logger.exception("async_resume_cleanup_failed resume_id=%s", resume_id)
+        if isinstance(exc, ApiError):
+            raise
+        raise ApiError(503, "background_job_enqueue_failed", "The resume could not be queued. Try again shortly.") from exc
+
+
+@router.get("/background-jobs/{job_id}")
+def get_background_job(
+    job_id: UUID,
+    user: CurrentUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+):
+    rows = (
+        client_for(settings, user).table("background_jobs").select("*").eq("id", str(job_id)).eq("user_id", str(user.id)).limit(1).execute().data
+        or []
+    )
+    if not rows:
+        raise ApiError(404, "background_job_not_found", "The background job was not found.")
+    return public_job(rows[0])
+
+
+@router.get("/background-jobs/{job_id}/events")
+async def background_job_events(
+    job_id: UUID,
+    user: CurrentUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+):
+    client = client_for(settings, user)
+    job_key = str(job_id)
+    initial = (
+        client.table("background_jobs").select("*").eq("id", job_key).eq("user_id", str(user.id)).limit(1).execute().data
+        or []
+    )
+    if not initial:
+        raise ApiError(404, "background_job_not_found", "The background job was not found.")
+
+    async def stream():
+        last_payload = ""
+        while True:
+            rows = await asyncio.to_thread(
+                lambda: client.table("background_jobs").select("*").eq("id", job_key).eq("user_id", str(user.id)).limit(1).execute().data or []
+            )
+            if not rows:
+                break
+            payload = json.dumps(public_job(rows[0]), separators=(",", ":"))
+            if payload != last_payload:
+                yield f"event: job\ndata: {payload}\n\n"
+                last_payload = payload
+            if rows[0].get("status") in TERMINAL_JOB_STATUSES:
+                break
+            await asyncio.sleep(1)
+
+    return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @router.get("/resumes/{resume_id}")
@@ -2582,6 +2764,59 @@ async def create_interview_preparation(
     )
 
 
+@router.get("/interviews/tts/status")
+def interview_tts_status(
+    user: CurrentUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+):
+    """Whether Fish Audio interviewer voice is available (no secrets leaked)."""
+    _ = user
+    configured = bool((settings.fish_audio_api_key or "").strip())
+    return {
+        "provider": "fish_audio" if configured else None,
+        "configured": configured,
+        "model": (settings.fish_audio_model or "").strip() or None if configured else None,
+        "fallback": "browser_speech_synthesis",
+    }
+
+
+@router.post("/interviews/tts")
+def interview_tts(
+    payload: InterviewTtsRequest,
+    user: CurrentUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+):
+    """
+    Synthesize mock-interview interviewer speech via Fish Audio (server-side key).
+    Returns audio/mpeg (or wav/opus) bytes. Clients should fall back to browser TTS on 503.
+    """
+    _ = user
+    if not (settings.fish_audio_api_key or "").strip():
+        raise ApiError(
+            503,
+            "tts_unavailable",
+            "Fish Audio is not configured. Set FISH_AUDIO_API_KEY or use browser speech.",
+        )
+    from app.features.interview.tts import synthesize_speech
+
+    try:
+        audio, media_type = synthesize_speech(settings, payload.text)
+    except ValueError as exc:
+        raise ApiError(400, "tts_invalid_text", str(exc)) from exc
+    except RuntimeError as exc:
+        raise ApiError(503, "tts_provider_error", str(exc)) from exc
+
+    return PlainResponse(
+        content=audio,
+        media_type=media_type,
+        headers={
+            "Cache-Control": "no-store",
+            "X-TTS-Provider": "fish_audio",
+            "X-TTS-Kind": payload.kind,
+        },
+    )
+
+
 @router.post("/interviews", status_code=201)
 def create_interview(
     payload: InterviewCreate,
@@ -2857,6 +3092,60 @@ async def add_response(
             "question_type": question.get("question_type"),
         },
     }
+
+
+@router.post("/interviews/{session_id}/responses/async", status_code=202)
+async def queue_response(
+    session_id: UUID,
+    payload: InterviewResponseCreate,
+    user: CurrentUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+):
+    """Queue AI interview evaluation and return immediately with an owned job id."""
+    if not worker_available():
+        raise ApiError(503, "background_jobs_unavailable", "Background processing is not configured.")
+    client = client_for(settings, user)
+    owned_row(client, "interview_sessions", session_id, user)
+    question_rows = (
+        client.table("interview_questions")
+        .select("id")
+        .eq("id", str(payload.question_id))
+        .eq("session_id", str(session_id))
+        .eq("user_id", str(user.id))
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if not question_rows:
+        raise ApiError(404, "question_not_found", "The question does not belong to this interview session.")
+    answer_text = (payload.transcript or payload.typed_response or "").strip()
+    if not answer_text:
+        raise ApiError(422, "answer_required", "Submit a spoken or typed answer before evaluating it.")
+    job = create_job(
+        client,
+        user_id=str(user.id),
+        job_type="interview_answer_evaluation",
+        payload={
+            "session_id": str(session_id),
+            "question_id": str(payload.question_id),
+            "typed_response": payload.typed_response,
+            "transcript": payload.transcript,
+            "duration_seconds": payload.duration_seconds,
+            "speech_metrics": payload.speech_metrics,
+            "gaze_metrics": payload.gaze_metrics,
+        },
+    )
+    try:
+        task = evaluate_interview.delay(str(job["id"]))
+        client.table("background_jobs").update({"task_id": task.id, "updated_at": utc_now()}).eq("id", job["id"]).execute()
+        job["task_id"] = task.id
+        return {"accepted": True, "job": public_job(job)}
+    except Exception as exc:
+        client.table("background_jobs").update(
+            {"status": "failed", "progress": 100, "error": f"{type(exc).__name__}: enqueue failed", "updated_at": utc_now()}
+        ).eq("id", job["id"]).execute()
+        raise ApiError(503, "background_job_enqueue_failed", "Could not enqueue interview evaluation.") from exc
 
 
 async def _create_interview_report(
@@ -3296,7 +3585,7 @@ async def generate_learning_path(
         raise ApiError(
             422,
             "no_learning_gaps",
-            "No missing or partial ATS requirements were available to build a YouTube learning path.",
+            "No missing or partial ATS requirements were available to build a learning path.",
         )
     algorithm_version = str(generated.get("algorithm_version") or CAREER_MATCH_ALGORITHM_VERSION)
     path = client.table("learning_paths").insert({
@@ -3304,8 +3593,8 @@ async def generate_learning_path(
         "title": f"Skill gap path · {resume.get('title') or 'your resume'}",
         "description": (
             "Study plan from requirements not fully evidenced in your completed ATS analysis. "
-            "Each step includes free lesson resources grounded in those gaps. "
-            "Open a lesson, practice, then mark the step complete — progress is saved to your account."
+            "Each step includes free video lessons and blogs/articles grounded in those gaps. "
+            "Watch or read, practice, then mark the step complete — progress is saved to your account."
         ),
         "source_type": "ats_analysis",
         "source_id": str(analysis["id"]),
@@ -3349,7 +3638,10 @@ async def generate_learning_path(
         "grounding": {
             "source": "completed_ats_analysis",
             "analysis_id": str(analysis["id"]),
-            "policy": "youtube_search_or_allowlist_only_no_invented_video_ids",
+            "policy": (
+                "youtube_api_or_search_plus_educational_article_search_"
+                "no_invented_video_ids_or_article_urls"
+            ),
         },
     }
 

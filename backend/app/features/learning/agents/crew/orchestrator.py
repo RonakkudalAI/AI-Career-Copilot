@@ -32,17 +32,27 @@ GAP_ANALYST = CrewAgent(
     ),
 )
 YOUTUBE_PLANNER = CrewAgent(
-    role="YouTube Curriculum Planner",
-    goal="Turn each allowed ATS gap into a YouTube study step without inventing video IDs.",
+    role="Curriculum Planner",
+    goal=(
+        "Turn each allowed ATS gap into a study step with video and reading search queries, "
+        "without inventing video IDs or article URLs."
+    ),
     backstory=(
-        "You plan free YouTube learning steps. You never invent watch URLs or video IDs. "
+        "You plan free multi-format learning steps (YouTube + blogs/articles/docs). "
+        "You never invent watch URLs, video IDs, or specific article links. "
         "You only use allowed gaps from the analyst."
     ),
 )
 RESOURCE_VALIDATOR = CrewAgent(
     role="Learning Resource Validator",
-    goal="Drop any recommendation outside ATS gaps and materialize only safe YouTube URLs.",
-    backstory="You are a deterministic gate. Hallucinated gaps or non-YouTube links are rejected.",
+    goal=(
+        "Drop any recommendation outside ATS gaps and materialize only safe YouTube "
+        "and educational reading search URLs."
+    ),
+    backstory=(
+        "You are a deterministic gate. Hallucinated gaps, invented video IDs, "
+        "or non-allowlisted article URLs are rejected."
+    ),
 )
 LEARNING_CREW_TASKS = [
     CrewTask(
@@ -54,16 +64,16 @@ LEARNING_CREW_TASKS = [
     ),
     CrewTask(
         name="plan_youtube_lessons",
-        description="LLM (or deterministic) plan: one YouTube study step per allowed gap.",
+        description="LLM (or deterministic) plan: one study step per gap with video + article queries.",
         agent=YOUTUBE_PLANNER,
-        expected_output="YoutubeLessonPlanResult JSON without video IDs",
+        expected_output="YoutubeLessonPlanResult JSON without video IDs or article URLs",
         tool_name="plan_youtube_lessons",
     ),
     CrewTask(
         name="validate_and_materialize",
-        description="Validate gaps and materialize catalog/search YouTube resources only.",
+        description="Validate gaps and materialize YouTube + educational blog/article resources.",
         agent=RESOURCE_VALIDATOR,
-        expected_output="Learning items with grounded YouTube resources",
+        expected_output="Learning items with grounded video and reading resources",
         tool_name="validate_and_materialize",
     ),
 ]
@@ -71,7 +81,7 @@ def learning_crew_capability(settings: Settings) -> dict[str, Any]:
     package_ok, package_reason, _ = try_import_crewai()
     return {
         "id": "learning_youtube_crew",
-        "name": "Learning path YouTube crew",
+        "name": "Learning path multi-media crew",
         "framework": "CrewAI-compatible sequential",
         "runtime": crew_runtime_mode(),
         "official_crewai_package": official_crewai_installed(),
@@ -82,10 +92,12 @@ def learning_crew_capability(settings: Settings) -> dict[str, Any]:
         "tasks": [t.name for t in LEARNING_CREW_TASKS],
         "truthfulness": (
             "Gaps must come from completed ATS evidence. "
-            "Exact video recommendations come only from YouTube Data API results — never invented video IDs."
+            "Exact video recommendations come only from YouTube Data API results — never invented video IDs. "
+            "Reading resources are allowlisted educational search URLs only — never invented article URLs."
         ),
         "llm_configured": bool(settings.groq_configured or settings.nvidia_configured),
         "youtube_api_configured": bool(getattr(settings, "youtube_configured", False)),
+        "reading_resources": "educational_web_search_and_docs",
     }
 async def run_learning_youtube_crew(
     settings: Settings,
@@ -174,6 +186,7 @@ async def run_learning_youtube_crew(
                     "rejected": final.get("rejected") or [],
                     "youtube_api_configured": final.get("youtube_api_configured"),
                     "youtube_api_video_steps": final.get("youtube_api_video_steps"),
+                    "reading_resource_steps": final.get("reading_resource_steps"),
                 },
             )
         )
@@ -184,6 +197,7 @@ async def run_learning_youtube_crew(
             "source_analysis_id": source_analysis_id,
             "youtube_api_configured": final.get("youtube_api_configured"),
             "youtube_api_video_steps": final.get("youtube_api_video_steps"),
+            "reading_resource_steps": final.get("reading_resource_steps"),
         }
         return items, audit
     except Exception as exc:

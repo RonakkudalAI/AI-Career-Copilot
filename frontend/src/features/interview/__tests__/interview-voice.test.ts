@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_ANSWER_SILENCE_MS,
+  DEFAULT_TTS_MAX_WAIT_MS,
   analyzeLiveSpeaking,
   buildProceedPrompt,
   buildShortInterviewerLine,
@@ -168,5 +170,14 @@ describe("short interviewer turn flow", () => {
     expect(buildProceedPrompt({ isLastQuestion: false, autoContinue: true })).toMatch(/Moving to the next/i);
     expect(buildProceedPrompt({ isLastQuestion: false, autoContinue: false })).toMatch(/Shall we move/i);
     expect(buildProceedPrompt({ isLastQuestion: true, autoContinue: true })).toMatch(/last question/i);
+  });
+
+  it("uses a long silence window so mid-answer pauses do not cut the user off", () => {
+    expect(DEFAULT_ANSWER_SILENCE_MS).toBeGreaterThanOrEqual(3000);
+  });
+
+  it("waits long enough for full interviewer sentences (never 4s cut-off)", () => {
+    // Regression: old maxWaitMs of 4000 cancelled TTS mid-question.
+    expect(DEFAULT_TTS_MAX_WAIT_MS).toBeGreaterThanOrEqual(60_000);
   });
 });

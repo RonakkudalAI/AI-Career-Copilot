@@ -206,13 +206,18 @@ export function phaseAfterFeedbackSpoken(autoContinue: boolean): InterviewTurnPh
 }
 
 /** Longer silence so natural pauses mid-answer do not auto-submit too early. */
-export const DEFAULT_ANSWER_SILENCE_MS = 2800;
-/** Wait for TTS audio to fully clear before opening SpeechRecognition. */
-export const DEFAULT_LISTEN_AFTER_TTS_MS = 650;
+export const DEFAULT_ANSWER_SILENCE_MS = 3200;
+/** Wait after interviewer audio fully ends before opening SpeechRecognition. */
+export const DEFAULT_LISTEN_AFTER_TTS_MS = 700;
 /** Brief beat after short feedback before auto-advance (feels less abrupt). */
-export const DEFAULT_AUTO_ADVANCE_AFTER_FEEDBACK_MS = 1100;
+export const DEFAULT_AUTO_ADVANCE_AFTER_FEEDBACK_MS = 900;
 /** How long we listen for "proceed" before showing a soft prompt again. */
 export const DEFAULT_PROCEED_LISTEN_MS = 12000;
+/**
+ * Max time to wait for interviewer audio to finish before listening.
+ * Must be long enough for full questions + Fish Audio network; never cut mid-sentence.
+ */
+export const DEFAULT_TTS_MAX_WAIT_MS = 120_000;
 
 /** Common English fillers / hedges — mirrors backend evaluator list for live UX. */
 export const FILLER_PHRASES = [
@@ -334,24 +339,40 @@ export function isSpeechSynthesisBusy(): boolean {
 }
 
 /**
- * Schedule listening only after TTS has fully released the audio path.
- * Avoids the common Chrome bug where recognition starts while the question is still speaking.
+ * Schedule listening only after interviewer TTS has fully finished.
+ *
+ * CRITICAL: Never cancel speech early — that was cutting questions mid-sentence
+ * and advancing the conversation while the interviewer was still talking.
+ * We only open SpeechRecognition after audio is idle (or maxWaitMs for hung TTS).
  */
 export function scheduleListenAfterQuestionSpoken(
   startListening: () => void,
-  options?: { delayMs?: number; maxWaitMs?: number; isCancelled?: () => boolean },
+  options?: {
+    delayMs?: number;
+    maxWaitMs?: number;
+    isCancelled?: () => boolean;
+    /** Optional external busy check (Fish Audio HTMLAudioElement, etc.). */
+    isBusy?: () => boolean;
+  },
 ): number {
   const delayMs = options?.delayMs ?? DEFAULT_LISTEN_AFTER_TTS_MS;
-  const maxWaitMs = options?.maxWaitMs ?? 4000;
+  const maxWaitMs = options?.maxWaitMs ?? DEFAULT_TTS_MAX_WAIT_MS;
   const started = Date.now();
+
+  const busy = (): boolean => {
+    if (options?.isBusy?.()) return true;
+    return isSpeechSynthesisBusy();
+  };
 
   const tryStart = (): void => {
     if (options?.isCancelled?.()) return;
-    if (isSpeechSynthesisBusy() && Date.now() - started < maxWaitMs) {
+    // Keep waiting while the interviewer is still talking — do NOT cancel mid-line.
+    if (busy() && Date.now() - started < maxWaitMs) {
       window.setTimeout(tryStart, 120);
       return;
     }
-    if ("speechSynthesis" in window) {
+    // Only cancel if still marked busy after max wait (hung synthesizer), so mic can open.
+    if (busy() && "speechSynthesis" in window) {
       try {
         window.speechSynthesis.cancel();
       } catch {

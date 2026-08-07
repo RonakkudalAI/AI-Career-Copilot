@@ -83,6 +83,19 @@ class Settings(BaseSettings):
     adzuna_timeout_seconds: float = Field(default=15.0, gt=0, le=60)
     adzuna_results_per_page: int = Field(default=50, ge=1, le=50)
     adzuna_max_days_old: int | None = Field(default=30, ge=1, le=365)
+    # Fish Audio TTS for mock-interview interviewer voice (server-side key only).
+    fish_audio_api_key: str = ""
+    fish_audio_base_url: str = "https://api.fish.audio"
+    # Free developer tier model; override with s2.1-pro / s1 when paid.
+    fish_audio_model: str = "s2.1-pro-free"
+    # Optional public/custom voice model id (Fish Voice Library). Empty = provider default.
+    fish_audio_reference_id: str = "bf322df2096a46f18c579d0baa36f41d"
+    fish_audio_timeout_seconds: float = Field(default=45.0, gt=5, le=120)
+    celery_enabled: bool = False
+    celery_broker_url: str = "redis://127.0.0.1:6379/0"
+    celery_result_backend: str = "redis://127.0.0.1:6379/1"
+    celery_task_time_limit_seconds: int = Field(default=900, ge=60, le=7200)
+    celery_task_soft_time_limit_seconds: int = Field(default=840, ge=30, le=7100)
     @field_validator("frontend_origins", mode="before")
     @classmethod
     def parse_origins(cls, value: object) -> object:
@@ -178,6 +191,14 @@ class Settings(BaseSettings):
     @property
     def adzuna_configured(self) -> bool:
         return bool(self.adzuna_app_id and self.adzuna_app_key)
+
+    @property
+    def background_jobs_configured(self) -> bool:
+        return bool(self.celery_enabled and self.celery_broker_url and self.celery_result_backend)
+
+    @property
+    def fish_audio_configured(self) -> bool:
+        return bool((self.fish_audio_api_key or "").strip())
 @lru_cache
 def get_settings() -> Settings:
     return Settings()

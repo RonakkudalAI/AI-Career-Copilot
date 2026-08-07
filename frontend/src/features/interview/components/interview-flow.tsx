@@ -3,12 +3,14 @@ import { Link } from "@/shared/ui/router-link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 
-import { apiRequest, isAbortError } from "@/shared/api/client";
+import { apiRequest, isAbortError, subscribeToBackgroundJob, type BackgroundJobEvent } from "@/shared/api/client";
+import { BACKGROUND_JOBS_ENABLED } from "@/shared/config";
 import { Button, Card, PageHeader, Textarea } from "@/shared/ui/primitives";
 import {
   DEFAULT_ANSWER_SILENCE_MS,
   DEFAULT_AUTO_ADVANCE_AFTER_FEEDBACK_MS,
   DEFAULT_LISTEN_AFTER_TTS_MS,
+  DEFAULT_TTS_MAX_WAIT_MS,
   analyzeLiveSpeaking,
   buildProceedPrompt,
   buildShortInterviewerLine,
@@ -28,11 +30,18 @@ import {
   type SpeechResultListLike,
 } from "@/features/interview/interview-voice";
 import {
-  classifyFaceLooking,
+  cancelInterviewSpeech,
+  fetchInterviewTtsStatus,
+  isInterviewSpeechBusy,
+  speakInterviewLine,
+} from "@/features/interview/interview-tts";
+import {
   createFaceDetector,
   liveGazeCoachMessage,
+  sampleCameraPresence,
   summarizeGazeSamples,
   type FaceDetectorLike,
+  type GazeDetectorKind,
   type GazeSample,
   type GazeSessionSummary,
 } from "@/features/interview/interview-gaze";
@@ -373,14 +382,28 @@ export function InterviewHome() {
   );
 }
 
+type SetupResumeOption = {
+  id: string;
+  title: string;
+  is_active?: boolean;
+  latest_version?: {
+    id: string;
+    original_filename?: string;
+    extraction_status?: string;
+  } | null;
+};
+
 export function InterviewSetup() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const resumeVersionId = searchParams.get("resume_version_id") || "";
+  const linkedResumeVersionId = searchParams.get("resume_version_id") || "";
   const jobDescriptionId = searchParams.get("job_description_id") || "";
   const [mode, setMode] = useState(
-    resumeVersionId && jobDescriptionId ? "resume_and_jd" : "mixed",
+    linkedResumeVersionId && jobDescriptionId ? "resume_and_jd" : "mixed",
   );
+  const [resumeVersionId, setResumeVersionId] = useState(linkedResumeVersionId);
+  const [storedResumes, setStoredResumes] = useState<SetupResumeOption[]>([]);
+  const [resumesLoading, setResumesLoading] = useState(true);
   const [targetRole, setTargetRole] = useState(searchParams.get("target_role") || "");
   const [targetCompany, setTargetCompany] = useState("");
   const [jobDescriptionText, setJobDescriptionText] = useState("");
@@ -391,7 +414,44 @@ export function InterviewSetup() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
+  useEffect(() => {
+    let active = true;
+    setResumesLoading(true);
+    apiRequest<SetupResumeOption[]>("/resumes")
+      .then((rows) => {
+        if (!active) return;
+        const list = rows || [];
+        setStoredResumes(list);
+        setResumeVersionId((current) => {
+          if (current && list.some((row) => row.latest_version?.id === current)) return current;
+          const preferred =
+            list.find((row) => row.is_active && row.latest_version?.id)?.latest_version?.id ||
+            list.find((row) => row.latest_version?.extraction_status === "confirmed")?.latest_version
+              ?.id ||
+            list.find((row) => row.latest_version?.id)?.latest_version?.id ||
+            "";
+          return preferred;
+        });
+      })
+      .catch(() => {
+        if (active) setStoredResumes([]);
+      })
+      .finally(() => {
+        if (active) setResumesLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const needsResume = mode === "resume" || mode === "resume_and_jd";
+  const resumesWithVersion = storedResumes.filter((row) => row.latest_version?.id);
+
   async function create() {
+    if (needsResume && !resumeVersionId) {
+      setError("Choose a saved resume, or open Resume Analysis to upload one first.");
+      return;
+    }
     setBusy(true);
     setError("");
     try {
@@ -426,10 +486,10 @@ export function InterviewSetup() {
       <PageHeader
         eyebrow="Interview setup"
         title="Create a practice session"
-        description="Pick a mode, optional target role, and paste a job description if you have one. The session is stored in your account; questions are generated from your inputs only (no invented career history)."
+        description="Pick a mode, reuse a resume already on your profile when helpful, and paste a job description if you have one. Questions use only your inputs (no invented career history)."
       />
       <Card className="stack">
-        {resumeVersionId && jobDescriptionId ? (
+        {linkedResumeVersionId && jobDescriptionId ? (
           <p role="status" className="muted" style={{ margin: 0 }}>
             Linked to confirmed resume and job description from preparation. You can still paste extra JD text below.
           </p>
@@ -442,8 +502,43 @@ export function InterviewSetup() {
             <option value="technical">Technical</option>
             <option value="hr">HR / screening</option>
             <option value="role">Role-focused</option>
+            <option value="resume">Resume-based</option>
             <option value="resume_and_jd">Resume + job description</option>
           </select>
+        </label>
+        <label className="field-label">
+          Saved resume {needsResume ? "(required for this mode)" : "(optional)"}
+          {resumesLoading ? (
+            <p className="muted" style={{ margin: "8px 0 0" }}>
+              Loading saved resumes…
+            </p>
+          ) : resumesWithVersion.length ? (
+            <select
+              className="field"
+              value={resumeVersionId}
+              onChange={(e) => setResumeVersionId(e.target.value)}
+            >
+              {!needsResume ? <option value="">None — general practice</option> : null}
+              {resumesWithVersion.map((row) => (
+                <option key={row.latest_version!.id} value={row.latest_version!.id}>
+                  {row.title}
+                  {row.is_active ? " (active)" : ""}
+                  {row.latest_version?.original_filename
+                    ? ` · ${row.latest_version.original_filename}`
+                    : ""}
+                  {row.latest_version?.extraction_status
+                    ? ` · ${row.latest_version.extraction_status}`
+                    : ""}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <p className="muted" style={{ margin: "8px 0 0" }}>
+              No saved resume yet.{" "}
+              <Link href="/settings/profile">Complete your profile</Link> or{" "}
+              <Link href="/resume-analysis?tab=upload">upload one</Link> — it will appear here for reuse.
+            </p>
+          )}
         </label>
         <label className="field-label">
           Target role
@@ -499,7 +594,7 @@ export function InterviewSetup() {
         </div>
         <div className="stack" style={{ gap: 8 }}>
           <p className="muted" style={{ margin: 0 }}>
-            Camera is for live practice only (preview). Speech recognition uses the browser mic separately so answers are not blocked. Nothing is recorded to storage.
+            Camera is analyzed live for presence / eye-contact coaching (not recorded). Speech recognition uses the browser mic separately so answers are not blocked. Interviewer voice uses Fish Audio when configured, with browser speech as fallback.
           </p>
           <label className="cluster" style={{ gap: 8 }}>
             <input type="checkbox" checked={cameraEnabled} onChange={(e) => setCameraEnabled(e.target.checked)} />
@@ -546,6 +641,8 @@ export function InterviewSession() {
   const [gazeSummary, setGazeSummary] = useState<GazeSessionSummary | null>(null);
   const [gazeCoach, setGazeCoach] = useState<string | null>(null);
   const [gazeSupported, setGazeSupported] = useState(true);
+  const [gazeDetectorKind, setGazeDetectorKind] = useState<GazeDetectorKind>("unavailable");
+  const [ttsProviderLabel, setTtsProviderLabel] = useState("browser");
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -564,7 +661,14 @@ export function InterviewSession() {
   const listenGenerationRef = useRef(0);
   const gazeSamplesRef = useRef<GazeSample[]>([]);
   const gazeDetectorRef = useRef<FaceDetectorLike | null>(null);
+  const gazeCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const recentGazeStatesRef = useRef<GazeSample["state"][]>([]);
+  const gazeDetectorKindRef = useRef<GazeDetectorKind>("unavailable");
+  /** Abort controller for the in-flight interviewer TTS turn. */
+  const ttsAbortRef = useRef<AbortController | null>(null);
+  const answerJobCancelRef = useRef<(() => void) | null>(null);
+  /** Monotonic id so stale speak callbacks cannot steal the turn. */
+  const speakGenerationRef = useRef(0);
 
   const current = questions[activeIndex];
   const media = sessionMediaFlags(session || {});
@@ -610,6 +714,17 @@ export function InterviewSession() {
     }
   }, []);
 
+  const abortInterviewerSpeech = useCallback(() => {
+    speakGenerationRef.current += 1;
+    try {
+      ttsAbortRef.current?.abort();
+    } catch {
+      /* ignore */
+    }
+    ttsAbortRef.current = null;
+    cancelInterviewSpeech();
+  }, []);
+
   const startListening = useCallback(() => {
     if (!media.microphone) {
       setMediaMessage("Microphone is disabled for this session. Type your answer.");
@@ -625,14 +740,13 @@ export function InterviewSession() {
     }
     setSpeechSupported(true);
 
-    // Never capture TTS of the question — cancel synthesis before opening recognition.
-    if ("speechSynthesis" in window) {
-      try {
-        window.speechSynthesis.cancel();
-      } catch {
-        /* ignore */
-      }
+    // Never capture interviewer audio — only open the mic after TTS is idle.
+    // Do NOT cancel mid-sentence here; caller waits until speech finishes first.
+    if (isInterviewSpeechBusy()) {
+      setMediaMessage("Wait for the interviewer to finish speaking…");
+      return;
     }
+    cancelInterviewSpeech();
 
     // Replace any existing recognizer.
     keepListeningRef.current = false;
@@ -756,66 +870,70 @@ export function InterviewSession() {
     }
   }, [media.microphone]);
 
-  const speakQuestion = useCallback(
-    (text: string, after?: () => void) => {
+  /**
+   * Speak a full interviewer line via Fish Audio (or browser fallback).
+   * Resolves only after the entire sentence finishes — never mid-utterance.
+   */
+  const speakInterviewer = useCallback(
+    async (
+      text: string,
+      options?: { kind?: "question" | "feedback" | "bridge" | "general"; onDone?: () => void },
+    ) => {
+      const line = String(text || "").trim();
       stopRecognition({ keepPhase: true });
-      setPhase("asking");
-      setInterim("");
-      setLiveMetrics(null);
-      if (!text || typeof window === "undefined" || !("speechSynthesis" in window)) {
-        setMediaMessage("Text-to-speech is not available. Read the question and answer below.");
-        after?.();
+      if (!line) {
+        options?.onDone?.();
         return;
       }
+
+      // Cancel any previous interviewer turn before starting a new one.
       try {
-        window.speechSynthesis.cancel();
+        ttsAbortRef.current?.abort();
       } catch {
         /* ignore */
       }
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.rate = 1;
-      utterance.pitch = 1;
-      utterance.onstart = () => setPhase("asking");
-      utterance.onend = () => {
-        after?.();
-      };
-      utterance.onerror = () => {
-        after?.();
-      };
-      // Chrome sometimes needs getVoices() warmed before first speak.
-      void window.speechSynthesis.getVoices();
-      window.speechSynthesis.speak(utterance);
-      setMediaMessage("Asking the question… listening will start when the interviewer finishes.");
+      const controller = new AbortController();
+      ttsAbortRef.current = controller;
+      const generation = ++speakGenerationRef.current;
+
+      setPhase(options?.kind === "feedback" || options?.kind === "bridge" ? "feedback" : "asking");
+      setInterim("");
+      setLiveMetrics(null);
+      setMediaMessage(
+        options?.kind === "feedback" || options?.kind === "bridge"
+          ? "Interviewer speaking… please wait until they finish."
+          : "Asking the question… listening starts only after the full question is spoken.",
+      );
+
+      try {
+        await speakInterviewLine(line, {
+          kind: options?.kind ?? "general",
+          signal: controller.signal,
+        });
+      } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        // speakInterviewLine already falls back to browser TTS; still continue the flow.
+      }
+
+      if (speakGenerationRef.current !== generation || controller.signal.aborted) return;
+      options?.onDone?.();
     },
     [stopRecognition],
   );
 
-  const speakLine = useCallback((text: string, after?: () => void) => {
-    const line = String(text || "").trim();
-    if (!line || typeof window === "undefined" || !("speechSynthesis" in window)) {
-      after?.();
-      return;
-    }
-    try {
-      window.speechSynthesis.cancel();
-    } catch {
-      /* ignore */
-    }
-    const utterance = new SpeechSynthesisUtterance(line);
-    utterance.rate = 1.02;
-    let finished = false;
-    const done = () => {
-      if (finished) return;
-      finished = true;
-      after?.();
-    };
-    utterance.onend = done;
-    utterance.onerror = done;
-    void window.speechSynthesis.getVoices();
-    window.speechSynthesis.speak(utterance);
-    // Safety net if onend never fires (some Chrome builds).
-    window.setTimeout(done, Math.min(20000, 1800 + line.length * 55));
-  }, []);
+  const speakQuestion = useCallback(
+    (text: string, after?: () => void) => {
+      void speakInterviewer(text, { kind: "question", onDone: after });
+    },
+    [speakInterviewer],
+  );
+
+  const speakLine = useCallback(
+    (text: string, after?: () => void, kind: "feedback" | "bridge" | "general" = "feedback") => {
+      void speakInterviewer(text, { kind, onDone: after });
+    },
+    [speakInterviewer],
+  );
 
   const completeSession = useCallback(async () => {
     setSaving(true);
@@ -842,13 +960,7 @@ export function InterviewSession() {
     advancingRef.current = true;
     keepListeningRef.current = false;
     stopRecognition({ keepPhase: true });
-    if ("speechSynthesis" in window) {
-      try {
-        window.speechSynthesis.cancel();
-      } catch {
-        /* ignore */
-      }
-    }
+    abortInterviewerSpeech();
     setGazeCoach(null);
     try {
       const next = nextActiveIndex(activeIndexRef.current, questionsRef.current.length);
@@ -869,7 +981,7 @@ export function InterviewSession() {
         advancingRef.current = false;
       }, 400);
     }
-  }, [completeSession, stopRecognition]);
+  }, [abortInterviewerSpeech, completeSession, stopRecognition]);
 
   /** Listen only for short "proceed / next / yes" commands between questions. */
   const startProceedListening = useCallback(() => {
@@ -996,26 +1108,35 @@ export function InterviewSession() {
           : "Short feedback — then say proceed or press Continue.",
       );
 
-      speakLine(shortLine, () => {
-        if (phaseRef.current !== "feedback" && phaseRef.current !== "awaiting_proceed") {
-          // User navigated away mid-flow.
-          return;
-        }
-        speakLine(bridge, () => {
-          if (autoContinue) {
-            setPhase(phaseAfterFeedbackSpoken(true));
-            window.setTimeout(() => {
-              void advanceAfterFeedback();
-            }, DEFAULT_AUTO_ADVANCE_AFTER_FEEDBACK_MS);
+      // Speak full feedback, then full bridge — never advance while still talking.
+      speakLine(
+        shortLine,
+        () => {
+          if (phaseRef.current !== "feedback" && phaseRef.current !== "awaiting_proceed") {
             return;
           }
-          // Hands-on path: wait for voice "proceed" or button.
-          setPhase("awaiting_proceed");
-          window.setTimeout(() => {
-            if (phaseRef.current === "awaiting_proceed") startProceedListening();
-          }, DEFAULT_LISTEN_AFTER_TTS_MS);
-        });
-      });
+          speakLine(
+            bridge,
+            () => {
+              if (autoContinue) {
+                setPhase(phaseAfterFeedbackSpoken(true));
+                window.setTimeout(() => {
+                  void advanceAfterFeedback();
+                }, DEFAULT_AUTO_ADVANCE_AFTER_FEEDBACK_MS);
+                return;
+              }
+              setPhase("awaiting_proceed");
+              window.setTimeout(() => {
+                if (phaseRef.current === "awaiting_proceed" && !isInterviewSpeechBusy()) {
+                  startProceedListening();
+                }
+              }, DEFAULT_LISTEN_AFTER_TTS_MS);
+            },
+            "bridge",
+          );
+        },
+        "feedback",
+      );
     },
     [advanceAfterFeedback, speakLine, startProceedListening],
   );
@@ -1037,47 +1158,96 @@ export function InterviewSession() {
         listenStartedAtRef.current > 0 ? Date.now() - listenStartedAtRef.current : 0;
       const speech = analyzeLiveSpeaking(text, elapsedMs);
       setLiveMetrics(speech);
-      const detectorKind = gazeDetectorRef.current ? "face_detector" : "unavailable";
+      const detectorKind: GazeDetectorKind =
+        gazeDetectorKindRef.current !== "unavailable"
+          ? gazeDetectorKindRef.current
+          : gazeDetectorRef.current
+            ? "face_detector"
+            : gazeSamplesRef.current.length > 0
+              ? "canvas_presence"
+              : "unavailable";
       const gaze = summarizeGazeSamples(gazeSamplesRef.current, {
         sampleIntervalMs: 400,
         detector: detectorKind,
       });
       setGazeSummary(gaze);
+      let waitingForJob = false;
+      const answerPayload = {
+        question_id: q.id,
+        typed_response: text,
+        transcript: text,
+        duration_seconds: Math.max(0, Math.round(speech.duration_seconds)),
+        speech_metrics: {
+          duration_seconds: speech.duration_seconds,
+          words_per_minute: speech.words_per_minute,
+          pace_band: speech.pace_band,
+          filler_count: speech.filler_count,
+          filler_rate: speech.filler_rate,
+          word_count: speech.word_count,
+        },
+        gaze_metrics: {
+          sample_count: gaze.sample_count,
+          looking_samples: gaze.looking_samples,
+          away_samples: gaze.away_samples,
+          no_face_samples: gaze.no_face_samples,
+          looking_ratio: gaze.looking_ratio,
+          looking_seconds: gaze.looking_seconds,
+          away_seconds: gaze.away_seconds,
+          eye_contact_score: gaze.eye_contact_score,
+          band: gaze.band,
+          notes: gaze.notes,
+          detector: gaze.detector,
+        },
+      };
       try {
         const result = await apiRequest<{
           response?: unknown;
           evaluation?: AnswerEvaluation;
           question?: Question;
-        }>(`/interviews/${sessionId}/responses`, {
+          accepted?: boolean;
+          job?: { id: string };
+        }>(BACKGROUND_JOBS_ENABLED ? `/interviews/${sessionId}/responses/async` : `/interviews/${sessionId}/responses`, {
           method: "POST",
-          body: JSON.stringify({
-            question_id: q.id,
-            typed_response: text,
-            transcript: text,
-            duration_seconds: Math.max(0, Math.round(speech.duration_seconds)),
-            speech_metrics: {
-              duration_seconds: speech.duration_seconds,
-              words_per_minute: speech.words_per_minute,
-              pace_band: speech.pace_band,
-              filler_count: speech.filler_count,
-              filler_rate: speech.filler_rate,
-              word_count: speech.word_count,
-            },
-            gaze_metrics: {
-              sample_count: gaze.sample_count,
-              looking_samples: gaze.looking_samples,
-              away_samples: gaze.away_samples,
-              no_face_samples: gaze.no_face_samples,
-              looking_ratio: gaze.looking_ratio,
-              looking_seconds: gaze.looking_seconds,
-              away_seconds: gaze.away_seconds,
-              eye_contact_score: gaze.eye_contact_score,
-              band: gaze.band,
-              notes: gaze.notes,
-              detector: gaze.detector,
-            },
-          }),
+          body: JSON.stringify(answerPayload),
         });
+        if (result.job?.id) {
+          waitingForJob = true;
+          setMessage("Answer queued. Preparing interviewer feedback…");
+          answerJobCancelRef.current = subscribeToBackgroundJob(
+            result.job.id,
+            (event: BackgroundJobEvent) => {
+              if (event.status === "failed") {
+                setError(event.error || "Interview answer evaluation failed.");
+                setPhase("idle");
+                setSaving(false);
+                submittingRef.current = false;
+                return;
+              }
+              setMessage(`Evaluating answer… ${Math.max(0, Math.min(100, event.progress))}%`);
+              if (event.status !== "completed") return;
+              const evaluation = event.result?.evaluation as AnswerEvaluation | undefined;
+              if (!evaluation) {
+                setError("Interview evaluation completed without feedback.");
+                setPhase("idle");
+              } else {
+                setLastFeedback(evaluation);
+                setLastAnswerSnapshot(text);
+                runPostAnswerFlow(evaluation);
+              }
+              setSaving(false);
+              submittingRef.current = false;
+              answerJobCancelRef.current?.();
+              answerJobCancelRef.current = null;
+            },
+            (reason) => {
+              setError(reason.message);
+              setPhase("idle");
+              setSaving(false);
+              submittingRef.current = false;
+            },
+          );
+          return;
+        }
         const evaluation = result.evaluation || null;
         setLastFeedback(evaluation);
         setLastAnswerSnapshot(text);
@@ -1087,12 +1257,16 @@ export function InterviewSession() {
         setError((e as Error).message);
         setPhase("idle");
       } finally {
-        setSaving(false);
-        submittingRef.current = false;
+        if (!waitingForJob) {
+          setSaving(false);
+          submittingRef.current = false;
+        }
       }
     },
     [runPostAnswerFlow, sessionId, stopRecognition],
   );
+
+  useEffect(() => () => answerJobCancelRef.current?.(), []);
 
   // Load session + questions
   useEffect(() => {
@@ -1140,20 +1314,45 @@ export function InterviewSession() {
       return;
     }
     void navigator.mediaDevices
-      .getUserMedia({ video: true, audio: false })
+      .getUserMedia({
+        video: {
+          facingMode: "user",
+          width: { ideal: 640 },
+          height: { ideal: 480 },
+        },
+        audio: false,
+      })
       .then((stream) => {
         if (cancelled) {
           stream.getTracks().forEach((track) => track.stop());
           return;
         }
         streamRef.current = stream;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
+        const video = videoRef.current;
+        if (video) {
+          video.srcObject = stream;
+          video.muted = true;
+          video.playsInline = true;
+          void video.play().catch(() => {
+            /* autoplay policies — muted should allow play */
+          });
         }
-        setMediaMessage(mediaReadyMessage(true, flags.microphone));
+        // Warm FaceDetector when present; canvas fallback still works without it.
+        if (!gazeDetectorRef.current) {
+          const det = createFaceDetector();
+          gazeDetectorRef.current = det;
+          setGazeSupported(true); // canvas fallback always available with a live camera
+          const kind: GazeDetectorKind = det ? "face_detector" : "canvas_presence";
+          gazeDetectorKindRef.current = kind;
+          setGazeDetectorKind(kind);
+        }
+        setMediaMessage(
+          `${mediaReadyMessage(true, flags.microphone)} Camera presence analysis is active.`,
+        );
       })
       .catch(() => {
         if (!cancelled) {
+          setGazeSupported(false);
           setMediaMessage(
             "Camera permission was not granted. You can still use voice or type answers.",
           );
@@ -1166,55 +1365,74 @@ export function InterviewSession() {
     };
   }, [session]);
 
+  // Probe Fish Audio availability once per session (no secrets; status only).
+  useEffect(() => {
+    if (!sessionId) return;
+    let active = true;
+    void fetchInterviewTtsStatus()
+      .then((status) => {
+        if (!active) return;
+        setTtsProviderLabel(status.configured ? "Fish Audio" : "browser");
+      })
+      .catch(() => {
+        if (active) setTtsProviderLabel("browser");
+      });
+    return () => {
+      active = false;
+    };
+  }, [sessionId]);
+
   // Attach stream if video element mounts later
   useEffect(() => {
     if (!media.camera || !videoRef.current || !streamRef.current) return;
-    if (videoRef.current.srcObject !== streamRef.current) {
-      videoRef.current.srcObject = streamRef.current;
+    const video = videoRef.current;
+    if (video.srcObject !== streamRef.current) {
+      video.srcObject = streamRef.current;
     }
+    video.muted = true;
+    video.playsInline = true;
+    void video.play().catch(() => undefined);
   }, [media.camera, current?.id]);
 
-  // Camera gaze sampling while the candidate is answering (FaceDetector when available).
+  // Camera presence sampling while the candidate is answering.
+  // FaceDetector when available; canvas skin-mass heuristic otherwise — never silent.
   useEffect(() => {
     if (!media.camera || phase !== "listening") return;
     const video = videoRef.current;
     if (!video) return;
 
     let cancelled = false;
-    let detector = gazeDetectorRef.current;
-    if (!detector) {
-      detector = createFaceDetector();
-      gazeDetectorRef.current = detector;
-      setGazeSupported(Boolean(detector));
+    if (!gazeDetectorRef.current) {
+      gazeDetectorRef.current = createFaceDetector();
     }
-    if (!detector) {
-      setGazeCoach(null);
-      setGazeSummary(
-        summarizeGazeSamples([], { detector: "unavailable", sampleIntervalMs: 400 }),
-      );
-      return;
+    if (!gazeCanvasRef.current && typeof document !== "undefined") {
+      gazeCanvasRef.current = document.createElement("canvas");
     }
+    setGazeSupported(true);
 
     const sample = async () => {
       if (cancelled || phaseRef.current !== "listening") return;
-      const width = video.videoWidth || 0;
-      const height = video.videoHeight || 0;
-      if (width < 16 || height < 16) return;
+      // Keep trying until the video has real frames (common right after permission).
+      if ((video.videoWidth || 0) < 16 || video.readyState < 2) {
+        void video.play().catch(() => undefined);
+        return;
+      }
       try {
-        const faces = await detector!.detect(video);
+        const result = await sampleCameraPresence(video, {
+          detector: gazeDetectorRef.current,
+          canvas: gazeCanvasRef.current,
+        });
         if (cancelled) return;
-        const box = faces[0]?.boundingBox;
-        const classified = classifyFaceLooking(
-          box
-            ? { x: box.x, y: box.y, width: box.width, height: box.height }
-            : null,
-          width,
-          height,
-        );
+        if (result.state === "unavailable" && result.detector === "unavailable") return;
+
+        if (result.detector !== "unavailable") {
+          gazeDetectorKindRef.current = result.detector;
+          setGazeDetectorKind(result.detector);
+        }
         const entry: GazeSample = {
           at: Date.now(),
-          state: classified.state,
-          center_score: classified.center_score,
+          state: result.state === "unavailable" ? "no_face" : result.state,
+          center_score: result.center_score,
         };
         gazeSamplesRef.current = [...gazeSamplesRef.current, entry].slice(-600);
         recentGazeStatesRef.current = [...recentGazeStatesRef.current, entry.state].slice(-12);
@@ -1222,11 +1440,11 @@ export function InterviewSession() {
         setGazeSummary(
           summarizeGazeSamples(gazeSamplesRef.current, {
             sampleIntervalMs: 400,
-            detector: "face_detector",
+            detector: gazeDetectorKindRef.current,
           }),
         );
       } catch {
-        // Detector can fail on a single frame; do not invent a looking state.
+        // Single-frame failures are fine — keep sampling.
       }
     };
 
@@ -1263,12 +1481,16 @@ export function InterviewSession() {
       if (cancelled) return;
       const nextPhase = phaseAfterQuestionSpoken(media.microphone, autoVoiceRef.current);
       if (nextPhase === "listening") {
-        // Wait until TTS fully releases audio, then open SpeechRecognition.
+        // Wait until the FULL question audio finishes — never cut mid-sentence.
         listenTimer = scheduleListenAfterQuestionSpoken(
           () => {
             if (!cancelled) startListening();
           },
-          { isCancelled: () => cancelled },
+          {
+            isCancelled: () => cancelled,
+            maxWaitMs: DEFAULT_TTS_MAX_WAIT_MS,
+            isBusy: () => isInterviewSpeechBusy(),
+          },
         );
       } else {
         setPhase("idle");
@@ -1283,13 +1505,13 @@ export function InterviewSession() {
     const timer = window.setTimeout(() => {
       if (cancelled) return;
       speakQuestion(current.question, afterSpoken);
-    }, 200);
+    }, 250);
 
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
       if (listenTimer) window.clearTimeout(listenTimer);
-      if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+      abortInterviewerSpeech();
       stopRecognition({ keepPhase: true });
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-run on question change
@@ -1325,10 +1547,10 @@ export function InterviewSession() {
     () => () => {
       keepListeningRef.current = false;
       stopRecognition({ keepPhase: true });
-      if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+      abortInterviewerSpeech();
       streamRef.current?.getTracks().forEach((track) => track.stop());
     },
-    [stopRecognition],
+    [abortInterviewerSpeech, stopRecognition],
   );
 
   function toggleVoiceAnswer() {
@@ -1337,7 +1559,11 @@ export function InterviewSession() {
       setMediaMessage("Listening stopped. Edit your answer or save to continue.");
       return;
     }
-    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+    if (isInterviewSpeechBusy()) {
+      setMediaMessage("Wait for the interviewer to finish, then try again.");
+      return;
+    }
+    cancelInterviewSpeech();
     startListening();
   }
 
@@ -1345,8 +1571,15 @@ export function InterviewSession() {
     if (!current?.question) return;
     speakQuestion(current.question, () => {
       const nextPhase = phaseAfterQuestionSpoken(media.microphone, autoVoice);
-      if (nextPhase === "listening") startListening();
-      else setPhase("idle");
+      if (nextPhase === "listening") {
+        scheduleListenAfterQuestionSpoken(
+          () => startListening(),
+          {
+            maxWaitMs: DEFAULT_TTS_MAX_WAIT_MS,
+            isBusy: () => isInterviewSpeechBusy(),
+          },
+        );
+      } else setPhase("idle");
     });
   }
 
@@ -1428,6 +1661,18 @@ export function InterviewSession() {
               {mediaMessage || "Questions are spoken aloud; your spoken answers appear in the box below."}
             </p>
             <p style={{ margin: 0, fontWeight: 600 }}>{phaseLabel}</p>
+            <p className="muted" style={{ margin: 0, fontSize: "var(--text-sm)" }}>
+              Interviewer voice: <strong>{ttsProviderLabel}</strong>
+              {media.camera
+                ? ` · Camera analysis: ${
+                    gazeDetectorKind === "face_detector"
+                      ? "FaceDetector"
+                      : gazeDetectorKind === "canvas_presence"
+                        ? "presence tracking"
+                        : "starting…"
+                  }`
+                : ""}
+            </p>
             {!speechSupported ? (
               <p className="field-error" style={{ margin: 0 }}>
                 This browser has no Web Speech recognition (try Chrome/Edge). Typing still works.
@@ -1486,7 +1731,7 @@ export function InterviewSession() {
         </label>
         <p className="muted" style={{ margin: 0, fontSize: "var(--text-sm)" }}>
           {autoVoice
-            ? "After each answer you’ll hear a short coach note, then the next question starts on its own."
+            ? "Natural back-and-forth: the interviewer finishes each full line before listening. After your answer you get a short coach note, then the next question."
             : "After each answer you’ll hear a short coach note, then “Shall we move on?” — say proceed / yes / next, or press Continue."}
         </p>
         <div className="cluster">
@@ -1588,7 +1833,7 @@ export function InterviewSession() {
               <strong>Camera presence</strong>
               {!gazeSupported ? (
                 <p className="muted" style={{ margin: "6px 0 0", fontSize: "var(--text-sm)" }}>
-                  Gaze coaching needs Chrome/Edge FaceDetector. Your spoken answers are still scored.
+                  Camera is not available. Your spoken answers are still scored.
                 </p>
               ) : (
                 <>
@@ -1624,7 +1869,10 @@ export function InterviewSession() {
                     </p>
                   ) : (
                     <p className="muted" style={{ margin: "10px 0 0", fontSize: "var(--text-sm)" }}>
-                      {gazeSummary?.notes || "Keep your face centered and look into the camera."}
+                      {gazeSummary?.notes ||
+                        (gazeSummary?.sample_count
+                          ? "Keep your face centered and look into the camera."
+                          : "Analyzing your presence… sit in frame and look into the camera.")}
                     </p>
                   )}
                 </>

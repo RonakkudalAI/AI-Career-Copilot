@@ -240,6 +240,19 @@ function initialState(): DemoState {
                   video_id_policy: "demo_known_public_video",
                 },
               },
+              {
+                id: "demo-resource-1b",
+                title: "Blogs & articles: REST API design",
+                resource_type: "article_search",
+                provider: "Google · educational sites",
+                url: "https://www.google.com/search?q=REST+API+design+guide+OR+article+%28site%3Afreecodecamp.org+OR+site%3Adev.to+OR+site%3Adeveloper.mozilla.org%29",
+                reason_recommended:
+                  "Free blogs and articles for the sample skill gap (demo). Specific post URLs are never invented.",
+                metadata: {
+                  source: "demo",
+                  url_policy: "allowlisted_search_only_no_invented_articles",
+                },
+              },
             ],
           },
         ],
@@ -619,6 +632,120 @@ export async function demoApiRequest<T>(path: string, init: RequestInit = {}): P
   if (path === "/profile/skills/from-resume" && method === "POST") {
     return { suggested: state.skills.map((skill) => skill.name), created: [], created_count: 0, profile_completion: state.profile.profile_completion } as T;
   }
+  if (path === "/profile/from-resume/preview" && method === "POST") {
+    const versionId = String(body.resume_version_id || "");
+    const version =
+      (versionId && state.resumeVersions.find((item) => item.id === versionId)) ||
+      state.resumeVersions[0] ||
+      null;
+    return {
+      draft: {
+        profile: {
+          selected: true,
+          full_name: state.profile.full_name || "Demo Candidate",
+          current_role: state.profile.current_role || "Software Engineer",
+          headline: state.profile.headline || "Software engineer",
+          location: state.profile.location || "Remote",
+        },
+        skills: state.skills.map((skill) => ({ ...skill, selected: true })),
+        experiences: state.experiences.map((row) => ({ ...row, selected: true })),
+        education: state.education.map((row) => ({ ...row, selected: true })),
+        projects: [],
+        certifications: [],
+        languages: [],
+        links: state.links.map((row) => ({ ...row, selected: true })),
+        meta: { method: "demo", warnings: [] },
+      },
+      counts: { skills: state.skills.length, experiences: state.experiences.length },
+      resume: {
+        id: version?.id || null,
+        resume_id: version?.resume_id || null,
+        original_filename: version?.original_filename || null,
+        extraction_status: version?.extraction_status || null,
+        source: "stored_version",
+      },
+      disclaimer: "Demo draft — review before applying.",
+    } as T;
+  }
+  if (path === "/profile/from-resume/preview-upload" && method === "POST") {
+    const form = init.body instanceof FormData ? init.body : null;
+    const file = form?.get("file") as File | null;
+    const resumeId = id("demo-resume");
+    const versionId = id("demo-version");
+    const resume = {
+      id: resumeId,
+      user_id: DEMO_USER_ID,
+      title: file?.name ? `${file.name} (profile)` : "Profile resume",
+      is_active: state.resumes.length === 0,
+      created_at: now(),
+    };
+    const version = {
+      id: versionId,
+      resume_id: resumeId,
+      user_id: DEMO_USER_ID,
+      version_number: 1,
+      source_type: "uploaded",
+      original_filename: file?.name || "resume.pdf",
+      mime_type: file?.type || "application/pdf",
+      extraction_status: "review_required",
+      created_at: now(),
+      structured_content: {
+        sections: {
+          summary: ["Software engineer with experience building web products."],
+          skills: ["TypeScript", "Python"],
+          experience: ["Software Engineer  -  Demo Company"],
+        },
+      },
+    };
+    state.resumes.unshift(resume);
+    state.resumeVersions.unshift(version);
+    return {
+      draft: {
+        profile: {
+          selected: true,
+          full_name: state.profile.full_name || "Demo Candidate",
+          current_role: "Software Engineer",
+          headline: "Software engineer building products",
+          location: "Remote",
+        },
+        skills: [
+          { name: "TypeScript", selected: true },
+          { name: "Python", selected: true },
+        ],
+        experiences: [
+          {
+            company_name: "Demo Company",
+            role_title: "Software Engineer",
+            selected: true,
+          },
+        ],
+        education: [],
+        projects: [],
+        certifications: [],
+        languages: [],
+        links: [],
+        meta: { method: "demo", warnings: [] },
+      },
+      counts: { skills: 2, experiences: 1 },
+      resume: {
+        id: versionId,
+        resume_id: resumeId,
+        original_filename: version.original_filename,
+        extraction_status: version.extraction_status,
+        title: resume.title,
+        is_active: resume.is_active,
+        source: "upload_stored",
+      },
+      disclaimer: "Demo draft — resume saved to library for reuse.",
+    } as T;
+  }
+  if (path === "/profile/from-resume/apply" && method === "POST") {
+    return {
+      created: { skills: 0, experiences: 0, education: 0, projects: 0, certifications: 0, languages: 0, links: 0 },
+      updated_profile_fields: ["full_name", "current_role"],
+      profile_completion: state.profile.profile_completion || 40,
+    } as T;
+  }
   if (parts[0] === "resumes" && parts.length === 1 && method === "GET") {
     return state.resumes.map((resume) => ({
       ...resume,
@@ -635,6 +762,16 @@ export async function demoApiRequest<T>(path: string, init: RequestInit = {}): P
     state.resumes.unshift(resume);
     state.resumeVersions.unshift(version);
     return { resume, version } as T;
+  }
+  // GET /resumes/{id} — full resume with versions for reuse in analysis
+  if (parts[0] === "resumes" && parts.length === 2 && method === "GET") {
+    const resume = state.resumes.find((item) => item.id === parts[1]);
+    if (!resume) throw new Error("Resume not found.");
+    const versions = state.resumeVersions
+      .filter((version) => String(version.resume_id || "") === String(resume.id || ""))
+      .slice()
+      .sort((a, b) => Number(b.version_number || 0) - Number(a.version_number || 0));
+    return { ...resume, versions } as T;
   }
   if (parts[0] === "resumes" && parts.length === 2 && method === "DELETE") {
     state.resumes = state.resumes.filter((resume) => resume.id !== parts[1]);
@@ -1086,12 +1223,13 @@ export async function demoApiRequest<T>(path: string, init: RequestInit = {}): P
     const pathId = id("demo-path");
     const itemId = id("demo-item");
     const resourceId = id("demo-resource");
+    const articleResourceId = id("demo-article");
     const path = {
       id: pathId,
       user_id: DEMO_USER_ID,
       title: "Skill gap path · Demo ATS gaps",
       description:
-        "Demo path grounded in illustrative ATS gaps with free lesson resources (no invented skills).",
+        "Demo path grounded in illustrative ATS gaps with free video lessons and blogs/articles (no invented skills).",
       source_type: "ats_analysis",
       status: "active",
       progress_percentage: 0,
@@ -1101,7 +1239,8 @@ export async function demoApiRequest<T>(path: string, init: RequestInit = {}): P
         {
           id: itemId,
           title: "Learn Docker with guided practice",
-          objective: "Study Docker using free tutorials, then practise a small container workflow.",
+          objective:
+            "Study Docker using free video lessons and articles, then practise a small container workflow.",
           status: "pending",
           estimated_minutes: 60,
           difficulty: "foundational",
@@ -1112,7 +1251,7 @@ export async function demoApiRequest<T>(path: string, init: RequestInit = {}): P
               resource_type: "youtube_video",
               provider: "freeCodeCamp.org",
               url: "https://www.youtube.com/watch?v=fqMOX6JJhGo",
-              reason_recommended: "Demo lesson for an illustrative ATS gap (not live API).",
+              reason_recommended: "Demo video lesson for an illustrative ATS gap (not live API).",
               metadata: {
                 video_id: "fqMOX6JJhGo",
                 channel_title: "freeCodeCamp.org",
@@ -1120,10 +1259,35 @@ export async function demoApiRequest<T>(path: string, init: RequestInit = {}): P
                 video_id_policy: "demo_known_public_video",
               },
             },
+            {
+              id: articleResourceId,
+              title: "Blogs & articles: Docker",
+              resource_type: "article_search",
+              provider: "Google · educational sites",
+              url: "https://www.google.com/search?q=Docker+tutorial+guide+OR+article+%28site%3Afreecodecamp.org+OR+site%3Adev.to+OR+site%3Adocs.docker.com%29",
+              reason_recommended:
+                "Demo reading search for blogs and docs on Docker. Specific article URLs are never invented.",
+              metadata: {
+                source: "demo",
+                url_policy: "allowlisted_search_only_no_invented_articles",
+              },
+            },
+            {
+              id: id("demo-docs"),
+              title: "Docker Docs: Docker",
+              resource_type: "docs_search",
+              provider: "Docker Docs",
+              url: "https://docs.docker.com/search/?q=Docker",
+              reason_recommended: "Official documentation search for the sample Docker gap (demo).",
+              metadata: {
+                source: "demo",
+                url_policy: "allowlisted_search_only_no_invented_articles",
+              },
+            },
           ],
         },
       ],
-      algorithm_version: "ats-youtube-api-v1",
+      algorithm_version: "ats-mixed-learning-v1",
     };
     state.learningPaths.unshift(path);
     return path as T;

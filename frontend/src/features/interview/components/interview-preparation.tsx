@@ -121,12 +121,23 @@ export function InterviewPreparationHome() {
         action={<Link className="button button-secondary" href="/mock-interview">All sessions</Link>}
       />
       {sourceLoading ? <div className="stack"><Skeleton lines={5} /><Skeleton lines={6} /></div> : sourceError ? <ErrorState onRetry={() => void loadSources()} /> : !confirmedResumes.length || !confirmedJobs.length ? (
-        <EmptyState title="Confirm your sources first" description="Interview preparation needs one confirmed resume and one confirmed job description." href="/resume-analysis?tab=upload" action="Open Resume Analysis" />
+        <EmptyState
+          title="Confirm your sources first"
+          description={
+            !confirmedResumes.length
+              ? "Upload a resume once (profile or Resume Analysis), confirm the extraction, then return here. Saved resumes are reused — you do not need to re-upload."
+              : "Confirm a job description in Resume Analysis, then return here. Your saved resume is already available."
+          }
+          href={!confirmedResumes.length ? "/settings/profile" : "/resume-analysis?tab=upload"}
+          action={!confirmedResumes.length ? "Complete profile / resume" : "Open Resume Analysis"}
+        />
       ) : (
         <Card className="stack">
           <div>
             <h2 style={{ margin: 0 }}>Preparation context</h2>
-            <p className="muted" style={{ marginBottom: 0 }}>Use the same confirmed documents you used for ATS analysis when possible.</p>
+            <p className="muted" style={{ marginBottom: 0 }}>
+              Your active confirmed resume is pre-selected when available. Use the same documents as ATS analysis when possible.
+            </p>
           </div>
           <div className="grid-2">
             <label className="field-label">Confirmed resume

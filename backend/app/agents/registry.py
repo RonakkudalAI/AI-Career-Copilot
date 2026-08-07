@@ -131,11 +131,11 @@ def list_agents(settings: Settings) -> list[dict[str, Any]]:
         },
         {
             "id": AGENT_LEARNING_YOUTUBE_CREW,
-            "name": learning.get("name") or "Learning path YouTube crew",
+            "name": learning.get("name") or "Learning path multi-media crew",
             "description": (
-                "CrewAI-compatible sequential crew: ATS gap analyst → YouTube planner (Groq) → "
-                "resource validator. Recommends free YouTube learning only for completed ATS gaps; "
-                "never invents video IDs."
+                "CrewAI-compatible sequential crew: ATS gap analyst → curriculum planner (Groq) → "
+                "resource validator. Recommends free YouTube lessons plus blogs/articles/docs for "
+                "completed ATS gaps; never invents video IDs or article URLs."
             ),
             "provider": "groq",
             "prompt": "learning_youtube_path_v1.txt (+ crew tools)",
@@ -143,7 +143,7 @@ def list_agents(settings: Settings) -> list[dict[str, Any]]:
             "ready": True,
             "model": groq.get("model") if groq.get("configured") else None,
             "endpoint": "POST /api/v1/learning-paths/generate",
-            "fallback": "Deterministic gap→YouTube search plan when Groq is unavailable.",
+            "fallback": "Deterministic gap→video + article search plan when Groq is unavailable.",
             "framework": learning.get("framework"),
             "runtime": learning.get("runtime"),
             "crew_agents": learning.get("agents"),

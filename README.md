@@ -124,6 +124,12 @@ backend\.venv\Scripts\python.exe -m pip install -e "backend/.[pdf-extras]"
 npm run dev
 ```
 
+For asynchronous resume extraction and interview evaluation, run Redis and set
+`CELERY_ENABLED=true` plus `VITE_BACKGROUND_JOBS=true` in `.env`, then start a
+separate worker with `npm run dev:worker`. The API returns `202` with an owned
+`job_id` and the frontend consumes authenticated SSE updates. If either flag is
+off, the existing synchronous flow remains active.
+
 | Service | URL |
 |---------|-----|
 | App | http://127.0.0.1:3000 |
