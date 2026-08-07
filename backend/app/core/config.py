@@ -91,11 +91,6 @@ class Settings(BaseSettings):
     # Optional public/custom voice model id (Fish Voice Library). Empty = provider default.
     fish_audio_reference_id: str = "bf322df2096a46f18c579d0baa36f41d"
     fish_audio_timeout_seconds: float = Field(default=45.0, gt=5, le=120)
-    celery_enabled: bool = False
-    celery_broker_url: str = "redis://127.0.0.1:6379/0"
-    celery_result_backend: str = "redis://127.0.0.1:6379/1"
-    celery_task_time_limit_seconds: int = Field(default=900, ge=60, le=7200)
-    celery_task_soft_time_limit_seconds: int = Field(default=840, ge=30, le=7100)
     @field_validator("frontend_origins", mode="before")
     @classmethod
     def parse_origins(cls, value: object) -> object:
@@ -191,10 +186,6 @@ class Settings(BaseSettings):
     @property
     def adzuna_configured(self) -> bool:
         return bool(self.adzuna_app_id and self.adzuna_app_key)
-
-    @property
-    def background_jobs_configured(self) -> bool:
-        return bool(self.celery_enabled and self.celery_broker_url and self.celery_result_backend)
 
     @property
     def fish_audio_configured(self) -> bool:

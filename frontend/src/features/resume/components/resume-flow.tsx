@@ -1,7 +1,7 @@
 
 import { Link } from "@/shared/ui/router-link";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { BriefcaseBusiness, CheckCircle2, FileText, RotateCcw, ShieldCheck } from "lucide-react";
 
 
@@ -9,8 +9,7 @@ import { BriefcaseBusiness, CheckCircle2, FileText, RotateCcw, ShieldCheck } fro
 
 
 
-import { apiRequest, subscribeToBackgroundJob, type BackgroundJobEvent } from "@/shared/api/client";
-import { BACKGROUND_JOBS_ENABLED } from "@/shared/config";
+import { apiRequest } from "@/shared/api/client";
 import { jdLabel, resumeLabel } from "@/features/resume/analysis-labels";
 import { isValidCareerFile } from "@/shared/utils";
 import { BookLoader } from "@/shared/ui/book-loader";
@@ -810,10 +809,6 @@ export function NewAnalysis({ embedded = false }: { embedded?: boolean }) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
-  const resumeJobCancelRef = useRef<(() => void) | null>(null);
-
-  useEffect(() => () => resumeJobCancelRef.current?.(), []);
-
   useEffect(() => {
     let active = true;
     setLoadingResumes(true);
@@ -893,11 +888,9 @@ export function NewAnalysis({ embedded = false }: { embedded?: boolean }) {
         ? "Using your saved resume and saving job description…"
         : "Saving resume and job description…",
     );
-    let waitingOnBackgroundJob = false;
     try {
       let resolvedResume: Resume;
       let resolvedVersion: ResumeVersion | null = null;
-      let backgroundJobId: string | null = null;
 
       if (resumeSource === "stored") {
         const detail = await apiRequest<Resume & { versions?: ResumeVersion[] }>(
@@ -920,17 +913,14 @@ export function NewAnalysis({ embedded = false }: { embedded?: boolean }) {
         const resumeResult = await apiRequest<{
           resume: Resume;
           version?: ResumeVersion;
-          job?: { id: string };
-          accepted?: boolean;
-        }>(BACKGROUND_JOBS_ENABLED ? "/resumes/async" : "/resumes", {
+           accepted?: boolean;
+        }>("/resumes", {
           method: "POST",
           body: resumeBody,
         });
         resolvedResume = resumeResult.resume;
         if (resumeResult.version) {
           resolvedVersion = resumeResult.version;
-        } else if (resumeResult.job?.id) {
-          backgroundJobId = resumeResult.job.id;
         } else {
           throw new Error("Resume upload returned no processing result.");
         }
@@ -950,49 +940,12 @@ export function NewAnalysis({ embedded = false }: { embedded?: boolean }) {
             : `Saved “${resolvedResume.title}” and JD${jobResult.role_title ? ` (${jobResult.role_title})` : ""}. Review extractions below.`,
         );
         setStep("review");
-      } else if (backgroundJobId) {
-        waitingOnBackgroundJob = true;
-        setMessage(`Resume queued. Analyzing it in the background…`);
-        resumeJobCancelRef.current = subscribeToBackgroundJob(
-          backgroundJobId,
-          (event: BackgroundJobEvent) => {
-            setMessage(`Analyzing resume… ${Math.max(0, Math.min(100, event.progress))}%`);
-            if (event.status === "completed") {
-              const versionId = event.result?.version_id;
-              if (typeof versionId !== "string") {
-                setError("Resume processing completed without a version result.");
-                setBusy(false);
-                return;
-              }
-              void apiRequest<ResumeVersion>(`/resume-versions/${versionId}`)
-                .then((version) => {
-                  setResumeVersion(version);
-                  setEditedResumeSections(version.structured_content?.sections || {});
-                  setMessage(
-                    `Saved “${resolvedResume.title}” and JD${jobResult.role_title ? ` (${jobResult.role_title})` : ""}. Review extractions below.`,
-                  );
-                  setStep("review");
-                  resumeJobCancelRef.current?.();
-                  resumeJobCancelRef.current = null;
-                })
-                .catch((reason) => setError((reason as Error).message))
-                .finally(() => setBusy(false));
-            } else if (event.status === "failed") {
-              setError(event.error || "Resume processing failed.");
-              setBusy(false);
-            }
-          },
-          (reason) => {
-            setError(reason.message);
-            setBusy(false);
-          },
-        );
       }
     } catch (reason) {
       setError((reason as Error).message);
       setMessage("");
     } finally {
-      if (!waitingOnBackgroundJob) setBusy(false);
+      setBusy(false);
     }
   }
 

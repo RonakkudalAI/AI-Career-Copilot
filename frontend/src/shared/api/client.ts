@@ -3,15 +3,6 @@ import { demoApiRequest, isDemoSession } from "@/features/auth/demo-session";
 import { resolveApiBase } from "@/shared/config";
 
 export type ApiErrorBody = { error?: { code?: string; message?: string; request_id?: string } };
-export type BackgroundJobEvent = {
-  id: string;
-  job_type: string;
-  status: "queued" | "running" | "retrying" | "completed" | "failed" | "cancelled";
-  progress: number;
-  result?: Record<string, unknown> | null;
-  error?: string | null;
-};
-
 const inFlightGets = new Map<string, Promise<unknown>>();
 
 /** True when fetch was cancelled via AbortController (not a connectivity failure). */
@@ -91,51 +82,4 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
     request.finally(() => inFlightGets.delete(requestKey)).catch(() => undefined);
   }
   return request;
-}
-
-/** Stream authenticated SSE events without putting the JWT in a URL. */
-export function subscribeToBackgroundJob(
-  jobId: string,
-  onEvent: (event: BackgroundJobEvent) => void,
-  onError: (error: Error) => void,
-): () => void {
-  const controller = new AbortController();
-  void (async () => {
-    try {
-      const authClient = createAuthClient();
-      const {
-        data: { session },
-      } = await authClient.auth.getSession();
-      if (!session) throw new Error("Your session has expired. Sign in again.");
-      const response = await fetch(`${resolveApiBase()}/background-jobs/${encodeURIComponent(jobId)}/events`, {
-        credentials: "include",
-        headers: { Authorization: `Bearer ${session.access_token}` },
-        signal: controller.signal,
-      });
-      if (!response.ok || !response.body) {
-        throw new Error(`Background job stream failed (${response.status}).`);
-      }
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      while (!controller.signal.aborted) {
-        const chunk = await reader.read();
-        if (chunk.done) break;
-        buffer += decoder.decode(chunk.value, { stream: true });
-        const events = buffer.split("\n\n");
-        buffer = events.pop() || "";
-        for (const event of events) {
-          const data = event
-            .split("\n")
-            .find((line) => line.startsWith("data:"))
-            ?.slice(5)
-            .trim();
-          if (data) onEvent(JSON.parse(data) as BackgroundJobEvent);
-        }
-      }
-    } catch (error) {
-      if (!controller.signal.aborted) onError(error instanceof Error ? error : new Error(String(error)));
-    }
-  })();
-  return () => controller.abort();
 }

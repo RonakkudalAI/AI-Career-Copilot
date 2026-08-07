@@ -3,8 +3,7 @@ import { Link } from "@/shared/ui/router-link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 
-import { apiRequest, isAbortError, subscribeToBackgroundJob, type BackgroundJobEvent } from "@/shared/api/client";
-import { BACKGROUND_JOBS_ENABLED } from "@/shared/config";
+import { apiRequest, isAbortError } from "@/shared/api/client";
 import { Button, Card, PageHeader, Textarea } from "@/shared/ui/primitives";
 import {
   DEFAULT_ANSWER_SILENCE_MS,
@@ -666,7 +665,6 @@ export function InterviewSession() {
   const gazeDetectorKindRef = useRef<GazeDetectorKind>("unavailable");
   /** Abort controller for the in-flight interviewer TTS turn. */
   const ttsAbortRef = useRef<AbortController | null>(null);
-  const answerJobCancelRef = useRef<(() => void) | null>(null);
   /** Monotonic id so stale speak callbacks cannot steal the turn. */
   const speakGenerationRef = useRef(0);
 
@@ -1171,7 +1169,6 @@ export function InterviewSession() {
         detector: detectorKind,
       });
       setGazeSummary(gaze);
-      let waitingForJob = false;
       const answerPayload = {
         question_id: q.id,
         typed_response: text,
@@ -1205,49 +1202,10 @@ export function InterviewSession() {
           evaluation?: AnswerEvaluation;
           question?: Question;
           accepted?: boolean;
-          job?: { id: string };
-        }>(BACKGROUND_JOBS_ENABLED ? `/interviews/${sessionId}/responses/async` : `/interviews/${sessionId}/responses`, {
+        }>(`/interviews/${sessionId}/responses`, {
           method: "POST",
           body: JSON.stringify(answerPayload),
         });
-        if (result.job?.id) {
-          waitingForJob = true;
-          setMessage("Answer queued. Preparing interviewer feedback…");
-          answerJobCancelRef.current = subscribeToBackgroundJob(
-            result.job.id,
-            (event: BackgroundJobEvent) => {
-              if (event.status === "failed") {
-                setError(event.error || "Interview answer evaluation failed.");
-                setPhase("idle");
-                setSaving(false);
-                submittingRef.current = false;
-                return;
-              }
-              setMessage(`Evaluating answer… ${Math.max(0, Math.min(100, event.progress))}%`);
-              if (event.status !== "completed") return;
-              const evaluation = event.result?.evaluation as AnswerEvaluation | undefined;
-              if (!evaluation) {
-                setError("Interview evaluation completed without feedback.");
-                setPhase("idle");
-              } else {
-                setLastFeedback(evaluation);
-                setLastAnswerSnapshot(text);
-                runPostAnswerFlow(evaluation);
-              }
-              setSaving(false);
-              submittingRef.current = false;
-              answerJobCancelRef.current?.();
-              answerJobCancelRef.current = null;
-            },
-            (reason) => {
-              setError(reason.message);
-              setPhase("idle");
-              setSaving(false);
-              submittingRef.current = false;
-            },
-          );
-          return;
-        }
         const evaluation = result.evaluation || null;
         setLastFeedback(evaluation);
         setLastAnswerSnapshot(text);
@@ -1257,16 +1215,12 @@ export function InterviewSession() {
         setError((e as Error).message);
         setPhase("idle");
       } finally {
-        if (!waitingForJob) {
-          setSaving(false);
-          submittingRef.current = false;
-        }
+        setSaving(false);
+        submittingRef.current = false;
       }
     },
     [runPostAnswerFlow, sessionId, stopRecognition],
   );
-
-  useEffect(() => () => answerJobCancelRef.current?.(), []);
 
   // Load session + questions
   useEffect(() => {

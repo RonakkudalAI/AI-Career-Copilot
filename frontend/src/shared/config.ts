@@ -5,10 +5,6 @@ export const BROWSER_API_PROXY_PREFIX = "/api/backend";
 export const API_V1_PREFIX =
   import.meta.env.VITE_API_V1_PREFIX?.trim() || "/api/v1";
 
-// Opt-in because the backend keeps the existing synchronous path available
-// until Redis and a Celery worker have been configured in the deployment.
-export const BACKGROUND_JOBS_ENABLED = import.meta.env.VITE_BACKGROUND_JOBS === "true";
-
 export const ACCESS_TOKEN_STORAGE_KEY = "career_copilot_access_token";
 
 export const SESSION_COOKIE_NAME = "career_copilot_session";

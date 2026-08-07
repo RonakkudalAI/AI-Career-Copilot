@@ -1,0 +1,4 @@
+*.env
+*.json
+!*.example
+firebase-admin*

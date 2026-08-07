@@ -1,4 +1,3 @@
-import asyncio
 import json
 import logging
 import mimetypes
@@ -11,7 +10,6 @@ from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, File, Form, Header, UploadFile
 from fastapi.responses import Response as PlainResponse
-from fastapi.responses import StreamingResponse
 
 from app.agents.registry import agents_status
 from app.api.routers.auth import router as auth_router
@@ -37,7 +35,6 @@ from app.api.schemas import (
     ProfilePatch,
     SavedJobPatch,
 )
-from app.background_jobs import TERMINAL_JOB_STATUSES, create_job, public_job
 from app.core.config import Settings, get_settings
 from app.core.errors import ApiError
 from app.database.client import database_client, database_probe
@@ -104,7 +101,6 @@ from app.features.profile.avatars import (
 )
 from app.features.profile.importer import insert_validated_batch
 from app.features.resume_improvement.routes import router as resume_improvement_router
-from app.workers import evaluate_interview, extract_resume, worker_available
 
 router = APIRouter()
 router.include_router(resume_improvement_router)
@@ -1692,134 +1688,6 @@ async def create_resume(
     return {"resume": resume, "version": version}
 
 
-@router.post("/resumes/async", status_code=202)
-async def create_resume_async(
-    file: UploadFile = File(...),
-    title: str | None = Form(default=None),
-    user: CurrentUser = Depends(get_current_user),
-    settings: Settings = Depends(get_settings),
-):
-    """Accept a resume quickly and move extraction/AI work to a Celery worker."""
-    if not worker_available():
-        raise ApiError(503, "background_jobs_unavailable", "Background resume processing is not enabled.")
-    content = await file.read()
-    mime = validate_document(file.filename or "document", file.content_type, content, settings.document_max_bytes)
-    client = client_for(settings, user)
-    resume_id = str(uuid.uuid4())
-    version_id = str(uuid.uuid4())
-    profile_rows = client.table("profiles").select("full_name").eq("id", str(user.id)).limit(1).execute().data or []
-    profile_name = str((profile_rows[0] if profile_rows else {}).get("full_name") or "").strip()
-    resume_title = (title or "").strip()[:200] or (f"{profile_name} Resume"[:200] if profile_name else infer_resume_title(file.filename))
-    active_exists = bool(
-        client.table("resumes")
-        .select("id")
-        .eq("user_id", str(user.id))
-        .is_("deleted_at", "null")
-        .limit(1)
-        .execute()
-        .data
-        or []
-    )
-    resume = client.table("resumes").insert(
-        {
-            "id": resume_id,
-            "user_id": str(user.id),
-            "title": resume_title,
-            "created_at": utc_now(),
-            "is_active": not active_exists,
-            "processing_status": "queued",
-        }
-    ).execute().data[0]
-    version_number = (
-        client.table("resume_versions")
-        .select("id", count="exact", head=True)
-        .eq("resume_id", resume_id)
-        .execute()
-        .count
-        or 0
-    ) + 1
-    suffix = ".pdf" if mime == "application/pdf" else ".docx"
-    storage_path = f"{user.id}/resumes/{resume_id}/{version_id}/{uuid.uuid4()}{suffix}"
-    try:
-        client.storage.from_(settings.document_bucket).upload(
-            storage_path, content, {"content-type": mime, "upsert": "false"}
-        )
-        job = create_job(
-            client,
-            user_id=str(user.id),
-            job_type="resume_extraction",
-            payload={
-                "resume_id": resume_id,
-                "version_id": version_id,
-                "version_number": version_number,
-                "storage_path": storage_path,
-                "filename": safe_filename(file.filename or "document"),
-                "mime_type": mime,
-            },
-        )
-        task = extract_resume.delay(str(job["id"]))
-        client.table("background_jobs").update({"task_id": task.id, "updated_at": utc_now()}).eq("id", str(job["id"])).execute()
-        return {"resume": resume, "job": public_job({**job, "task_id": task.id}), "accepted": True}
-    except Exception as exc:
-        try:
-            client.storage.from_(settings.document_bucket).remove([storage_path])
-            client.table("resumes").delete().eq("id", resume_id).eq("user_id", str(user.id)).execute()
-        except Exception:
-            logger.exception("async_resume_cleanup_failed resume_id=%s", resume_id)
-        if isinstance(exc, ApiError):
-            raise
-        raise ApiError(503, "background_job_enqueue_failed", "The resume could not be queued. Try again shortly.") from exc
-
-
-@router.get("/background-jobs/{job_id}")
-def get_background_job(
-    job_id: UUID,
-    user: CurrentUser = Depends(get_current_user),
-    settings: Settings = Depends(get_settings),
-):
-    rows = (
-        client_for(settings, user).table("background_jobs").select("*").eq("id", str(job_id)).eq("user_id", str(user.id)).limit(1).execute().data
-        or []
-    )
-    if not rows:
-        raise ApiError(404, "background_job_not_found", "The background job was not found.")
-    return public_job(rows[0])
-
-
-@router.get("/background-jobs/{job_id}/events")
-async def background_job_events(
-    job_id: UUID,
-    user: CurrentUser = Depends(get_current_user),
-    settings: Settings = Depends(get_settings),
-):
-    client = client_for(settings, user)
-    job_key = str(job_id)
-    initial = (
-        client.table("background_jobs").select("*").eq("id", job_key).eq("user_id", str(user.id)).limit(1).execute().data
-        or []
-    )
-    if not initial:
-        raise ApiError(404, "background_job_not_found", "The background job was not found.")
-
-    async def stream():
-        last_payload = ""
-        while True:
-            rows = await asyncio.to_thread(
-                lambda: client.table("background_jobs").select("*").eq("id", job_key).eq("user_id", str(user.id)).limit(1).execute().data or []
-            )
-            if not rows:
-                break
-            payload = json.dumps(public_job(rows[0]), separators=(",", ":"))
-            if payload != last_payload:
-                yield f"event: job\ndata: {payload}\n\n"
-                last_payload = payload
-            if rows[0].get("status") in TERMINAL_JOB_STATUSES:
-                break
-            await asyncio.sleep(1)
-
-    return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
-
-
 @router.get("/resumes/{resume_id}")
 def get_resume(
     resume_id: UUID, user: CurrentUser = Depends(get_current_user), settings: Settings = Depends(get_settings)
@@ -3092,60 +2960,6 @@ async def add_response(
             "question_type": question.get("question_type"),
         },
     }
-
-
-@router.post("/interviews/{session_id}/responses/async", status_code=202)
-async def queue_response(
-    session_id: UUID,
-    payload: InterviewResponseCreate,
-    user: CurrentUser = Depends(get_current_user),
-    settings: Settings = Depends(get_settings),
-):
-    """Queue AI interview evaluation and return immediately with an owned job id."""
-    if not worker_available():
-        raise ApiError(503, "background_jobs_unavailable", "Background processing is not configured.")
-    client = client_for(settings, user)
-    owned_row(client, "interview_sessions", session_id, user)
-    question_rows = (
-        client.table("interview_questions")
-        .select("id")
-        .eq("id", str(payload.question_id))
-        .eq("session_id", str(session_id))
-        .eq("user_id", str(user.id))
-        .limit(1)
-        .execute()
-        .data
-        or []
-    )
-    if not question_rows:
-        raise ApiError(404, "question_not_found", "The question does not belong to this interview session.")
-    answer_text = (payload.transcript or payload.typed_response or "").strip()
-    if not answer_text:
-        raise ApiError(422, "answer_required", "Submit a spoken or typed answer before evaluating it.")
-    job = create_job(
-        client,
-        user_id=str(user.id),
-        job_type="interview_answer_evaluation",
-        payload={
-            "session_id": str(session_id),
-            "question_id": str(payload.question_id),
-            "typed_response": payload.typed_response,
-            "transcript": payload.transcript,
-            "duration_seconds": payload.duration_seconds,
-            "speech_metrics": payload.speech_metrics,
-            "gaze_metrics": payload.gaze_metrics,
-        },
-    )
-    try:
-        task = evaluate_interview.delay(str(job["id"]))
-        client.table("background_jobs").update({"task_id": task.id, "updated_at": utc_now()}).eq("id", job["id"]).execute()
-        job["task_id"] = task.id
-        return {"accepted": True, "job": public_job(job)}
-    except Exception as exc:
-        client.table("background_jobs").update(
-            {"status": "failed", "progress": 100, "error": f"{type(exc).__name__}: enqueue failed", "updated_at": utc_now()}
-        ).eq("id", job["id"]).execute()
-        raise ApiError(503, "background_job_enqueue_failed", "Could not enqueue interview evaluation.") from exc
 
 
 async def _create_interview_report(
