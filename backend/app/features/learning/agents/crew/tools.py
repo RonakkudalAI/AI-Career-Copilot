@@ -52,9 +52,9 @@ def _deterministic_plan(allowed_gaps: list[str]) -> YoutubeLessonPlanResult:
         items.append(
             YoutubeLessonPlanItem(
                 skill_gap=gap,
-                title=f"Learn {gap} with guided YouTube practice",
+                title=f"Learn {gap} with guided practice",
                 objective=(
-                    f"Study {gap} using free YouTube tutorials returned by the YouTube API, "
+                    f"Study {gap} using free tutorials matched to this ATS gap, "
                     f"then practice a small project. Only claim {gap} when the experience is real."
                 ),
                 youtube_search_query=f"{gap} tutorial for beginners",
@@ -158,7 +158,7 @@ async def tool_validate_and_materialize(settings: Settings, context: dict[str, A
         objective = str(raw.get("objective") or "").strip()
         if len(objective) < 10:
             objective = (
-                f"Study {gap} with the recommended YouTube video(s), then practise a small exercise. "
+                f"Study {gap} with the recommended lesson(s), then practise a small exercise. "
                 f"Do not claim {gap} unless it is true experience."
             )
         accepted.append(
@@ -201,9 +201,9 @@ async def tool_validate_and_materialize(settings: Settings, context: dict[str, A
         accepted.append(
             {
                 "position": len(accepted) + 1,
-                "title": f"Learn {gap} with guided YouTube practice",
+                "title": f"Learn {gap} with guided practice",
                 "objective": (
-                    f"Study {gap} using the recommended YouTube video(s), then practise. "
+                    f"Study {gap} using the recommended lesson(s), then practise. "
                     f"Only claim {gap} when the experience is real."
                 ),
                 "item_type": "youtube_skill_gap",

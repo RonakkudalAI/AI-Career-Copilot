@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import createGlobe from "cobe";
-import { isWebGLAvailable, projectGlobePoint } from "./globe-utils";
+import { isWebGLAvailable } from "./globe-utils";
 
 export type GlobeJobPin = {
   id: string;
@@ -21,11 +21,10 @@ export { isWebGLAvailable };
 
 export default function CareerGlobe({ jobs = [] }: { jobs?: GlobeJobPin[] }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const pointerRef = useRef({ x: 0, y: 0, active: false });
+  const pointerRef = useRef({ x: 0, y: 0, active: false, pointerId: -1 });
+  const velocityRef = useRef({ phi: 0, theta: 0 });
   const anglesRef = useRef({ phi: 0, theta: 0.2 });
   const [webgl, setWebgl] = useState(true);
-  const [angles, setAngles] = useState({ phi: 0, theta: 0.2 });
-  const [hoveredJobId, setHoveredJobId] = useState<string | null>(null);
 
   const markers = useMemo(
     () =>
@@ -45,26 +44,6 @@ export default function CareerGlobe({ jobs = [] }: { jobs?: GlobeJobPin[] }) {
     [jobs],
   );
 
-  const projected = useMemo(
-    () =>
-      jobs
-        .filter(
-          (job) =>
-            typeof job.latitude === "number" &&
-            Number.isFinite(job.latitude) &&
-            typeof job.longitude === "number" &&
-            Number.isFinite(job.longitude),
-        )
-        .slice(0, 12)
-        .map((job) => {
-          const point = projectGlobePoint(job.latitude, job.longitude, angles.phi, angles.theta);
-          return { ...job, ...point };
-        })
-        .filter((job) => job.visible),
-    [jobs, angles.phi, angles.theta],
-  );
-  const hoveredJob = projected.find((job) => job.id === hoveredJobId) || null;
-
   useEffect(() => {
     if (!isWebGLAvailable()) {
       setWebgl(false);
@@ -81,7 +60,6 @@ export default function CareerGlobe({ jobs = [] }: { jobs?: GlobeJobPin[] }) {
 
     let globe: ReturnType<typeof createGlobe> | undefined;
     let frame = 0;
-    let labelFrame = 0;
     try {
       globe = createGlobe(canvas, {
         devicePixelRatio: 2,
@@ -106,7 +84,15 @@ export default function CareerGlobe({ jobs = [] }: { jobs?: GlobeJobPin[] }) {
 
     const animate = () => {
       if (!pointerRef.current.active) {
-        anglesRef.current.phi += 0.003;
+        anglesRef.current.phi += 0.003 + velocityRef.current.phi;
+        anglesRef.current.theta = Math.max(
+          -0.8,
+          Math.min(0.8, anglesRef.current.theta + velocityRef.current.theta),
+        );
+        velocityRef.current.phi *= 0.94;
+        velocityRef.current.theta *= 0.94;
+        if (Math.abs(velocityRef.current.phi) < 0.00005) velocityRef.current.phi = 0;
+        if (Math.abs(velocityRef.current.theta) < 0.00005) velocityRef.current.theta = 0;
       }
       globe?.update({
         phi: anglesRef.current.phi,
@@ -115,10 +101,6 @@ export default function CareerGlobe({ jobs = [] }: { jobs?: GlobeJobPin[] }) {
         height: width * 2,
         markers,
       });
-      labelFrame += 1;
-      if (labelFrame % 30 === 0) {
-        setAngles({ phi: anglesRef.current.phi, theta: anglesRef.current.theta });
-      }
       frame = window.requestAnimationFrame(animate);
     };
     frame = window.requestAnimationFrame(animate);
@@ -150,46 +132,41 @@ export default function CareerGlobe({ jobs = [] }: { jobs?: GlobeJobPin[] }) {
     <div
       className="globe-stage"
       data-testid="career-globe"
-      role="img"
-      aria-label="Interactive globe of career opportunities"
+      role="application"
+      aria-label="Interactive globe of career opportunities. Drag to rotate the globe."
+      style={{ touchAction: "none", cursor: pointerRef.current.active ? "grabbing" : "grab" }}
       onPointerDown={(event) => {
-        pointerRef.current = { x: event.clientX, y: event.clientY, active: true };
+        event.currentTarget.setPointerCapture(event.pointerId);
+        pointerRef.current = { x: event.clientX, y: event.clientY, active: true, pointerId: event.pointerId };
+        velocityRef.current = { phi: 0, theta: 0 };
       }}
-      onPointerUp={() => {
-        pointerRef.current = { ...pointerRef.current, active: false };
+      onPointerUp={(event) => {
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        }
+        pointerRef.current = { ...pointerRef.current, active: false, pointerId: -1 };
       }}
-      onPointerLeave={() => {
-        pointerRef.current = { ...pointerRef.current, active: false };
+      onPointerCancel={() => {
+        pointerRef.current = { ...pointerRef.current, active: false, pointerId: -1 };
       }}
       onPointerMove={(event) => {
         if (!pointerRef.current.active) return;
         const dx = event.clientX - pointerRef.current.x;
         const dy = event.clientY - pointerRef.current.y;
-        anglesRef.current.phi += dx * 0.005;
-        anglesRef.current.theta = Math.max(-0.8, Math.min(0.8, anglesRef.current.theta + dy * 0.003));
-        pointerRef.current = { x: event.clientX, y: event.clientY, active: true };
+        const phiVelocity = dx * 0.005;
+        const thetaVelocity = dy * 0.003;
+        anglesRef.current.phi += phiVelocity;
+        anglesRef.current.theta = Math.max(-0.8, Math.min(0.8, anglesRef.current.theta + thetaVelocity));
+        velocityRef.current = { phi: phiVelocity, theta: thetaVelocity };
+        pointerRef.current = { ...pointerRef.current, x: event.clientX, y: event.clientY };
       }}
     >
       <canvas
         ref={canvasRef}
-        style={{ width: "100%", height: "100%", maxWidth: 520, aspectRatio: "1 / 1", display: "block", margin: "0 auto" }}
+        style={{ width: "100%", height: "100%", maxWidth: 520, aspectRatio: "1 / 1", display: "block", margin: "0 auto", pointerEvents: "none" }}
       />
-      <div className="globe-labels">
-        {projected.map((job) => (
-          <button
-            key={job.id}
-            type="button"
-            className="globe-pin"
-            style={{ left: `${job.x}%`, top: `${job.y}%`, opacity: job.depth > 0 ? 1 : 0.4 }}
-            aria-label={`Show details for ${job.title} at ${job.company}`}
-            onMouseEnter={() => setHoveredJobId(job.id)}
-            onMouseLeave={() => setHoveredJobId(null)}
-            onFocus={() => setHoveredJobId(job.id)}
-            onBlur={() => setHoveredJobId(null)}
-          />
-        ))}
-      </div>
-      {hoveredJob ? (
+      {/* Native Cobe markers are the only globe pins; details remain in the job list below. */}
+      {/*
         <div
           className="globe-job-preview"
           role="status"
@@ -223,7 +200,7 @@ export default function CareerGlobe({ jobs = [] }: { jobs?: GlobeJobPin[] }) {
             </a>
           ) : null}
         </div>
-      ) : null}
+      */}
     </div>
   );
 }

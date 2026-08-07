@@ -1,21 +1,35 @@
-
-import { Bookmark, X, MapPin, Building2, Briefcase, CheckCircle2 } from "lucide-react";
+import {
+  Bookmark,
+  X,
+  MapPin,
+  Building2,
+  Briefcase,
+  CheckCircle2,
+  Send,
+  ThumbsDown,
+  ExternalLink,
+} from "lucide-react";
 import { useEffect } from "react";
-import type { Job, Recommendation } from "./job-types";
+import type { Job, Recommendation, SavedJobStatus } from "./job-types";
+import { statusLabel, statusTone } from "./job-types";
 import { Button } from "@/shared/ui/primitives";
 
 export function JobModal({
   job,
   recommendation,
-  isSaved,
+  status,
   onToggleSave,
+  onMarkApplied,
+  onMarkRejected,
   onClose,
   onDismiss,
 }: {
   job: Job;
   recommendation: Recommendation | undefined;
-  isSaved: boolean;
+  status?: SavedJobStatus | string | null;
   onToggleSave: () => void;
+  onMarkApplied: () => void;
+  onMarkRejected: () => void;
   onClose: () => void;
   onDismiss: () => void;
 }) {
@@ -29,6 +43,11 @@ export function JobModal({
           ? `Up to $${job.salary_max.toLocaleString()}`
           : null;
 
+  const normalized = (status || "").toLowerCase();
+  const isSaved = Boolean(status) && normalized !== "dismissed";
+  const isApplied = normalized === "applied" || normalized === "interviewing" || normalized === "offer";
+  const isRejected = normalized === "rejected";
+
   useEffect(() => {
     document.body.style.overflow = "hidden";
     return () => {
@@ -36,11 +55,16 @@ export function JobModal({
     };
   }, []);
 
+  function handleApplyClick() {
+    // Track the application when the candidate opens the external apply link.
+    if (!isApplied) onMarkApplied();
+  }
+
   return (
     <div className="modal-backdrop" onClick={onClose} style={{ zIndex: 100 }}>
       <div
         className="modal-panel modal-panel-wide"
-        onClick={(e: any) => e.stopPropagation()}
+        onClick={(e: React.MouseEvent) => e.stopPropagation()}
         style={{
           display: "flex",
           flexDirection: "column",
@@ -76,6 +100,11 @@ export function JobModal({
                 <CheckCircle2 size={14} aria-hidden /> {Math.round(recommendation.match_score)}% match
               </span>
             ) : null}
+            {isSaved ? (
+              <span className="status-chip" data-tone={statusTone(status)}>
+                {statusLabel(status)}
+              </span>
+            ) : null}
             {job.work_mode ? (
               <span className="badge badge-info">
                 <Briefcase size={14} aria-hidden /> {job.work_mode}
@@ -96,16 +125,39 @@ export function JobModal({
             </div>
           ) : null}
         </div>
-        <div className="cluster" style={{ padding: 16, borderTop: "1px solid var(--border)" }}>
-          <Button onClick={onToggleSave}>
-            <Bookmark size={16} aria-hidden /> {isSaved ? "Unsave" : "Save"}
+        <div className="cluster" style={{ padding: 16, borderTop: "1px solid var(--border)", flexWrap: "wrap" }}>
+          <Button onClick={onToggleSave} variant="secondary">
+            <Bookmark size={16} aria-hidden /> {isSaved && !isApplied && !isRejected ? "Unsave" : "Save"}
           </Button>
-          <Button variant="secondary" onClick={onDismiss}>
+          <Button
+            variant={isApplied ? "secondary" : "primary"}
+            onClick={onMarkApplied}
+            disabled={isApplied}
+            aria-label={isApplied ? "Already marked applied" : "Mark as applied"}
+          >
+            <Send size={16} aria-hidden /> {isApplied ? "Applied" : "Mark applied"}
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={onMarkRejected}
+            disabled={isRejected}
+            aria-label={isRejected ? "Already marked rejected" : "Mark as rejected"}
+          >
+            <ThumbsDown size={16} aria-hidden /> {isRejected ? "Rejected" : "Mark rejected"}
+          </Button>
+          <Button variant="ghost" onClick={onDismiss}>
             Dismiss
           </Button>
           {job.application_url ? (
-            <a className="button button-primary" href={job.application_url} target="_blank" rel="noreferrer">
+            <a
+              className="button button-primary"
+              href={job.application_url}
+              target="_blank"
+              rel="noreferrer"
+              onClick={handleApplyClick}
+            >
               Apply
+              <ExternalLink size={14} aria-hidden />
             </a>
           ) : null}
         </div>

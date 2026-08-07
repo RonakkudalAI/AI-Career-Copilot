@@ -1,4 +1,3 @@
-
 import { Link } from "@/shared/ui/router-link";
 import { useNavigate } from "react-router-dom";
 import { useCallback, useEffect, useState } from "react";
@@ -10,14 +9,11 @@ import {
   LoaderCircle,
   PlayCircle,
   Trash2,
+  Sparkles,
   Video,
 } from "lucide-react";
 import { apiRequest } from "@/shared/api/client";
 import { Badge, Button, Card, EmptyState, PageHeader, Progress } from "@/shared/ui/primitives";
-
-
-
-
 
 type Resource = {
   id: string;
@@ -52,21 +48,39 @@ type Path = {
   description?: string | null;
   progress_percentage: number;
   status: string;
+  item_count?: number;
   items?: LearningItem[];
   algorithm_version?: string;
   grounding?: { policy?: string; source?: string };
 };
 
-function isYoutubeResource(resource: Resource) {
-  const type = (resource.resource_type || "").toLowerCase();
-  const url = resource.url || "";
-  return type.includes("youtube") || /youtube\.com|youtu\.be/i.test(url);
+function pathStepCount(path: Path): number {
+  if (typeof path.item_count === "number" && Number.isFinite(path.item_count)) {
+    return path.item_count;
+  }
+  return (path.items || []).length;
 }
 
-function isExactYoutubeVideo(resource: Resource) {
+function isVideoResource(resource: Resource) {
   const type = (resource.resource_type || "").toLowerCase();
   const url = resource.url || "";
-  return type === "youtube_video" || /youtube\.com\/watch\?v=|youtu\.be\//i.test(url);
+  return (
+    type.includes("youtube") ||
+    type.includes("video") ||
+    /youtube\.com|youtu\.be|vimeo\.com/i.test(url)
+  );
+}
+
+function isExactVideo(resource: Resource) {
+  const type = (resource.resource_type || "").toLowerCase();
+  const url = resource.url || "";
+  return type === "youtube_video" || type === "video" || /youtube\.com\/watch\?v=|youtu\.be\//i.test(url);
+}
+
+function resourceActionLabel(resource: Resource) {
+  if (isExactVideo(resource)) return "Open lesson";
+  if (isVideoResource(resource)) return "Browse lessons";
+  return "Open resource";
 }
 
 export function LearningHome() {
@@ -79,7 +93,10 @@ export function LearningHome() {
     let active = true;
     apiRequest<Path[]>("/learning-paths")
       .then((data) => {
-        if (active) setPaths(data);
+        if (active) {
+          setError("");
+          setPaths(Array.isArray(data) ? data : []);
+        }
       })
       .catch((e: Error) => {
         if (active) setError(e.message);
@@ -109,7 +126,7 @@ export function LearningHome() {
     const label = path.title || "this learning path";
     if (
       !window.confirm(
-        `Delete “${label}” permanently? Steps and recommended videos for this path will be removed from your account.`,
+        `Delete “${label}” permanently? Steps and lesson resources for this path will be removed from your account.`,
       )
     ) {
       return;
@@ -131,15 +148,15 @@ export function LearningHome() {
       <PageHeader
         eyebrow="Learning"
         title="Learning paths"
-        description="Generate a study plan only from gaps in your completed ATS analysis. Each step recommends exact YouTube videos from the YouTube API — not invented links."
+        description="Build a study plan from skill gaps in your completed ATS analysis. Each step maps a real evidence gap to free lesson resources — no invented skills."
         action={
           <Button onClick={generate} disabled={busy || Boolean(deletingId)}>
             {busy ? (
               <LoaderCircle className="spin" size={17} aria-hidden />
             ) : (
-              <Video size={17} aria-hidden />
+              <Sparkles size={17} aria-hidden />
             )}
-            {busy ? "Finding videos…" : "Generate YouTube path from ATS"}
+            {busy ? "Building path…" : "Generate from ATS gaps"}
           </Button>
         }
       />
@@ -151,50 +168,54 @@ export function LearningHome() {
       {paths.length === 0 && !error ? (
         <EmptyState
           title="No learning path yet"
-          description="Complete a resume-vs-JD ATS analysis first. The learning crew only uses those evidence gaps — it does not invent skills."
+          description="Complete a resume-vs-JD ATS analysis first. Paths are built only from those evidence gaps — skills are never invented."
         />
       ) : (
         <div className="grid-2">
-          {paths.map((path) => (
-            <Card key={path.id} className="path-card">
-              <div className="entity-card-head">
-                <div>
-                  <span className="status-chip" data-tone={path.progress_percentage === 100 ? "success" : "info"}>
-                    {(path.status || "active").replaceAll("_", " ")}
-                  </span>
-                  <h2 style={{ marginTop: 10 }}>{path.title}</h2>
+          {paths.map((path) => {
+            const steps = pathStepCount(path);
+            return (
+              <Card key={path.id} className="path-card">
+                <div className="entity-card-head">
+                  <div>
+                    <span
+                      className="status-chip"
+                      data-tone={path.progress_percentage === 100 ? "success" : "info"}
+                    >
+                      {(path.status || "active").replaceAll("_", " ")}
+                    </span>
+                    <h2 style={{ marginTop: 10 }}>{path.title}</h2>
+                  </div>
+                  <Badge variant={path.progress_percentage === 100 ? "default" : "secondary"}>
+                    {path.progress_percentage}%
+                  </Badge>
                 </div>
-                <Badge variant={path.progress_percentage === 100 ? "default" : "secondary"}>
-                  {path.progress_percentage}%
-                </Badge>
-              </div>
-              <p>
-                {path.description ||
-                  "Built from stored ATS evidence with free YouTube learning steps."}
-              </p>
-              <Progress value={path.progress_percentage} label="Path progress" />
-              <div className="cluster">
-                <Badge variant="secondary">YouTube steps</Badge>
-                {(path.items || []).length > 0 && (
-                  <span className="muted">{path.items?.length} items</span>
-                )}
-              </div>
-              <div className="entity-card-actions">
-                <Link className="button button-secondary" href={`/learning/${path.id}`}>
-                  Open path & track progress
-                </Link>
-                <Button
-                  variant="destructive"
-                  disabled={deletingId === path.id || busy}
-                  onClick={() => void deletePath(path)}
-                  aria-label={`Delete learning path ${path.title}`}
-                >
-                  <Trash2 size={17} aria-hidden />
-                  {deletingId === path.id ? "Deleting…" : "Delete"}
-                </Button>
-              </div>
-            </Card>
-          ))}
+                <p>
+                  {path.description ||
+                    "Built from stored ATS evidence with free lesson resources for each gap."}
+                </p>
+                <Progress value={path.progress_percentage} label="Path progress" />
+                <div className="cluster">
+                  <Badge variant="secondary">Skill gaps</Badge>
+                  {steps > 0 && <span className="muted">{steps} steps</span>}
+                </div>
+                <div className="entity-card-actions">
+                  <Link className="button button-secondary" href={`/learning/${path.id}`}>
+                    Open path & track progress
+                  </Link>
+                  <Button
+                    variant="destructive"
+                    disabled={deletingId === path.id || busy}
+                    onClick={() => void deletePath(path)}
+                    aria-label={`Delete learning path ${path.title}`}
+                  >
+                    <Trash2 size={17} aria-hidden />
+                    {deletingId === path.id ? "Deleting…" : "Delete"}
+                  </Button>
+                </div>
+              </Card>
+            );
+          })}
         </div>
       )}
     </div>
@@ -209,9 +230,21 @@ export function LearningPath({ pathId }: { pathId: string }) {
   const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(() => {
+    if (!pathId) {
+      setPath(null);
+      setError("Learning path not found.");
+      return;
+    }
+    setError("");
     apiRequest<Path>(`/learning-paths/${pathId}`)
-      .then(setPath)
-      .catch((e: Error) => setError(e.message));
+      .then((data) => {
+        setError("");
+        setPath(data);
+      })
+      .catch((e: Error) => {
+        setPath(null);
+        setError(e.message || "The learning path could not be loaded.");
+      });
   }, [pathId]);
 
   useEffect(load, [load]);
@@ -220,7 +253,7 @@ export function LearningPath({ pathId }: { pathId: string }) {
     const label = path?.title || "this learning path";
     if (
       !window.confirm(
-        `Delete “${label}” permanently? Steps and recommended videos for this path will be removed from your account.`,
+        `Delete “${label}” permanently? Steps and lesson resources for this path will be removed from your account.`,
       )
     ) {
       return;
@@ -230,7 +263,6 @@ export function LearningPath({ pathId }: { pathId: string }) {
     try {
       await apiRequest(`/learning-paths/${pathId}`, { method: "DELETE" });
       navigate("/learning");
-      ;
     } catch (e) {
       setError((e as Error).message);
       setDeleting(false);
@@ -241,17 +273,32 @@ export function LearningPath({ pathId }: { pathId: string }) {
     setUpdatingId(item.id);
     setError("");
     try {
-      const result = await apiRequest<{ progress_percentage?: number }>(
+      const result = await apiRequest<{ progress_percentage?: number; status?: string }>(
         `/learning-paths/${pathId}/items/${item.id}`,
-        { method: "PATCH", body: JSON.stringify({ status }) }
+        { method: "PATCH", body: JSON.stringify({ status }) },
       );
-      // Refresh path so overall progress stays accurate
-      load();
-      if (typeof result.progress_percentage === "number") {
-        setPath((current) =>
-          current ? { ...current, progress_percentage: result.progress_percentage as number } : current
+      const nextStatus = (result.status as LearningItem["status"]) || status;
+      const nextProgress =
+        typeof result.progress_percentage === "number" ? result.progress_percentage : undefined;
+      // Optimistic local update so the step badge flips immediately.
+      setPath((current) => {
+        if (!current) return current;
+        const items = (current.items || []).map((row) =>
+          row.id === item.id ? { ...row, status: nextStatus } : row,
         );
-      }
+        const done = items.filter((row) => row.status === "completed").length;
+        const computed =
+          nextProgress ?? (items.length ? Math.round((done / items.length) * 100) : 0);
+        return {
+          ...current,
+          items,
+          progress_percentage: computed,
+          item_count: items.length,
+          status: computed === 100 && items.length ? "completed" : "active",
+        };
+      });
+      // Refresh from server so path-level fields stay authoritative.
+      load();
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -269,11 +316,15 @@ export function LearningPath({ pathId }: { pathId: string }) {
         title={path?.title || "Path details"}
         description={
           path?.description ||
-          "Each step is an ATS skill gap with exact YouTube video recommendations. Open a video, learn, then mark complete."
+          "Each step is an ATS skill gap with free lesson resources. Open a lesson, practice, then mark complete."
         }
         action={
           path ? (
-            <Button variant="destructive" disabled={deleting || Boolean(updatingId)} onClick={() => void deletePath()}>
+            <Button
+              variant="destructive"
+              disabled={deleting || Boolean(updatingId)}
+              onClick={() => void deletePath()}
+            >
               <Trash2 size={17} aria-hidden />
               {deleting ? "Deleting…" : "Delete path"}
             </Button>
@@ -285,6 +336,11 @@ export function LearningPath({ pathId }: { pathId: string }) {
           <p role="alert" className="field-error">
             {error}
           </p>
+          <div className="cluster" style={{ marginTop: 12 }}>
+            <Link className="button button-secondary" href="/learning">
+              Back to learning paths
+            </Link>
+          </div>
         </Card>
       )}
       {!path && !error ? (
@@ -346,12 +402,12 @@ export function LearningPath({ pathId }: { pathId: string }) {
                   <div className="cluster">
                     <span className="muted">{item.estimated_minutes || 0} minutes</span>
                     {item.difficulty && <Badge variant="secondary">{item.difficulty}</Badge>}
-                    <Badge variant="secondary">What to learn</Badge>
+                    <Badge variant="secondary">Skill gap</Badge>
                   </div>
 
                   {(item.learning_resources || []).length > 0 && (
                     <div className="stack" style={{ gap: 12, marginTop: 8 }}>
-                      <strong style={{ fontSize: "var(--text-sm)" }}>Recommended YouTube videos</strong>
+                      <strong style={{ fontSize: "var(--text-sm)" }}>Recommended lessons</strong>
                       {item.learning_resources?.map((resource) =>
                         resource.url ? (
                           <div
@@ -360,24 +416,31 @@ export function LearningPath({ pathId }: { pathId: string }) {
                             style={{
                               padding: 12,
                               display: "grid",
-                              gridTemplateColumns: resource.metadata?.thumbnail_url ? "120px 1fr" : "1fr",
+                              gridTemplateColumns: resource.metadata?.thumbnail_url
+                                ? "120px 1fr"
+                                : "1fr",
                               gap: 12,
                               alignItems: "center",
                             }}
                           >
                             {resource.metadata?.thumbnail_url ? (
-                                                            <img
+                              <img
                                 src={resource.metadata.thumbnail_url}
                                 alt=""
                                 width={120}
                                 height={68}
-                                style={{ borderRadius: 8, objectFit: "cover", width: "100%", height: "auto" }}
+                                style={{
+                                  borderRadius: 8,
+                                  objectFit: "cover",
+                                  width: "100%",
+                                  height: "auto",
+                                }}
                               />
                             ) : null}
                             <div className="stack" style={{ gap: 6 }}>
                               <div className="cluster">
-                                <Badge variant={isExactYoutubeVideo(resource) ? "default" : "secondary"}>
-                                  {isExactYoutubeVideo(resource) ? "Exact video" : "Search results"}
+                                <Badge variant={isExactVideo(resource) ? "default" : "secondary"}>
+                                  {isExactVideo(resource) ? "Lesson" : "Lesson search"}
                                 </Badge>
                                 {resource.provider ? (
                                   <span className="muted" style={{ fontSize: "var(--text-xs)" }}>
@@ -398,17 +461,17 @@ export function LearningPath({ pathId }: { pathId: string }) {
                                 className="button button-primary"
                                 style={{ justifyContent: "flex-start", width: "fit-content" }}
                               >
-                                {isYoutubeResource(resource) ? (
+                                {isVideoResource(resource) ? (
                                   <Video size={17} aria-hidden />
                                 ) : (
                                   <BookOpenCheck size={17} aria-hidden />
                                 )}
-                                {isExactYoutubeVideo(resource) ? "Watch on YouTube" : "Open YouTube search"}
+                                {resourceActionLabel(resource)}
                                 <ExternalLink size={14} aria-hidden />
                               </a>
                             </div>
                           </div>
-                        ) : null
+                        ) : null,
                       )}
                     </div>
                   )}
@@ -444,17 +507,27 @@ export function LearningPath({ pathId }: { pathId: string }) {
 }
 
 export function TopicPage({ topicId }: { topicId: string }) {
+  const safeId = String(topicId || "").slice(0, 80);
   return (
     <>
       <PageHeader
-        eyebrow="Learning topic"
-        title="Topic details"
-        description="Open topics from their learning path."
+        eyebrow="Learning"
+        title="Topic not available"
+        description="Topics open from their parent learning path. Use the path list to continue studying."
       />
       <EmptyState
-        title="Topic not found"
-        description={`The requested topic (${topicId}) is not a stored learning item.`}
+        title="Open the full learning path instead"
+        description={
+          safeId
+            ? `No standalone topic page is stored for “${safeId}”. Return to Learning paths and open a path to track steps and lessons.`
+            : "Return to Learning paths and open a path to track steps and lessons."
+        }
       />
+      <div className="cluster" style={{ marginTop: 16 }}>
+        <Link className="button button-primary" href="/learning">
+          Back to learning paths
+        </Link>
+      </div>
     </>
   );
 }

@@ -59,7 +59,7 @@ def build_api_video_resource(
         "provider": channel[:160],
         "url": url,
         "reason_recommended": (
-            f"Exact YouTube video from the YouTube Data API for ATS gap '{gap}'. "
+            f"Free lesson matched to ATS gap '{gap}'. "
             "Only claim this skill on your resume when the experience is real."
         ),
         "metadata": {
@@ -87,13 +87,13 @@ def build_search_fallback_resource(
         base_query = f"{gap} tutorial for beginners"
     url = youtube_search_url(base_query)
     return {
-        "title": preferred_title or f"YouTube search: {gap}",
+        "title": preferred_title or f"Lesson search: {gap}",
         "resource_type": "youtube_search",
         "provider": "YouTube",
         "url": url,
         "reason_recommended": (
-            f"YouTube search for ATS gap '{gap}' ({reason}). "
-            "No video ID was invented; open results and pick a reputable free tutorial."
+            f"Lesson search for ATS gap '{gap}'. "
+            "Open results and pick a reputable free tutorial — no video IDs are invented."
         ),
         "metadata": {
             "source": "youtube_search_fallback",

@@ -14,6 +14,34 @@ export type Job = {
   salary_max?: number | null;
 };
 
+export type SavedJobStatus =
+  | "saved"
+  | "applied"
+  | "interviewing"
+  | "offer"
+  | "rejected"
+  | "withdrawn"
+  | "dismissed";
+
+/** Statuses the candidate actively tracks in their pipeline (excludes dismissed). */
+export const PIPELINE_STATUSES: SavedJobStatus[] = [
+  "saved",
+  "applied",
+  "interviewing",
+  "offer",
+  "rejected",
+  "withdrawn",
+];
+
+export type SavedJobRow = {
+  job_id?: string;
+  status?: SavedJobStatus | string;
+  notes?: string | null;
+  saved_at?: string | null;
+  updated_at?: string | null;
+  jobs?: Job | null;
+};
+
 export type Recommendation = {
   id: string;
   job: Job;
@@ -24,3 +52,29 @@ export type Recommendation = {
   };
   evidence?: { note?: string };
 };
+
+export function isPipelineStatus(status: string | undefined | null): boolean {
+  const value = (status || "saved").toLowerCase();
+  return PIPELINE_STATUSES.includes(value as SavedJobStatus);
+}
+
+export function statusLabel(status: string | undefined | null): string {
+  const value = (status || "saved").replaceAll("_", " ");
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+export function statusTone(status: string | undefined | null): "success" | "warning" | "danger" | "info" {
+  switch ((status || "saved").toLowerCase()) {
+    case "applied":
+    case "interviewing":
+    case "offer":
+      return "success";
+    case "rejected":
+    case "withdrawn":
+      return "danger";
+    case "dismissed":
+      return "warning";
+    default:
+      return "info";
+  }
+}

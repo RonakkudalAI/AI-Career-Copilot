@@ -1,10 +1,21 @@
 import { dynamic } from "@/shared/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bookmark, RefreshCw, MapPin, CheckCircle2, Building2, Briefcase } from "lucide-react";
+import {
+  Bookmark,
+  RefreshCw,
+  MapPin,
+  CheckCircle2,
+  Building2,
+  Briefcase,
+  Send,
+  ThumbsDown,
+} from "lucide-react";
+import { Link } from "@/shared/ui/router-link";
 import { apiRequest } from "@/shared/api/client";
 import { JobCardSkeleton } from "./job-card-skeleton";
 import { JobModal } from "./job-modal";
-import type { Job, Recommendation } from "./job-types";
+import type { Job, Recommendation, SavedJobRow, SavedJobStatus } from "./job-types";
+import { isPipelineStatus, statusLabel, statusTone } from "./job-types";
 import { Badge, Button, Card, EmptyState, PageHeader } from "@/shared/ui/primitives";
 
 export type { Job, Recommendation } from "./job-types";
@@ -13,6 +24,8 @@ const CareerGlobe = dynamic(() => import("@/features/jobs/components/career-glob
   ssr: false,
   loading: () => <div className="globe-loading">Loading Earth map...</div>,
 });
+
+type PipelineFilter = "all" | "saved" | "applied" | "rejected";
 
 function hasCoordinates(job: Job): boolean {
   return (
@@ -32,11 +45,18 @@ function locationPinRank(id: string): number {
   return hash >>> 0;
 }
 
+function normalizeStatus(status: string | undefined | null): SavedJobStatus {
+  const value = (status || "saved").toLowerCase() as SavedJobStatus;
+  return value;
+}
+
 export function JobsHome({ savedOnly = false }: { savedOnly?: boolean }) {
   const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [error, setError] = useState("");
-  const [saved, setSaved] = useState<Set<string>>(new Set());
+  /** job_id → tracking status for pipeline (saved / applied / rejected / …) */
+  const [statusByJobId, setStatusByJobId] = useState<Record<string, SavedJobStatus>>({});
+  const [pipelineFilter, setPipelineFilter] = useState<PipelineFilter>("all");
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [offset, setOffset] = useState(0);
@@ -45,8 +65,31 @@ export function JobsHome({ savedOnly = false }: { savedOnly?: boolean }) {
   const [filterWorkMode, setFilterWorkMode] = useState("");
   const [filterSalaryMin, setFilterSalaryMin] = useState<number | "">("");
   const [selectedJob, setSelectedJob] = useState<string | null>(null);
+  const [statusBusyId, setStatusBusyId] = useState<string | null>(null);
   const limit = 20;
   const requestSequence = useRef(0);
+
+  const counts = useMemo(() => {
+    const values = Object.values(statusByJobId);
+    return {
+      saved: values.filter((s) => s === "saved").length,
+      applied: values.filter((s) => s === "applied" || s === "interviewing" || s === "offer").length,
+      rejected: values.filter((s) => s === "rejected" || s === "withdrawn").length,
+      total: values.filter((s) => isPipelineStatus(s)).length,
+    };
+  }, [statusByJobId]);
+
+  const applySavedRows = useCallback((rows: SavedJobRow[]) => {
+    const pipeline = rows.filter((row) => isPipelineStatus(row.status));
+    const next: Record<string, SavedJobStatus> = {};
+    for (const row of pipeline) {
+      const jobId = String(row.jobs?.id || row.job_id || "");
+      if (!jobId) continue;
+      next[jobId] = normalizeStatus(row.status);
+    }
+    setStatusByJobId(next);
+    return pipeline;
+  }, []);
 
   const fetchJobs = useCallback(
     async (currentOffset: number, append: boolean = false) => {
@@ -56,12 +99,11 @@ export function JobsHome({ savedOnly = false }: { savedOnly?: boolean }) {
       else setIsLoadingMore(true);
       try {
         if (savedOnly) {
-          const rows = await apiRequest<Array<{ jobs?: Job | null; status?: string }>>("/saved-jobs");
+          const rows = await apiRequest<SavedJobRow[]>("/saved-jobs");
           if (sequence !== requestSequence.current) return;
-          // Backend returns all saved_jobs rows including dismissed; only show active saves.
-          const active = rows.filter((row) => (row.status || "saved") === "saved");
-          setSaved(new Set(active.map((row) => row.jobs?.id).filter((id): id is string => Boolean(id))));
-          setJobs(active.map((row) => row.jobs).filter((job): job is Job => Boolean(job)));
+          const pipeline = applySavedRows(Array.isArray(rows) ? rows : []);
+          setJobs(pipeline.map((row) => row.jobs).filter((job): job is Job => Boolean(job)));
+          setRecommendations([]);
           setHasMore(false);
         } else {
           const body: Record<string, string | number> = { limit, offset: currentOffset };
@@ -75,15 +117,12 @@ export function JobsHome({ savedOnly = false }: { savedOnly?: boolean }) {
               method: "POST",
               body: JSON.stringify(body),
             }),
-            apiRequest<Array<{ jobs?: Job | null; status?: string }>>("/saved-jobs"),
+            apiRequest<SavedJobRow[]>("/saved-jobs"),
           ]);
           const newRecs = result.recommendations || [];
           const newJobs = newRecs.map((row) => row.job);
           if (sequence !== requestSequence.current) return;
-          const activeSaved = savedRows.filter((row) => (row.status || "saved") === "saved");
-          setSaved(
-            new Set(activeSaved.map((row) => row.jobs?.id).filter((id): id is string => Boolean(id))),
-          );
+          applySavedRows(Array.isArray(savedRows) ? savedRows : []);
           if (append) {
             setRecommendations((prev) => [...prev, ...newRecs]);
             setJobs((prev) => [...prev, ...newJobs]);
@@ -102,7 +141,7 @@ export function JobsHome({ savedOnly = false }: { savedOnly?: boolean }) {
         }
       }
     },
-    [savedOnly, filterLocation, filterWorkMode, filterSalaryMin],
+    [savedOnly, filterLocation, filterWorkMode, filterSalaryMin, applySavedRows],
   );
 
   const load = useCallback(() => {
@@ -126,61 +165,107 @@ export function JobsHome({ savedOnly = false }: { savedOnly?: boolean }) {
 
   async function toggleSave(jobId: string, e?: React.MouseEvent) {
     if (e) e.stopPropagation();
-    const isSaved = saved.has(jobId);
-    setSaved((current) => {
-      const next = new Set(current);
-      if (isSaved) next.delete(jobId);
-      else next.add(jobId);
-      return next;
-    });
-    try {
-      await apiRequest(`/saved-jobs/${jobId}`, { method: isSaved ? "DELETE" : "POST" });
-    } catch (err) {
-      setError((err as Error).message);
-      setSaved((current) => {
-        const next = new Set(current);
-        if (isSaved) next.add(jobId);
-        else next.delete(jobId);
+    const current = statusByJobId[jobId];
+    // Unsave only when status is plain "saved". Applied/rejected stay tracked via status buttons.
+    const shouldUnsave = current === "saved";
+    const previous = { ...statusByJobId };
+
+    if (shouldUnsave) {
+      setStatusByJobId((map) => {
+        const next = { ...map };
+        delete next[jobId];
         return next;
       });
+      if (savedOnly) {
+        setJobs((list) => list.filter((j) => j.id !== jobId));
+      }
+    } else {
+      setStatusByJobId((map) => ({
+        ...map,
+        [jobId]: current && current !== "dismissed" ? current : "saved",
+      }));
+    }
+
+    try {
+      if (shouldUnsave) {
+        await apiRequest(`/saved-jobs/${jobId}`, { method: "DELETE" });
+      } else {
+        const result = await apiRequest<{ status?: string }>(`/saved-jobs/${jobId}`, { method: "POST" });
+        const serverStatus = normalizeStatus(result?.status || "saved");
+        setStatusByJobId((map) => ({ ...map, [jobId]: serverStatus }));
+      }
+    } catch (err) {
+      setError((err as Error).message);
+      setStatusByJobId(previous);
+      if (savedOnly) load();
+    }
+  }
+
+  async function setJobStatus(jobId: string, status: SavedJobStatus, e?: React.MouseEvent) {
+    if (e) e.stopPropagation();
+    const previous = { ...statusByJobId };
+    setStatusBusyId(jobId);
+    setError("");
+    setStatusByJobId((map) => ({ ...map, [jobId]: status }));
+
+    // On recommendations feed, dismissed jobs leave the list.
+    if (status === "dismissed" && !savedOnly) {
+      setJobs((current) => current.filter((j) => j.id !== jobId));
+      setRecommendations((current) => current.filter((r) => r.job.id !== jobId));
+      if (selectedJob === jobId) setSelectedJob(null);
+      setStatusByJobId((map) => {
+        const next = { ...map };
+        delete next[jobId];
+        return next;
+      });
+    }
+
+    // On pipeline page, dismissed rows leave the list.
+    if (savedOnly && status === "dismissed") {
+      setJobs((list) => list.filter((j) => j.id !== jobId));
+      setStatusByJobId((map) => {
+        const next = { ...map };
+        delete next[jobId];
+        return next;
+      });
+    }
+
+    try {
+      await apiRequest(`/saved-jobs/${jobId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status }),
+      });
+    } catch (err) {
+      setError((err as Error).message);
+      setStatusByJobId(previous);
+      if (savedOnly || status === "dismissed") load();
+    } finally {
+      setStatusBusyId(null);
     }
   }
 
   async function dismissJob(jobId: string, e?: React.MouseEvent) {
-    if (e) e.stopPropagation();
-    let removedJob: Job | undefined;
-    let removedRec: Recommendation | undefined;
-    setJobs((current) => {
-      removedJob = current.find((j) => j.id === jobId);
-      return current.filter((j) => j.id !== jobId);
-    });
-    setRecommendations((current) => {
-      removedRec = current.find((r) => r.job.id === jobId);
-      return current.filter((r) => r.job.id !== jobId);
-    });
-    if (selectedJob === jobId) setSelectedJob(null);
-    try {
-      await apiRequest(`/saved-jobs/${jobId}`, {
-        method: "PATCH",
-        body: JSON.stringify({ status: "dismissed" }),
-      });
-    } catch (err) {
-      setError((err as Error).message);
-      // Rollback optimistic remove on failure (same pattern as toggleSave).
-      if (removedJob) {
-        setJobs((current) => (current.some((j) => j.id === jobId) ? current : [...current, removedJob!]));
-      }
-      if (removedRec) {
-        setRecommendations((current) =>
-          current.some((r) => r.job.id === jobId) ? current : [...current, removedRec!],
-        );
-      }
-    }
+    await setJobStatus(jobId, "dismissed", e);
   }
+
+  const visibleJobs = useMemo(() => {
+    if (!savedOnly) return jobs;
+    return jobs.filter((job) => {
+      const status = statusByJobId[job.id] || "saved";
+      if (pipelineFilter === "all") return isPipelineStatus(status);
+      if (pipelineFilter === "applied") {
+        return status === "applied" || status === "interviewing" || status === "offer";
+      }
+      if (pipelineFilter === "rejected") {
+        return status === "rejected" || status === "withdrawn";
+      }
+      return status === "saved";
+    });
+  }, [jobs, savedOnly, pipelineFilter, statusByJobId]);
 
   const globeJobs = useMemo(
     () =>
-      jobs
+      visibleJobs
         .filter(hasCoordinates)
         .sort((a, b) => locationPinRank(a.id) - locationPinRank(b.id))
         .slice(0, 12)
@@ -198,26 +283,61 @@ export function JobsHome({ savedOnly = false }: { savedOnly?: boolean }) {
           latitude: job.latitude as number,
           longitude: job.longitude as number,
         })),
-    [jobs],
+    [visibleJobs],
   );
 
-  const selected = jobs.find((job) => job.id === selectedJob) || null;
+  const selected = visibleJobs.find((job) => job.id === selectedJob) || jobs.find((j) => j.id === selectedJob) || null;
   const selectedRec = recommendations.find((row) => row.job.id === selectedJob);
+  const selectedStatus = selected ? statusByJobId[selected.id] : undefined;
 
   return (
     <div className="feature-page">
       <PageHeader
         eyebrow="Jobs"
-        title={savedOnly ? "Saved jobs" : "Job recommendations"}
-        description="Recommendations are scored from confirmed resume evidence only."
+        title={savedOnly ? "My job pipeline" : "Job recommendations"}
+        description={
+          savedOnly
+            ? "Track jobs you saved, applied to, or rejected. Counts update as you mark each role."
+            : "Recommendations are scored from confirmed resume evidence. Save roles, mark applied, or mark rejected as you go."
+        }
+        action={
+          savedOnly ? (
+            <Link className="button button-secondary" href="/jobs">
+              Back to recommendations
+            </Link>
+          ) : (
+            <Link className="button button-secondary" href="/jobs/saved">
+              View pipeline ({counts.total})
+            </Link>
+          )
+        }
       />
+
+      <div className="grid-3" style={{ marginBottom: 8 }}>
+        <Card className="metric-card">
+          <p className="metric-card-label">Saved</p>
+          <p className="metric-value">{counts.saved}</p>
+          <p className="metric-card-note">Bookmarked for later</p>
+        </Card>
+        <Card className="metric-card">
+          <p className="metric-card-label">Applied</p>
+          <p className="metric-value">{counts.applied}</p>
+          <p className="metric-card-note">Applications you tracked</p>
+        </Card>
+        <Card className="metric-card">
+          <p className="metric-card-label">Rejected</p>
+          <p className="metric-value">{counts.rejected}</p>
+          <p className="metric-card-note">Roles you passed on</p>
+        </Card>
+      </div>
+
       {!savedOnly ? (
         <div className="filters-bar" role="search" aria-label="Filter job recommendations">
           <label className="field">
             <span className="field-label">Location</span>
             <input
               value={filterLocation}
-              onChange={(e: any) => setFilterLocation(e.target.value)}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFilterLocation(e.target.value)}
               placeholder="City or region"
             />
           </label>
@@ -225,7 +345,7 @@ export function JobsHome({ savedOnly = false }: { savedOnly?: boolean }) {
             <span className="field-label">Work mode</span>
             <input
               value={filterWorkMode}
-              onChange={(e: any) => setFilterWorkMode(e.target.value)}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFilterWorkMode(e.target.value)}
               placeholder="remote, hybrid…"
             />
           </label>
@@ -234,7 +354,7 @@ export function JobsHome({ savedOnly = false }: { savedOnly?: boolean }) {
             <input
               type="number"
               value={filterSalaryMin}
-              onChange={(e: any) =>
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
                 setFilterSalaryMin(e.target.value === "" ? "" : Number(e.target.value))
               }
             />
@@ -243,12 +363,34 @@ export function JobsHome({ savedOnly = false }: { savedOnly?: boolean }) {
             <RefreshCw size={16} aria-hidden /> Sync external jobs
           </Button>
         </div>
-      ) : null}
+      ) : (
+        <div className="cluster" role="tablist" aria-label="Filter pipeline by status" style={{ marginBottom: 8 }}>
+          {(
+            [
+              ["all", `All (${counts.total})`],
+              ["saved", `Saved (${counts.saved})`],
+              ["applied", `Applied (${counts.applied})`],
+              ["rejected", `Rejected (${counts.rejected})`],
+            ] as const
+          ).map(([key, label]) => (
+            <Button
+              key={key}
+              variant={pipelineFilter === key ? "secondary" : "ghost"}
+              onClick={() => setPipelineFilter(key)}
+              aria-pressed={pipelineFilter === key}
+            >
+              {label}
+            </Button>
+          ))}
+        </div>
+      )}
+
       {error ? (
         <div className="feature-alert" role="alert">
           <p className="field-error">{error}</p>
         </div>
       ) : null}
+
       {globeJobs.length > 0 ? (
         <Card className="jobs-globe-card">
           <div className="jobs-globe">
@@ -256,28 +398,52 @@ export function JobsHome({ savedOnly = false }: { savedOnly?: boolean }) {
           </div>
         </Card>
       ) : null}
+
       {isLoading ? (
         <div className="stack">
           <JobCardSkeleton />
           <JobCardSkeleton />
         </div>
-      ) : jobs.length === 0 ? (
+      ) : visibleJobs.length === 0 ? (
         <EmptyState
-          title="No jobs yet"
+          title={savedOnly ? "No jobs in this view" : "No jobs yet"}
           description={
             savedOnly
-              ? "Save a recommendation to build this list."
+              ? pipelineFilter === "applied"
+                ? "Mark a recommendation as applied to track it here."
+                : pipelineFilter === "rejected"
+                  ? "Mark roles you do not want as rejected to keep a clear record."
+                  : "Save a recommendation or mark it applied to build your pipeline."
               : "Confirm a resume and sync jobs to see matches."
           }
         />
       ) : (
         <div className="stack">
-          {jobs.map((job) => {
+          {visibleJobs.map((job) => {
             const rec = recommendations.find((row) => row.job.id === job.id);
+            const status = statusByJobId[job.id];
+            const busy = statusBusyId === job.id;
             return (
               <Card key={job.id} className="job-card" onClick={() => setSelectedJob(job.id)}>
-                <div className="cluster" style={{ justifyContent: "space-between" }}>
+                <div className="cluster" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
                   <div>
+                    <div className="cluster" style={{ marginBottom: 6 }}>
+                      {status ? (
+                        <span className="status-chip" data-tone={statusTone(status)}>
+                          {statusLabel(status)}
+                        </span>
+                      ) : null}
+                      {rec ? (
+                        <Badge variant="secondary">
+                          <CheckCircle2 size={14} aria-hidden /> {Math.round(rec.match_score)}%
+                        </Badge>
+                      ) : null}
+                      {job.work_mode ? (
+                        <Badge variant="secondary">
+                          <Briefcase size={14} aria-hidden /> {job.work_mode}
+                        </Badge>
+                      ) : null}
+                    </div>
                     <h3 style={{ margin: 0 }}>{job.title}</h3>
                     <p className="muted" style={{ margin: "4px 0 0" }}>
                       <Building2 size={14} aria-hidden /> {job.company}
@@ -289,23 +455,33 @@ export function JobsHome({ savedOnly = false }: { savedOnly?: boolean }) {
                       ) : null}
                     </p>
                   </div>
-                  <div className="cluster">
-                    {rec ? (
-                      <Badge variant="secondary">
-                        <CheckCircle2 size={14} aria-hidden /> {Math.round(rec.match_score)}%
-                      </Badge>
-                    ) : null}
-                    {job.work_mode ? (
-                      <Badge variant="secondary">
-                        <Briefcase size={14} aria-hidden /> {job.work_mode}
-                      </Badge>
-                    ) : null}
+                  <div className="cluster" onClick={(e: React.MouseEvent) => e.stopPropagation()}>
                     <Button
                       variant="secondary"
-                      onClick={(e: any) => void toggleSave(job.id, e)}
-                      aria-label={saved.has(job.id) ? "Unsave job" : "Save job"}
+                      disabled={busy}
+                      onClick={(e: React.MouseEvent) => void toggleSave(job.id, e)}
+                      aria-label={status === "saved" ? "Unsave job" : "Save job"}
+                      title={status === "saved" ? "Unsave" : "Save"}
                     >
                       <Bookmark size={16} />
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      disabled={busy || status === "applied"}
+                      onClick={(e: React.MouseEvent) => void setJobStatus(job.id, "applied", e)}
+                      aria-label="Mark as applied"
+                      title="Mark applied"
+                    >
+                      <Send size={16} />
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      disabled={busy || status === "rejected"}
+                      onClick={(e: React.MouseEvent) => void setJobStatus(job.id, "rejected", e)}
+                      aria-label="Mark as rejected"
+                      title="Mark rejected"
+                    >
+                      <ThumbsDown size={16} />
                     </Button>
                   </div>
                 </div>
@@ -327,12 +503,15 @@ export function JobsHome({ savedOnly = false }: { savedOnly?: boolean }) {
           ) : null}
         </div>
       )}
+
       {selected ? (
         <JobModal
           job={selected}
           recommendation={selectedRec}
-          isSaved={saved.has(selected.id)}
+          status={selectedStatus}
           onToggleSave={() => void toggleSave(selected.id)}
+          onMarkApplied={() => void setJobStatus(selected.id, "applied")}
+          onMarkRejected={() => void setJobStatus(selected.id, "rejected")}
           onClose={() => setSelectedJob(null)}
           onDismiss={() => void dismissJob(selected.id)}
         />
@@ -355,7 +534,7 @@ export function JobDetail({ jobId }: { jobId: string }) {
         eyebrow="Job record"
         title={job?.title || "Job details"}
         description={
-          job ? `${job.company}${job.location ? `  -  ${job.location}` : ""}` : "Loading job details"
+          job ? `${job.company}${job.location ? `  ·  ${job.location}` : ""}` : "Loading job details"
         }
       />
       {error ? (

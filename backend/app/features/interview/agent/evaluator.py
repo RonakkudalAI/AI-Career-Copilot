@@ -111,27 +111,6 @@ def analyze_filler_words(text: str) -> dict[str, Any]:
         )
     else:
         notes = f"Light filler use ({total}). Keep answers deliberate."
-    lowest = min(
-        turns,
-        key=lambda turn: int((turn.get("evaluation") or {}).get("score") or 0),
-    )
-    lowest_position = lowest.get("position") or "the lowest-scoring"
-    lowest_improvement = next(
-        (str(item).strip() for item in (lowest.get("evaluation") or {}).get("improvements") or [] if str(item).strip()),
-        "Add a specific action and measurable result.",
-    )
-    practice_plan = [
-        f"Re-answer question {lowest_position} and address this observed gap: {lowest_improvement}",
-    ]
-    if total_fillers:
-        practice_plan.append(
-            f"Record one answer and replace the {total_fillers} observed filler token(s) with short pauses."
-        )
-    if not wpm_values:
-        practice_plan.append("Time the next spoken answer so speaking pace can be measured from the recording.")
-    else:
-        practice_plan.append("End each answer with the result or learning that was present in your recorded example.")
-
     return {
         "total_count": total,
         "unique": sorted(counts.keys()),
@@ -687,6 +666,26 @@ def _deterministic_session_report(
         }
         for turn in turns
     ]
+    lowest = min(
+        turns,
+        key=lambda turn: int((turn.get("evaluation") or {}).get("score") or 0),
+    )
+    lowest_position = lowest.get("position") or "the lowest-scoring"
+    lowest_improvement = next(
+        (str(item).strip() for item in (lowest.get("evaluation") or {}).get("improvements") or [] if str(item).strip()),
+        "Add a specific action and measurable result.",
+    )
+    practice_plan = [
+        f"Re-answer question {lowest_position} and address this observed gap: {lowest_improvement}",
+    ]
+    if total_fillers:
+        practice_plan.append(
+            f"Record one answer and replace the {total_fillers} observed filler token(s) with short pauses."
+        )
+    if not wpm_values:
+        practice_plan.append("Time the next spoken answer so speaking pace can be measured from the recording.")
+    else:
+        practice_plan.append("End each answer with the result or learning that was present in your recorded example.")
     return {
         "overall_summary": summary[:3000],
         "overall_score": overall,

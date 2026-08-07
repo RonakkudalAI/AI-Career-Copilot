@@ -3056,7 +3056,53 @@ async def get_interview_report(
 
 @router.get("/learning-paths")
 def list_learning(user: CurrentUser = Depends(get_current_user), settings: Settings = Depends(get_settings)):
-    return owned_rows(client_for(settings, user), "learning_paths", user, "created_at")
+    """List learning paths with lightweight item summaries for list-card counts.
+
+    Full resources are loaded only on GET /learning-paths/{path_id}.
+    """
+    client = client_for(settings, user)
+    paths = owned_rows(client, "learning_paths", user, "created_at")
+    if not paths:
+        return paths
+    path_ids = {str(path.get("id")) for path in paths if path.get("id")}
+    # One user-scoped query — avoid per-path round-trips and unchunked in_ limits.
+    all_items = (
+        client.table("learning_items")
+        .select("id,learning_path_id,status,title,position")
+        .eq("user_id", str(user.id))
+        .execute()
+        .data
+        or []
+    )
+    by_path: dict[str, list[dict[str, Any]]] = {}
+    for item in all_items:
+        pid = str(item.get("learning_path_id") or "")
+        if pid not in path_ids:
+            continue
+        by_path.setdefault(pid, []).append(item)
+    for path in paths:
+        pid = str(path.get("id") or "")
+        items = by_path.get(pid, [])
+        items = sorted(
+            items,
+            key=lambda row: (
+                row.get("position") is None,
+                int(row["position"]) if isinstance(row.get("position"), (int, float)) else 10**9,
+                str(row.get("id") or ""),
+            ),
+        )
+        path["item_count"] = len(items)
+        # Lightweight items (no resources) so the list UI can show step counts.
+        path["items"] = [
+            {
+                "id": item.get("id"),
+                "title": item.get("title"),
+                "status": item.get("status") or "pending",
+                "position": item.get("position"),
+            }
+            for item in items
+        ]
+    return paths
 
 
 @router.get("/learning-paths/{path_id}")
@@ -3233,11 +3279,11 @@ async def generate_learning_path(
     algorithm_version = str(generated.get("algorithm_version") or CAREER_MATCH_ALGORITHM_VERSION)
     path = client.table("learning_paths").insert({
         "user_id": str(user.id),
-        "title": f"YouTube learning path · {resume.get('title') or 'your resume'}",
+        "title": f"Skill gap path · {resume.get('title') or 'your resume'}",
         "description": (
             "Study plan from requirements not fully evidenced in your completed ATS analysis. "
-            "Each step recommends exact YouTube videos from the YouTube API (or a search page if the API is unavailable). "
-            "Open a video, learn, then mark the step complete — progress is saved to your account."
+            "Each step includes free lesson resources grounded in those gaps. "
+            "Open a lesson, practice, then mark the step complete — progress is saved to your account."
         ),
         "source_type": "ats_analysis",
         "source_id": str(analysis["id"]),
@@ -3645,6 +3691,7 @@ def list_saved_jobs(
 def save_job(
     job_id: UUID, user: CurrentUser = Depends(get_current_user), settings: Settings = Depends(get_settings)
 ):
+    """Bookmark a job as saved without downgrading applied/interview/offer tracking."""
     client = client_for(settings, user)
     job = (
         client.table("jobs").select("id").eq("id", str(job_id)).eq("is_active", True).limit(1).execute().data
@@ -3652,12 +3699,30 @@ def save_job(
     )
     if not job:
         raise ApiError(404, "job_not_found", "The job was not found.")
-    result = (
+    existing = (
         client.table("saved_jobs")
-        .upsert({"user_id": str(user.id), "job_id": str(job_id), "status": "saved"})
+        .select("*")
+        .eq("user_id", str(user.id))
+        .eq("job_id", str(job_id))
+        .limit(1)
         .execute()
-        .data[0]
+        .data
+        or []
     )
+    # Keep pipeline progress if the candidate already marked applied/interview/offer.
+    protected = {"applied", "interviewing", "offer"}
+    if existing and str(existing[0].get("status") or "") in protected:
+        return existing[0]
+    stamp = utc_now()
+    payload = {
+        "user_id": str(user.id),
+        "job_id": str(job_id),
+        "status": "saved",
+        "updated_at": stamp,
+    }
+    if not existing:
+        payload["saved_at"] = stamp
+    result = client.table("saved_jobs").upsert(payload).execute().data[0]
     write_activity(client, user, "job_saved", "Job saved", "job", str(job_id))
     return result
 
@@ -3669,12 +3734,49 @@ def patch_saved_job(
     user: CurrentUser = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ):
+    """Update tracking status (saved / applied / rejected / dismissed / …). Creates the row if needed."""
     client = client_for(settings, user)
-    result = client.table("saved_jobs").upsert(
-        {"user_id": str(user.id), "job_id": str(job_id), **payload.model_dump()}
-    ).execute().data or []
+    job = (
+        client.table("jobs").select("id").eq("id", str(job_id)).eq("is_active", True).limit(1).execute().data
+        or []
+    )
+    if not job:
+        raise ApiError(404, "job_not_found", "The job was not found.")
+    stamp = utc_now()
+    body = payload.model_dump()
+    row = {
+        "user_id": str(user.id),
+        "job_id": str(job_id),
+        **body,
+        "updated_at": stamp,
+    }
+    existing = (
+        client.table("saved_jobs")
+        .select("id,saved_at,status")
+        .eq("user_id", str(user.id))
+        .eq("job_id", str(job_id))
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if not existing:
+        row["saved_at"] = stamp
+    result = client.table("saved_jobs").upsert(row).execute().data or []
     if not result:
-        raise ApiError(404, "saved_job_not_found", "The job is not saved to your account.")
+        raise ApiError(404, "saved_job_not_found", "The job could not be tracked on your account.")
+    status = str(result[0].get("status") or body.get("status") or "saved")
+    activity_map = {
+        "applied": ("job_applied", "Marked job as applied"),
+        "rejected": ("job_rejected", "Marked job as rejected"),
+        "dismissed": ("job_dismissed", "Dismissed job recommendation"),
+        "saved": ("job_saved", "Job saved"),
+        "withdrawn": ("job_withdrawn", "Withdrew job application"),
+        "interviewing": ("job_interviewing", "Marked job as interviewing"),
+        "offer": ("job_offer", "Marked job as offer"),
+    }
+    event, summary = activity_map.get(status, ("job_status_updated", f"Updated job status to {status}"))
+    write_activity(client, user, event, summary, "job", str(job_id))
     return result[0]
 
 

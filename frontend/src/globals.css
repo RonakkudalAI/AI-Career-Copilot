@@ -3812,6 +3812,19 @@ select option { color: var(--ink); background: var(--surface); }
   background: color-mix(in srgb, var(--surface) 92%, transparent);
   border-color: var(--border-subtle);
 }
+.workspace .report-provenance {
+  border-color: color-mix(in srgb, var(--primary-strong) 28%, var(--border-subtle));
+  background: color-mix(in srgb, var(--primary-soft) 38%, var(--surface));
+}
+.workspace .report-provenance strong {
+  color: var(--primary-deep);
+  font-family: var(--font-ui);
+  letter-spacing: -0.01em;
+}
+.workspace .report-provenance p {
+  max-width: 72ch;
+  color: var(--muted);
+}
 .workspace .metric-card:hover,
 .workspace .entity-card:hover,
 .workspace .job-card:hover {
@@ -3955,9 +3968,16 @@ select option { color: var(--ink); background: var(--surface); }
   background: color-mix(in srgb, var(--primary-soft) 50%, var(--surface));
 }
 .workspace .score-ring {
-  border-color: color-mix(in srgb, var(--primary-strong) 40%, #e5e5ea);
-  box-shadow: var(--shadow-md);
+  box-sizing: border-box;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  box-shadow: none;
   font-variant-numeric: tabular-nums;
+}
+.workspace .score-ring svg {
+  display: block;
+  overflow: visible;
 }
 
 /* Auth — frosted form, soft system material aside */
