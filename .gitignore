@@ -3,6 +3,7 @@ node_modules/
 frontend/node_modules/
 backend/.venv/
 .venv/
+deployment/
 
 # Build / framework caches
 dist/
