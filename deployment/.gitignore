@@ -2,3 +2,5 @@
 *.json
 !*.example
 firebase-admin*
+render.backend.env.example
+vercel.frontend.env.example
