@@ -32,7 +32,9 @@ def _password_matches(password: str, stored: str) -> bool:
 
 
 def _auth_payload(user: dict[str, Any], settings: Settings) -> dict[str, Any]:
-    token = create_access_token(UUID(str(user["id"])), str(user["email"]), settings)
+    token = create_access_token(
+        UUID(str(user["id"])), str(user["email"]), settings, int(user.get("token_version") or 0)
+    )
     return {"access_token": token, "token_type": "bearer", "user": {"id": str(user["id"]), "email": user["email"], "full_name": user.get("full_name")}}
 
 
@@ -40,10 +42,12 @@ def _create_user_records(client, user: dict[str, Any]) -> dict[str, Any]:
     """Create the user graph with compensating cleanup if a child write fails."""
     user_id = str(user["id"])
     created_children: list[str] = []
+    user_created = False
     try:
         created = client.table("users").insert(user).execute().data or []
         if not created:
             raise RuntimeError("The users record was not created")
+        user_created = True
         for table, row in (
             ("profiles", {"id": user_id, "full_name": user.get("full_name") or ""}),
             ("candidate_preferences", {"user_id": user_id}),
@@ -60,10 +64,11 @@ def _create_user_records(client, user: dict[str, Any]) -> dict[str, Any]:
                 client.table(table).delete().eq(key, user_id).execute()
             except Exception:
                 logger.exception("signup_rollback_failed table=%s user_id=%s", table, user_id)
-        try:
-            client.table("users").delete().eq("id", user_id).execute()
-        except Exception:
-            logger.exception("signup_rollback_failed table=users user_id=%s", user_id)
+        if user_created:
+            try:
+                client.table("users").delete().eq("id", user_id).execute()
+            except Exception:
+                logger.exception("signup_rollback_failed table=users user_id=%s", user_id)
         raise ApiError(500, "account_creation_incomplete", "The account could not be created completely.") from exc
 
 
@@ -81,10 +86,17 @@ def auth_sign_up(payload: dict[str, Any] = Body(...), settings: Settings = Depen
     client = database_client(settings)
     if client.table("users").select("id").eq("email", email).limit(1).execute().data:
         raise ApiError(409, "user_already_exists", "An account with this email already exists.")
-    user = _create_user_records(
-        client,
-        {"id": str(uuid.uuid4()), "email": email, "full_name": full_name, "password_hash": _password_hash(password)},
-    )
+    # A stable document id makes the email identity collision-safe across
+    # concurrent workers; the preflight lookup remains a fast user-facing path.
+    try:
+        user = _create_user_records(
+            client,
+            {"id": str(uuid.uuid5(uuid.NAMESPACE_URL, f"career-copilot:{email}")), "email": email, "full_name": full_name, "password_hash": _password_hash(password), "token_version": 0},
+        )
+    except ApiError:
+        if client.table("users").select("id").eq("email", email).limit(1).execute().data:
+            raise ApiError(409, "user_already_exists", "An account with this email already exists.") from None
+        raise
     return _auth_payload(user, settings)
 
 
@@ -223,7 +235,7 @@ def auth_update_password(payload: dict[str, Any] = Body(...), user: CurrentUser 
             f"Password must contain at least {MIN_PASSWORD_LENGTH} characters.",
         )
     client = database_client(settings)
-    rows = client.table("users").select("id,password_hash").eq("id", str(user.id)).limit(1).execute().data or []
+    rows = client.table("users").select("id,password_hash,token_version,email").eq("id", str(user.id)).limit(1).execute().data or []
     if not rows:
         raise ApiError(401, "invalid_user_identity", "The authentication identity is invalid.")
     stored_hash = str(rows[0].get("password_hash") or "")
@@ -237,5 +249,6 @@ def auth_update_password(payload: dict[str, Any] = Body(...), user: CurrentUser 
                 "invalid_current_password",
                 "Current password is incorrect.",
             )
-    client.table("users").update({"password_hash": _password_hash(password)}).eq("id", str(user.id)).execute()
-    return {"updated": True}
+    next_version = int(rows[0].get("token_version") or 0) + 1
+    client.table("users").update({"password_hash": _password_hash(password), "token_version": next_version}).eq("id", str(user.id)).execute()
+    return {"updated": True, "access_token": create_access_token(user.id, str(rows[0].get("email") or user.email or ""), settings, next_version), "token_type": "bearer"}

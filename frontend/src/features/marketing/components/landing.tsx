@@ -1,18 +1,35 @@
-
 import { Link } from "@/shared/ui/router-link";
 import { lazy, Suspense, useCallback, useEffect, useId, useRef, useState } from "react";
 import { ArrowRight, Menu, ShieldCheck, X } from "lucide-react";
 
 import { JobTicker } from "@/shared/ui/job-ticker";
-import { CareerJourney } from "./sections/career-journey";
-import { ResumeIntelligence } from "./sections/resume-intelligence";
-import { AtsComparison } from "./sections/ats-comparison";
-import { InterviewSimulation } from "./sections/interview-simulation";
-import { LivingProfile } from "./sections/living-profile";
 import { ParallaxLayer } from "@/shared/ui/parallax-layer";
 import { ButtonLink } from "@/shared/ui/primitives";
+import { ThemeToggle } from "@/shared/ui/theme-toggle";
+import { prefetchRoute } from "@/shared/route-prefetch";
 
 const Globe = lazy(() => import("@/features/jobs/components/career-globe"));
+// Below-the-fold sections stay out of the critical path / main chunk.
+const CareerJourney = lazy(() =>
+  import("./sections/career-journey").then((m) => ({ default: m.CareerJourney })),
+);
+const ResumeIntelligence = lazy(() =>
+  import("./sections/resume-intelligence").then((m) => ({ default: m.ResumeIntelligence })),
+);
+const AtsComparison = lazy(() =>
+  import("./sections/ats-comparison").then((m) => ({ default: m.AtsComparison })),
+);
+const InterviewSimulation = lazy(() =>
+  import("./sections/interview-simulation").then((m) => ({ default: m.InterviewSimulation })),
+);
+const LivingProfile = lazy(() =>
+  import("./sections/living-profile").then((m) => ({ default: m.LivingProfile })),
+);
+
+function SectionFallback({ minHeight = 280 }: { minHeight?: number }) {
+  return <div className="landing-section-fallback" style={{ minHeight }} aria-hidden />;
+}
+
 
 
 const FOCUSABLE_SELECTOR =
@@ -124,10 +141,18 @@ export function LandingPage() {
             <a href="#journey">How it works</a>
             <a href="#analysis">Resume analysis</a>
             <a href="#interview">Mock interview</a>
-            <Link href="/sign-in" className="button button-quiet">
+            <Link
+              href="/sign-in"
+              className="button button-quiet"
+              onMouseEnter={() => prefetchRoute("/sign-in")}
+              onFocus={() => prefetchRoute("/sign-in")}
+            >
               Sign in
             </Link>
-            <ButtonLink href="/sign-up">Get started</ButtonLink>
+            <span onMouseEnter={() => prefetchRoute("/sign-up")} onFocus={() => prefetchRoute("/sign-up")}>
+              <ButtonLink href="/sign-up">Get started</ButtonLink>
+            </span>
+            <ThemeToggle compact />
           </div>
           <div className="marketing-nav-actions">
             <button
@@ -187,7 +212,9 @@ export function LandingPage() {
               skills, and discover roles that match your progress.
             </p>
             <div className="cluster hero-actions">
-              <ButtonLink href="/sign-up">Start your career journey</ButtonLink>
+              <span onMouseEnter={() => prefetchRoute("/sign-up")} onFocus={() => prefetchRoute("/sign-up")}>
+                <ButtonLink href="/sign-up">Start your career journey</ButtonLink>
+              </span>
               <a href="#journey" className="button button-secondary">
                 See how it works
               </a>
@@ -211,19 +238,29 @@ export function LandingPage() {
         </div>
 
         <div id="journey" className="landing-deferred">
-          <CareerJourney />
+          <Suspense fallback={<SectionFallback minHeight={420} />}>
+            <CareerJourney />
+          </Suspense>
         </div>
         <div id="analysis" className="landing-deferred">
-          <ResumeIntelligence />
+          <Suspense fallback={<SectionFallback minHeight={360} />}>
+            <ResumeIntelligence />
+          </Suspense>
         </div>
         <div className="landing-deferred">
-          <AtsComparison />
+          <Suspense fallback={<SectionFallback minHeight={320} />}>
+            <AtsComparison />
+          </Suspense>
         </div>
         <div id="interview" className="landing-deferred">
-          <InterviewSimulation />
+          <Suspense fallback={<SectionFallback minHeight={360} />}>
+            <InterviewSimulation />
+          </Suspense>
         </div>
         <div className="landing-deferred">
-          <LivingProfile />
+          <Suspense fallback={<SectionFallback minHeight={320} />}>
+            <LivingProfile />
+          </Suspense>
         </div>
 
         <section className="section landing-outcomes">

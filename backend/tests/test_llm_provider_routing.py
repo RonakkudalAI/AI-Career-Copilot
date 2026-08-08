@@ -6,6 +6,7 @@ import asyncio
 from types import SimpleNamespace
 
 from app.agents.providers.routing import preferred_llm_provider, preferred_llm_providers
+from app.core.config import Settings
 from app.features.profile.agent import pipeline as profile_pipeline
 from app.features.resume_improvement.agents.crew import tools as resume_tools
 
@@ -35,6 +36,25 @@ def test_preferred_skips_unconfigured():
         groq_configured=True,
         nvidia_configured=False,
     )
+    assert preferred_llm_providers(settings) == ["groq"]
+
+
+def test_omniroute_does_not_impersonate_provider_credentials():
+    settings = Settings.model_construct(
+        nvidia_api_key="",
+        nvidia_model="nvidia-model",
+        nvidia_base_url="https://nvidia.example/v1",
+        groq_api_key="",
+        groq_model="groq-model",
+        groq_base_url="https://groq.example/v1",
+        omniroute_enabled=True,
+        omniroute_model="auto",
+        omniroute_base_url="http://127.0.0.1:20128/v1",
+        llm_provider="groq",
+    )
+    assert settings.groq_configured is False
+    assert settings.nvidia_configured is False
+    assert settings.omniroute_configured is True
     assert preferred_llm_providers(settings) == ["groq"]
 
 

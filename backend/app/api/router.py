@@ -1,4 +1,3 @@
-import json
 import logging
 import mimetypes
 import threading
@@ -186,6 +185,12 @@ def health(settings: Settings = Depends(get_settings)) -> dict[str, Any]:
     }
 
 
+@router.get("/health/ready")
+def health_ready(settings: Settings = Depends(get_settings)) -> dict[str, Any]:
+    """Compatibility readiness probe using the bounded dependency health check."""
+    return health(settings)
+
+
 @router.get("/agents/status")
 def agent_status(settings: Settings = Depends(get_settings)) -> dict[str, Any]:
     """Public agent inventory + configuration readiness (no secrets)."""
@@ -243,13 +248,28 @@ def bootstrap(
         )
 
     def _read_confirmed_resume():
-        return (
+        versions = (
             client.table("resume_versions")
-            .select("id", count="exact", head=True)
+            .select("resume_id")
             .eq("user_id", uid)
             .eq("extraction_status", "confirmed")
             .execute()
         )
+        version_rows = versions.data or []
+        if not version_rows:
+            return 0
+        resume_ids = {str(row.get("resume_id")) for row in version_rows if row.get("resume_id")}
+        active = (
+            client.table("resumes")
+            .select("id")
+            .eq("user_id", uid)
+            .is_("deleted_at", "null")
+            .in_("id", list(resume_ids))
+            .execute()
+            .data
+            or []
+        )
+        return sum(1 for row in active if str(row.get("id")) in resume_ids)
 
     def _read_latest_jd():
         # Do not server-order by created_at: legacy JD rows may omit the field and vanish.
@@ -288,7 +308,7 @@ def bootstrap(
         }
         profile = (futures["profile"].result().data or [{}])[0]
         active_resume = futures["active_resume"].result().data or []
-        confirmed_resume = futures["confirmed_resume"].result()
+        confirmed_resume_count = futures["confirmed_resume"].result()
         latest_jd = futures["latest_jd"].result() or []
         latest_analysis = futures["latest_analysis"].result() or []
         recent_activity = futures["recent_activity"].result()
@@ -343,9 +363,9 @@ def bootstrap(
                 and str(item.get("key")) != "resume"
             ],
             "has_active_resume": bool(active_resume),
-            "has_confirmed_resume": bool(confirmed_resume.count),
+            "has_confirmed_resume": bool(confirmed_resume_count),
             "failed_ats_count": failed_ats,
-            "ready_for_ats": bool(confirmed_resume.count) and bool(latest_jd),
+            "ready_for_ats": bool(confirmed_resume_count) and bool(latest_jd),
         },
         "capabilities": {
             "ats_scoring": True,
@@ -356,7 +376,7 @@ def bootstrap(
             "resume_improvements": settings.nvidia_configured or settings.groq_configured,
             "profile_fill_ai": settings.nvidia_configured or settings.groq_configured,
             "ats_improvement_brief_ai": settings.nvidia_configured or settings.groq_configured,
-            "job_recommendations": False,
+            "job_recommendations": True,
             "nvidia_configured": settings.nvidia_configured,
             "groq_configured": settings.groq_configured,
         },
@@ -2325,6 +2345,18 @@ async def create_ats(
 ):
     client = client_for(settings, user)
     version = owned_row(client, "resume_versions", payload.resume_version_id, user)
+    parent_rows = (
+        client.table("resumes")
+        .select("id,deleted_at")
+        .eq("id", str(version.get("resume_id") or ""))
+        .eq("user_id", str(user.id))
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if not parent_rows or parent_rows[0].get("deleted_at"):
+        raise ApiError(404, "resume_not_found", "The selected resume is no longer available.")
     job = owned_row(client, "job_descriptions", payload.job_description_id, user)
     if version.get("extraction_status") != "confirmed":
         raise ApiError(409, "resume_not_confirmed", "Confirm the extracted resume before scoring it.")

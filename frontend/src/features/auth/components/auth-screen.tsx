@@ -9,6 +9,7 @@ import { Eye, MailCheck } from "lucide-react";
 import { createClient } from "@/features/auth/api/client";
 import { safeRedirectPath } from "@/features/auth/safe-path";
 import { Button, Input } from "@/shared/ui/primitives";
+import { ThemeToggle } from "@/shared/ui/theme-toggle";
 
 function Shell({ children, title, description }: { children: React.ReactNode; title: string; description: string }) {
   return (
@@ -30,7 +31,10 @@ function Shell({ children, title, description }: { children: React.ReactNode; ti
         <p className="auth-aside-foot">Private by default · you review before reuse</p>
       </aside>
       <section className="auth-main">
-        <div className="auth-main-inner">{children}</div>
+        <div className="auth-main-inner">
+          <div className="auth-theme-control"><ThemeToggle compact /></div>
+          {children}
+        </div>
       </section>
     </main>
   );
@@ -45,7 +49,7 @@ function authErrorMessage(message: string) {
   if (normalized.includes("email not confirmed")) {
     return "Your email is not verified yet. Open the verification link from your inbox, then try signing in again.";
   }
-  if (normalized.includes("invalid login credentials")) {
+  if (normalized.includes("invalid login credentials") || normalized.includes("email or password is incorrect")) {
     return "The email or password is incorrect. If you just created the account, verify your email first.";
   }
   return message;
@@ -77,7 +81,7 @@ export function SignInScreen() {
       const result = await authClient.auth.signInWithPassword({ email: email.trim(), password });
       if (result.error) {
         const normalized = result.error.message.toLowerCase();
-        setNeedsVerification(normalized.includes("email not confirmed"));
+        setNeedsVerification(normalized.includes("email not verified") || normalized.includes("verify your email"));
         return setError(authErrorMessage(result.error.message));
       }
       navigate(safeRedirectPath(search.get("next"), "/dashboard"));
@@ -114,12 +118,16 @@ export function SignInScreen() {
     const authClient = createClient();
     if (!authClient) return setError(configurationError());
     try {
-      const { error: oauthError } = await authClient.auth.signInWithOAuth({
+      const next = safeRedirectPath(search.get("next"), "/dashboard");
+      const result = await authClient.auth.signInWithOAuth({
         provider,
-        options: { redirectTo: `${location.origin}/auth/callback` },
+        options: { redirectTo: `${location.origin}/auth/callback?next=${encodeURIComponent(next)}` },
       });
+      const oauthError = result.error;
       if (oauthError) setError(authErrorMessage(oauthError.message));
-      else if (provider === "google") navigate(safeRedirectPath(search.get("next"), "/dashboard"));
+       else if (provider === "google" && result.data?.session) {
+         navigate(safeRedirectPath(search.get("next"), "/dashboard"));
+       }
     } catch {
       setError("Could not reach authentication. Check your connection and try again.");
     } finally {
@@ -177,9 +185,6 @@ export function SignInScreen() {
             Resend verification email
           </Button>
         )}
-        <div className="auth-forgot">
-          <Link href="/forgot-password">Forgot password?</Link>
-        </div>
         <Button disabled={busy} type="submit">
           {busy ? "Signing in…" : "Sign in"}
         </Button>
@@ -201,7 +206,6 @@ export function SignInScreen() {
 }
 
 export function SignUpScreen() {
-  const navigate = useNavigate();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -227,11 +231,6 @@ export function SignUpScreen() {
         },
       });
       if (result.error) return setError(authErrorMessage(result.error.message));
-      if (result.data.session) {
-        navigate("/onboarding");
-
-        return;
-      }
       setSent(true);
     } catch {
       setError("Could not reach authentication. Check your connection and try again.");
@@ -432,9 +431,13 @@ export function PasswordScreen({ reset = false }: { reset?: boolean }) {
             {error}
           </p>
         )}
-        <Button type={reset ? "submit" : "button"} disabled={!reset}>
-          {reset ? "Update password" : "Password recovery unavailable"}
-        </Button>
+        {reset ? (
+          <Button type="submit">Update password</Button>
+        ) : (
+          <p className="feature-status">
+            Recovery is not enabled for this deployment. <Link href="/sign-in">Return to sign in</Link> or contact your workspace administrator.
+          </p>
+        )}
         {!reset && (
           <p className="auth-switch">
             Remembered it?{" "}

@@ -1,15 +1,16 @@
 
 import { useRef } from "react";
+import { Link } from "@/shared/ui/router-link";
 import { ParallaxLayer } from "@/shared/ui/parallax-layer";
 import { useScroll, motion } from "motion/react";
 
 const stages = [
-  { id: "01", title: "Understand", desc: "Resume and job-description analysis" },
-  { id: "02", title: "Improve", desc: "Grounded resume recommendations" },
-  { id: "03", title: "Practice", desc: "Realistic mock interviews" },
-  { id: "04", title: "Learn", desc: "Personalized skill-gap learning paths" },
-  { id: "05", title: "Discover", desc: "Relevant job opportunities" },
-  { id: "06", title: "Evolve", desc: "A career profile that improves over time" },
+  { id: "01", title: "Understand", desc: "Resume and job-description analysis", href: "/resume-analysis?tab=upload" },
+  { id: "02", title: "Improve", desc: "Grounded resume recommendations", href: "/resume-analysis?tab=ats" },
+  { id: "03", title: "Practice", desc: "Realistic mock interviews", href: "/mock-interview/preparation" },
+  { id: "04", title: "Learn", desc: "Personalized skill-gap learning paths", href: "/learning" },
+  { id: "05", title: "Discover", desc: "Relevant job opportunities", href: "/jobs" },
+  { id: "06", title: "Evolve", desc: "A career profile that improves over time", href: "/settings/profile" },
 ];
 
 export function CareerJourney() {
@@ -62,6 +63,9 @@ export function CareerJourney() {
                     {stage.id} — {stage.title}
                   </span>
                   <p style={{ margin: 0, color: "var(--ink)" }}>{stage.desc}</p>
+                  <Link className="journey-stage-link" href={stage.href}>
+                    Open {stage.title}
+                  </Link>
                 </motion.div>
               </div>
             );

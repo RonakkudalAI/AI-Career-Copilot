@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { render } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { CareerJourney } from "../sections/career-journey";
 
 vi.mock("motion/react", () => ({
@@ -28,7 +29,11 @@ vi.mock("@/shared/ui/parallax-layer", () => ({
 
 describe("CareerJourney (FE-005)", () => {
   it("renders stage cards with stable data attributes and classes (not motion.div selectors)", () => {
-    const { container } = render(<CareerJourney />);
+    const { container } = render(
+      <MemoryRouter>
+        <CareerJourney />
+      </MemoryRouter>,
+    );
     const cards = container.querySelectorAll("[data-journey-card]");
     expect(cards.length).toBe(6);
     cards.forEach((card) => {

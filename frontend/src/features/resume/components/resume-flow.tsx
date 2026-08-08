@@ -221,11 +221,19 @@ function ParsedInputPanel({ title, input }: { title: string; input?: ParsedInput
 }
 
 export function AnalysisHistory() {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get("tab");
   const initialTab: HubTab =
     tabParam === "upload" ? "upload" : tabParam === "resumes" ? "resumes" : "ats";
   const [tab, setTab] = useState<HubTab>(initialTab);
+
+  function selectTab(next: HubTab) {
+    setTab(next);
+    const params = new URLSearchParams(searchParams);
+    if (next === "ats") params.delete("tab");
+    else params.set("tab", next);
+    setSearchParams(params);
+  }
 
   useEffect(() => {
     const next =
@@ -249,7 +257,7 @@ export function AnalysisHistory() {
         <button
           type="button"
           className={`button ${tab === "ats" ? "button-primary is-active" : "button-secondary"}`}
-          onClick={() => setTab("ats")}
+          onClick={() => selectTab("ats")}
           aria-current={tab === "ats" ? "page" : undefined}
         >
           ATS analyses
@@ -257,7 +265,7 @@ export function AnalysisHistory() {
         <button
           type="button"
           className={`button ${tab === "resumes" ? "button-primary is-active" : "button-secondary"}`}
-          onClick={() => setTab("resumes")}
+          onClick={() => selectTab("resumes")}
           aria-current={tab === "resumes" ? "page" : undefined}
         >
           Resumes
@@ -265,7 +273,7 @@ export function AnalysisHistory() {
         <button
           type="button"
           className={`button ${tab === "upload" ? "button-primary is-active" : "button-secondary"}`}
-          onClick={() => setTab("upload")}
+          onClick={() => selectTab("upload")}
           aria-current={tab === "upload" ? "page" : undefined}
         >
           New upload
@@ -1122,11 +1130,17 @@ export function NewAnalysis({ embedded = false }: { embedded?: boolean }) {
                     <>
                       <label className="field-label">
                         Resume file (PDF or DOCX, max 10 MB)
-                        <Input
-                          type="file"
-                          accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                          onChange={(event: any) => setFile(event.target.files?.[0] || null)}
-                        />
+                        <span className="file-picker">
+                          <span className="file-picker-ui" aria-hidden="true">Choose file</span>
+                          <span className="file-picker-name" aria-hidden="true">No file selected</span>
+                          <Input
+                            className="file-picker-input"
+                            type="file"
+                            aria-label="Choose resume file"
+                            accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                            onChange={(event: any) => setFile(event.target.files?.[0] || null)}
+                          />
+                        </span>
                       </label>
                       {file && (
                         <p style={{ margin: 0 }} className="muted">
@@ -1170,11 +1184,17 @@ export function NewAnalysis({ embedded = false }: { embedded?: boolean }) {
               ) : (
                 <label className="field-label">
                   JD file
-                  <Input
-                    type="file"
-                    accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                    onChange={(event: any) => setJdFile(event.target.files?.[0] || null)}
-                  />
+                  <span className="file-picker">
+                    <span className="file-picker-ui" aria-hidden="true">Choose file</span>
+                    <span className="file-picker-name" aria-hidden="true">No file selected</span>
+                    <Input
+                      className="file-picker-input"
+                      type="file"
+                      aria-label="Choose job description file"
+                      accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                      onChange={(event: any) => setJdFile(event.target.files?.[0] || null)}
+                    />
+                  </span>
                 </label>
               )}
               {jdMode === "file" && jdFile && (

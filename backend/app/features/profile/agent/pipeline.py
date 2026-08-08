@@ -30,8 +30,8 @@ def _supported_in_resume(value: str | None, haystack: str, *, min_len: int = 3) 
         return False
     needle = _norm(value)
     if len(needle) < min_len:
-        return True
-    if needle in haystack:
+        return False
+    if re.search(rf"(?<![a-z0-9]){re.escape(needle)}(?![a-z0-9])", haystack):
         return True
     d_val = _digits(value)
     if len(d_val) >= 8 and d_val in re.sub(r"\D", "", haystack):
@@ -128,15 +128,11 @@ def _filter_draft_by_evidence(draft: dict[str, Any], plain_text: str) -> dict[st
     for exp in draft.get("experiences") or []:
         company = str(exp.get("company_name") or "").strip()
         role = str(exp.get("role_title") or "").strip()
-        if not role:
+        if not role or not company:
             continue
-        if not company:
-            company = "Not specified"
-        company_ok = company.lower() in {"not specified", "n/a", "na"} or _supported_in_resume(
-            company, hay, min_len=2
-        )
+        company_ok = _supported_in_resume(company, hay, min_len=3)
         role_ok = _supported_in_resume(role, hay, min_len=3)
-        if company_ok or role_ok:
+        if company_ok and role_ok:
             row = {**exp, "company_name": company, "role_title": role, "selected": True}
             if row.get("start_date") and not _date_year_supported(row["start_date"], hay):
                 row["start_date"] = None
@@ -150,9 +146,9 @@ def _filter_draft_by_evidence(draft: dict[str, Any], plain_text: str) -> dict[st
         degree = str(edu.get("degree") or "").strip()
         if not inst and not degree:
             continue
-        if (inst and _supported_in_resume(inst, hay, min_len=3)) or (
-            degree and _supported_in_resume(degree, hay, min_len=2)
-        ):
+        institution_ok = bool(inst) and _supported_in_resume(inst, hay, min_len=3)
+        degree_ok = not degree or _supported_in_resume(degree, hay, min_len=3)
+        if institution_ok and degree_ok:
             out["education"].append({**edu, "selected": True})
     for proj in draft.get("projects") or []:
         title = str(proj.get("title") or "").strip()
@@ -182,18 +178,9 @@ def _prefer(a: Any, b: Any) -> Any:
     return a
 def _prefer_years(ai_years: Any, base_years: Any, plain_text: str) -> float | None:
     explicit = extract_explicit_years(plain_text)
-    if explicit is not None:
-        return explicit
-    for candidate in (ai_years, base_years):
-        if candidate is None:
-            continue
-        try:
-            val = float(candidate)
-            if 0 <= val <= 50:
-                return val
-        except (TypeError, ValueError):
-            continue
-    return None
+    # Do not infer years from the number of jobs or from an ungrounded model
+    # estimate. Only an explicit duration in the source document is safe.
+    return explicit
 def merge_profile_drafts(
     base: dict[str, Any],
     ai: dict[str, Any],

@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.database.client import FirestoreQuery
+from app.database.client import FirestoreQuery, _order_value
 
 
 class _DummyClient:
@@ -129,3 +129,8 @@ def test_empty_in_filter_returns_no_documents():
     query = FirestoreQuery(_DummyClient(), "jobs")  # type: ignore[arg-type]
     query.in_("id", [])
     assert query._documents(_Collection()) == []  # type: ignore[arg-type]
+
+
+def test_numeric_order_values_are_not_sorted_as_strings():
+    assert sorted([1, 10, 2], key=_order_value) == [1, 2, 10]
+    assert sorted(["1", "10", "2"], key=_order_value) == ["1", "2", "10"]

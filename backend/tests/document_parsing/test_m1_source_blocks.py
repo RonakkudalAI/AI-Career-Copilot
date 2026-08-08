@@ -46,7 +46,7 @@ def test_groq_resume_parser_config_defaults():
         llm_provider="groq",
     )
     assert settings.groq_resume_parser_enabled is True
-    assert settings.groq_resume_parser_model == "openai/gpt-oss-120b"
+    assert settings.groq_resume_parser_model == "llama-3.3-70b-versatile"
     assert settings.groq_resume_parser_fallback_model == "llama-3.3-70b-versatile"
     assert settings.groq_resume_parser_timeout_seconds == 60.0
     assert settings.groq_resume_parser_max_retries == 2

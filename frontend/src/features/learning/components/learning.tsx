@@ -197,6 +197,8 @@ export function LearningHome() {
         <EmptyState
           title="No learning path yet"
           description="Complete a resume-vs-JD ATS analysis first. Paths are built only from those evidence gaps — skills are never invented."
+          href="/resume-analysis?tab=upload"
+          action="Open Resume Analysis"
         />
       ) : (
         <div className="grid-2">

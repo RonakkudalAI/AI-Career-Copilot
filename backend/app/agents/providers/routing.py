@@ -32,6 +32,10 @@ def preferred_llm_providers(settings: Any) -> list[ProviderName]:
             ordered.append("groq")
         elif name == "nvidia" and bool(getattr(settings, "nvidia_configured", False)):
             ordered.append("nvidia")
+    # OmniRoute is an adapter behind the selected logical provider. Keep that
+    # route usable without reporting Groq or NVIDIA credentials as configured.
+    if not ordered and bool(getattr(settings, "omniroute_configured", False)):
+        ordered.append(primary)
     return ordered
 
 
@@ -40,6 +44,7 @@ def any_llm_configured(settings: Any) -> bool:
         getattr(settings, "groq_configured", False)
         or getattr(settings, "nvidia_configured", False)
         or getattr(settings, "groq_resume_parser_configured", False)
+        or getattr(settings, "omniroute_configured", False)
     )
 
 

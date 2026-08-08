@@ -36,6 +36,32 @@ def _bucket_name(value: str) -> str:
     if not _BUCKET.fullmatch(cleaned):
         raise ValueError(f"Unsafe storage bucket name: {value}")
     return cleaned
+
+
+def _authenticated_file_url(settings: Settings, bucket: str, path: str) -> str:
+    """Build the deployed API route used by all private-file responses."""
+    suffix = f"/files/{quote(bucket)}/{quote(path, safe='/')}"
+    base = (settings.public_api_base_url or "").rstrip("/")
+    prefix = (settings.api_v1_prefix or "/api/v1").rstrip("/")
+    if not base:
+        return f"{prefix}{suffix}"
+    if base.endswith(prefix):
+        return f"{base}{suffix}"
+    return f"{base}{prefix}{suffix}"
+
+
+def _order_value(value: Any) -> tuple[int, Any]:
+    """Sort numeric Firestore fields numerically, while preserving text order."""
+    if isinstance(value, bool):
+        return (0, int(value))
+    if isinstance(value, (int, float)):
+        return (0, value)
+    if isinstance(value, str):
+        try:
+            return (0, float(value.strip()))
+        except ValueError:
+            return (1, value.casefold())
+    return (1, str(value).casefold())
 class Result:
     def __init__(self, data: list[dict[str, Any]] | None = None, count: int | None = None):
         self.data = data or []
@@ -130,7 +156,7 @@ class _LegacyFirebaseStorageObject:
         blob = self._gcs_bucket().blob(self._object_path(path))
         if not blob.exists():
             raise FileNotFoundError(path)
-        url = f"/api/files/{quote(self.bucket)}/{quote(path, safe='/')}"
+        url = _authenticated_file_url(self.settings, self.bucket, path)
         return {"signedURL": url, "authenticated_file_url": url, "expires_in": int(expires)}
 
 
@@ -172,7 +198,12 @@ class SupabaseStorageObject:
     def remove(self, paths: list[str]) -> list[dict[str, str]]:
         removed: list[dict[str, str]] = []
         for path in paths:
-            self._request("DELETE", self._url(path))
+            try:
+                self._request("DELETE", self._url(path))
+            except FileNotFoundError:
+                # Storage cleanup is idempotent; a missing object must not
+                # abort account deletion or cleanup of later objects.
+                continue
             removed.append({"name": path})
         return removed
 
@@ -201,7 +232,7 @@ class SupabaseStorageObject:
         # The application file route enforces ownership and performs the actual
         # storage read. Do not perform a second remote HEAD/GET just to build a
         # same-origin URL for every profile/bootstrap request.
-        url = f"/api/files/{quote(self.bucket)}/{quote(path, safe='/')}"
+        url = _authenticated_file_url(self.settings, self.bucket, path)
         return {"signedURL": url, "authenticated_file_url": url, "expires_in": int(expires)}
 
 
@@ -262,7 +293,7 @@ class MemoryStorageObject:
 
     def create_signed_url(self, path: str, expires: int) -> dict[str, str]:
         self.download(path)
-        url = f"/api/files/{quote(self.bucket)}/{quote(path, safe='/')}"
+        url = _authenticated_file_url(self.settings, self.bucket, path)
         return {"signedURL": url, "authenticated_file_url": url, "expires_in": int(expires)}
 
 
@@ -375,7 +406,20 @@ class FirestoreQuery:
             output = []
             for raw in rows:
                 row = dict(raw or {})
-                doc_id = str(row.get("id") or uuid.uuid4())
+                if self.operation == "upsert" and self.table_name in {
+                    "candidate_preferences",
+                    "notification_preferences",
+                    "privacy_preferences",
+                    "saved_jobs",
+                }:
+                    identity = (
+                        f"{self.table_name}:user:{row.get('user_id')}"
+                        if self.table_name != "saved_jobs"
+                        else f"{self.table_name}:user:{row.get('user_id')}:job:{row.get('job_id')}"
+                    )
+                    doc_id = str(uuid.uuid5(uuid.NAMESPACE_URL, identity))
+                else:
+                    doc_id = str(row.get("id") or uuid.uuid4())
                 row["id"] = doc_id
                 if self.operation == "upsert":
                     existing = self._find_upsert_target(collection, row)
@@ -476,7 +520,7 @@ class FirestoreQuery:
                 value = (document.to_dict() or {}).get(column)
                 (missing if value is None else present).append(document)
             present.sort(
-                key=lambda document: str((document.to_dict() or {}).get(column)),
+                key=lambda document: _order_value((document.to_dict() or {}).get(column)),
                 reverse=desc,
             )
             docs = present + missing

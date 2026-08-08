@@ -35,7 +35,7 @@ GAP_ANALYST = CrewAgent(
 )
 RESUME_IMPROVER = CrewAgent(
     role="Resume Improvement Specialist",
-    goal="Propose rewrites only for confirmed resume blocks using NVIDIA evidence rules.",
+    goal="Propose rewrites only for confirmed resume blocks using configured provider evidence rules.",
     backstory=(
         "You improve clarity and keyword alignment for text that already exists. "
         "You never fabricate experience."
@@ -56,7 +56,7 @@ RESUME_CREW_TASKS = [
     ),
     CrewTask(
         name="generate_suggestions",
-        description="Generate evidence-bound resume suggestions via NVIDIA for selected blocks.",
+        description="Generate evidence-bound resume suggestions via the configured provider for selected blocks.",
         agent=RESUME_IMPROVER,
         expected_output="ProviderSuggestionResult JSON",
         tool_name="generate_resume_suggestions",

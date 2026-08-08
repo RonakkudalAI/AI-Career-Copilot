@@ -24,7 +24,7 @@ def setup_test_environment():
     os.environ["GROQ_BASE_URL"] = "https://api.groq.com/openai/v1"
     os.environ["GROQ_MODEL"] = "llama-3.3-70b-versatile"
     os.environ["GROQ_RESUME_PARSER_ENABLED"] = "true"
-    os.environ["GROQ_RESUME_PARSER_MODEL"] = "openai/gpt-oss-120b"
+    os.environ["GROQ_RESUME_PARSER_MODEL"] = "llama-3.3-70b-versatile"
     os.environ["GROQ_RESUME_PARSER_FALLBACK_MODEL"] = "llama-3.3-70b-versatile"
     os.environ["GROQ_RESUME_PARSER_TIMEOUT_SECONDS"] = "60"
     os.environ["GROQ_RESUME_PARSER_MAX_RETRIES"] = "2"

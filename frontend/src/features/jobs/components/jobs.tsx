@@ -4,14 +4,17 @@ import {
   RefreshCw,
   MapPin,
   CheckCircle2,
+  ExternalLink,
 } from "lucide-react";
 import { Link } from "@/shared/ui/router-link";
 import { apiRequest } from "@/shared/api/client";
+import { isDemoSession } from "@/features/auth/demo-session";
 import { JobCard } from "./job-card";
 import { JobCardSkeleton } from "./job-card-skeleton";
 import { JobModal } from "./job-modal";
 import type { Job, Recommendation, SavedJobRow, SavedJobStatus } from "./job-types";
 import { isPipelineStatus } from "./job-types";
+import { jobRecsCacheKey, readJobRecsCache, writeJobRecsCache } from "../job-recs-cache";
 import { Badge, Button, Card, EmptyState, PageHeader } from "@/shared/ui/primitives";
 
 export type { Job, Recommendation } from "./job-types";
@@ -54,6 +57,7 @@ export function JobsHome({ savedOnly = false }: { savedOnly?: boolean }) {
   const [statusByJobId, setStatusByJobId] = useState<Record<string, SavedJobStatus>>({});
   const [pipelineFilter, setPipelineFilter] = useState<PipelineFilter>("all");
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [offset, setOffset] = useState(0);
   const [hasMore, setHasMore] = useState(true);
@@ -64,6 +68,23 @@ export function JobsHome({ savedOnly = false }: { savedOnly?: boolean }) {
   const [statusBusyId, setStatusBusyId] = useState<string | null>(null);
   const limit = 20;
   const requestSequence = useRef(0);
+  const hydratedCacheKey = useRef<string | null>(null);
+  const hasJobsRef = useRef(false);
+
+  const cacheKey = useMemo(
+    () =>
+      jobRecsCacheKey({
+        demo: isDemoSession(),
+        location: filterLocation,
+        workMode: filterWorkMode,
+        salaryMin: filterSalaryMin,
+      }),
+    [filterLocation, filterWorkMode, filterSalaryMin],
+  );
+
+  useEffect(() => {
+    hasJobsRef.current = jobs.length > 0;
+  }, [jobs.length]);
 
   const counts = useMemo(() => {
     const values = Object.values(statusByJobId);
@@ -87,12 +108,35 @@ export function JobsHome({ savedOnly = false }: { savedOnly?: boolean }) {
     return pipeline;
   }, []);
 
+  // Instant paint from session cache (stale-while-revalidate) for recommendation feed.
+  useEffect(() => {
+    if (savedOnly) return;
+    if (hydratedCacheKey.current === cacheKey) return;
+    const cached = readJobRecsCache(cacheKey);
+    if (cached && cached.jobs.length > 0) {
+      hydratedCacheKey.current = cacheKey;
+      setRecommendations(cached.recommendations);
+      setJobs(cached.jobs);
+      setStatusByJobId(cached.statusByJobId || {});
+      setIsLoading(false);
+      setIsRefreshing(true);
+      return;
+    }
+    // Different filters without cache: drop previous filter's rows so UI does not lie.
+    setRecommendations([]);
+    setJobs([]);
+    setIsLoading(true);
+    setIsRefreshing(false);
+  }, [cacheKey, savedOnly]);
+
   const fetchJobs = useCallback(
     async (currentOffset: number, append: boolean = false) => {
       const sequence = ++requestSequence.current;
       setError("");
-      if (!append) setIsLoading(true);
-      else setIsLoadingMore(true);
+      if (!append) {
+        if (hasJobsRef.current) setIsRefreshing(true);
+        else setIsLoading(true);
+      } else setIsLoadingMore(true);
       try {
         if (savedOnly) {
           const rows = await apiRequest<SavedJobRow[]>("/saved-jobs");
@@ -118,13 +162,25 @@ export function JobsHome({ savedOnly = false }: { savedOnly?: boolean }) {
           const newRecs = result.recommendations || [];
           const newJobs = newRecs.map((row) => row.job);
           if (sequence !== requestSequence.current) return;
-          applySavedRows(Array.isArray(savedRows) ? savedRows : []);
+          const pipeline = applySavedRows(Array.isArray(savedRows) ? savedRows : []);
+          const nextStatus: Record<string, SavedJobStatus> = {};
+          for (const row of pipeline) {
+            const jobId = String(row.jobs?.id || row.job_id || "");
+            if (!jobId) continue;
+            nextStatus[jobId] = normalizeStatus(row.status);
+          }
           if (append) {
             setRecommendations((prev) => [...prev, ...newRecs]);
             setJobs((prev) => [...prev, ...newJobs]);
           } else {
             setRecommendations(newRecs);
             setJobs(newJobs);
+            writeJobRecsCache(cacheKey, {
+              recommendations: newRecs,
+              jobs: newJobs,
+              statusByJobId: nextStatus,
+            });
+            hydratedCacheKey.current = cacheKey;
           }
           setHasMore(newRecs.length === limit);
         }
@@ -133,11 +189,12 @@ export function JobsHome({ savedOnly = false }: { savedOnly?: boolean }) {
       } finally {
         if (sequence === requestSequence.current) {
           setIsLoading(false);
+          setIsRefreshing(false);
           setIsLoadingMore(false);
         }
       }
     },
-    [savedOnly, filterLocation, filterWorkMode, filterSalaryMin, applySavedRows],
+    [savedOnly, filterLocation, filterWorkMode, filterSalaryMin, applySavedRows, cacheKey],
   );
 
   const load = useCallback(() => {
@@ -327,6 +384,12 @@ export function JobsHome({ savedOnly = false }: { savedOnly?: boolean }) {
         </Card>
       </div>
 
+      {isRefreshing ? (
+        <p className="muted" style={{ marginBottom: 8 }} aria-live="polite">
+          Updating recommendations…
+        </p>
+      ) : null}
+
       {!savedOnly ? (
         <div className="filters-bar" role="search" aria-label="Filter job recommendations">
           <label className="field">
@@ -496,7 +559,7 @@ export function JobDetail({ jobId }: { jobId: string }) {
           </p>
         </Card>
       ) : job ? (
-        <Card>
+        <Card className="stack">
           <div className="cluster">
             <Badge variant="secondary">
               <MapPin size={14} aria-hidden /> {job.location || "Location not specified"}
@@ -504,8 +567,34 @@ export function JobDetail({ jobId }: { jobId: string }) {
             <Badge variant="secondary">
               <CheckCircle2 size={14} aria-hidden /> Stored job record
             </Badge>
+            {job.work_mode ? <Badge variant="secondary">{job.work_mode}</Badge> : null}
+            {job.salary_min != null || job.salary_max != null ? (
+              <Badge variant="secondary">
+                {job.salary_min != null && job.salary_max != null
+                  ? `$${Number(job.salary_min).toLocaleString()} – $${Number(job.salary_max).toLocaleString()}`
+                  : job.salary_min != null
+                    ? `From $${Number(job.salary_min).toLocaleString()}`
+                    : `Up to $${Number(job.salary_max).toLocaleString()}`}
+              </Badge>
+            ) : null}
           </div>
           <p>{job.description || "No description supplied."}</p>
+          {job.requirements?.length ? (
+            <div>
+              <h2>Requirements</h2>
+              <ul>
+                {job.requirements.map((requirement) => <li key={requirement}>{requirement}</li>)}
+              </ul>
+            </div>
+          ) : null}
+          <div className="cluster">
+            <Link className="button button-secondary" href="/jobs">Back to jobs</Link>
+            {job.application_url ? (
+              <a className="button button-primary" href={job.application_url} target="_blank" rel="noreferrer">
+                Apply on employer site <ExternalLink size={14} aria-hidden />
+              </a>
+            ) : null}
+          </div>
         </Card>
       ) : (
         <Card className="skeleton">

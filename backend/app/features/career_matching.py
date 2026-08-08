@@ -69,10 +69,10 @@ def candidate_skill_evidence(client, user_id: str, resume: dict[str, Any], versi
     explicit: set[str] = set()
     if evidence_text:
         explicit.update(
-            _normal(item)
-            for item in skill_lines
-            for item in re.split(r"[,|;\n]", item)
-            if item.strip()
+            _normal(token)
+            for line in skill_lines
+            for token in re.split(r"[,|;\n]", line)
+            if token.strip()
         )
     # Profile skills may boost only when grounded in confirmed resume text.
     rows = client.table("candidate_skills").select("name,normalized_name").eq("user_id", user_id).execute().data or []

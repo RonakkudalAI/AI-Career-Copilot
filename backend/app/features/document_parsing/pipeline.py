@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import Any
 
 from app.core.config import Settings
@@ -9,7 +10,9 @@ from app.features.document_parsing.parsing.llm_sections import extract_sections_
 from app.features.document_parsing.parsing.text_extract import extract_text
 
 
-def _clean_structured(result: dict[str, Any], schema_version: str) -> dict[str, Any]:
+def _clean_structured(
+    result: dict[str, Any], schema_version: str, *, source_text: str | None = None
+) -> dict[str, Any]:
     sections = result.get("sections") if isinstance(result.get("sections"), dict) else {}
     sections = {
         str(key): [str(item).strip() for item in (values or []) if str(item).strip()]
@@ -18,6 +21,24 @@ def _clean_structured(result: dict[str, Any], schema_version: str) -> dict[str, 
     }
     sections = {key: values for key, values in sections.items() if values}
     warnings = [str(w).strip() for w in (result.get("warnings") or []) if str(w).strip()]
+    # URLs are source facts, not model-generated fields. Preserve every URL
+    # found in extracted text in a dedicated section for review/profile import.
+    source_for_links = source_text or "\n".join(
+        [item for values in sections.values() for item in values]
+        + [str(item) for item in (result.get("unclassified_blocks") or [])]
+    )
+    links = sorted(
+        {
+            match.rstrip(".,;:)]}")
+            for match in re.findall(
+                r"(?:https?://|www\.)[^\s<>\"']+|(?:linkedin|github)\.com/[^\s<>\"']+",
+                source_for_links,
+                flags=re.IGNORECASE,
+            )
+        }
+    )
+    if links:
+        sections["links"] = links
     return {
         "schema_version": schema_version,
         "sections": sections,
@@ -44,7 +65,7 @@ async def parse_document_bytes(
         # explicitly AI-powered actions after the source has been persisted.
         prefer_llm=False,
     )
-    return plain_text, _clean_structured(extracted, schema_version)
+    return plain_text, _clean_structured(extracted, schema_version, source_text=plain_text)
 async def parse_source_blocks(blocks, settings: Settings) -> dict[str, Any]:
     source_text = "\n".join(getattr(block, "text", "") for block in (blocks or []) if getattr(block, "text", "").strip())
     extracted = await extract_sections_enriched(source_text, settings, prefer_llm=False)

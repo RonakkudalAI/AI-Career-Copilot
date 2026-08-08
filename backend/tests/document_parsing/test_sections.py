@@ -9,6 +9,7 @@ from app.features.document_parsing.parsing.llm_sections import (
     extract_sections_structural,
 )
 from app.features.document_parsing.service import extract_skill_candidates
+from app.features.document_parsing.pipeline import _clean_structured
 
 
 def test_structural_splits_on_layout_headings() -> None:
@@ -59,3 +60,27 @@ def test_skill_candidates_are_source_derived_not_allowlisted() -> None:
     joined = " ".join(found).casefold()
     assert "zig" in joined or "elixir" in joined or "roc" in joined
     assert "python" not in joined
+
+
+def test_clean_structured_preserves_source_urls_in_links_section() -> None:
+    result = _clean_structured(
+        {
+            "sections": {
+                "contact": ["Jane Candidate | https://example.com/portfolio"],
+                "projects": ["Code: github.com/jane/project"],
+            }
+        },
+        "resume-extraction-v1",
+    )
+    assert result["sections"]["links"] == [
+        "github.com/jane/project",
+        "https://example.com/portfolio",
+    ]
+
+
+def test_clean_structured_scans_unclassified_source_text_for_urls() -> None:
+    result = _clean_structured(
+        {"sections": {}, "unclassified_blocks": ["Portfolio: www.example.org/work"]},
+        "resume-extraction-v1",
+    )
+    assert result["sections"]["links"] == ["www.example.org/work"]

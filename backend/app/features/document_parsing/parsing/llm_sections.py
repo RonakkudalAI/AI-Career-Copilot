@@ -1,7 +1,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
 from pathlib import Path
@@ -20,9 +19,6 @@ _PROMPT_PATH = (
     Path(__file__).resolve().parents[3] / "agents" / "prompts" / "document_section_extract_v1.txt"
 )
 _MAX_LINES = 400
-_NVIDIA_MIN_INTERVAL_SECONDS = 1.6
-_nvidia_lock = asyncio.Lock()
-_last_nvidia_mono = 0.0
 _BULLET_RE = re.compile(r"^[\u2022\u2023\u25E6\u2043\u2219•●○▪▸►\*◦‣⁃\-–—]\s+")
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}")
 _URL_RE = re.compile(r"https?://\S+|www\.\S+|(?:linkedin|github)\.com/\S+", re.I)

@@ -206,7 +206,7 @@ export function phaseAfterFeedbackSpoken(autoContinue: boolean): InterviewTurnPh
 }
 
 /** Longer silence so natural pauses mid-answer do not auto-submit too early. */
-export const DEFAULT_ANSWER_SILENCE_MS = 3200;
+export const DEFAULT_ANSWER_SILENCE_MS = 5500;
 /** Wait after interviewer audio fully ends before opening SpeechRecognition. */
 export const DEFAULT_LISTEN_AFTER_TTS_MS = 700;
 /** Brief beat after short feedback before auto-advance (feels less abrupt). */

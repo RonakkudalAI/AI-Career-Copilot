@@ -1,6 +1,6 @@
 import { useLocation, useNavigate } from "react-router-dom";
 import { Link } from "@/shared/ui/router-link";
-import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import {
   BookOpenCheck,
   BriefcaseBusiness,
@@ -16,19 +16,23 @@ import {
   UserRound,
   X,
 } from "lucide-react";
+import { ThemeToggle } from "@/shared/ui/theme-toggle";
 import { routes } from "@/shared/routes";
-import { apiRequest } from "@/shared/api/client";
 import { createClient } from "@/features/auth/api/client";
 import { ProfileCompletionToast } from "@/features/profile/components/profile-completion-toast";
 import {
   PROFILE_UPDATED_EVENT,
-  extractMissing,
-  resolveCompletion,
+  applyLiveCompletionDetail,
   type ProfileMissingItem,
   type ProfileUpdatedDetail,
 } from "@/features/profile/model/profile-completion";
 import { isDemoSession } from "@/features/auth/demo-session";
 import { DEMO_COOKIE_NAME } from "@/shared/config";
+import { prefetchRoute } from "@/shared/route-prefetch";
+import {
+  completionFromBootstrap,
+  useWorkspaceBootstrap,
+} from "@/features/workspace/bootstrap-context";
 
 /** Primary nav only — Settings lives in the profile account menu. */
 const navigation = [
@@ -38,38 +42,6 @@ const navigation = [
   { href: routes.learning, label: "Learning Path", icon: BookOpenCheck },
   { href: routes.jobs, label: "Recommended Jobs", icon: BriefcaseBusiness },
 ];
-
-type Bootstrap = {
-  profile: {
-    full_name?: string;
-    avatar_url?: string | null;
-    avatar_path?: string | null;
-    profile_completion?: number;
-    profile_completion_details?: { missing?: ProfileMissingItem[]; total?: number };
-  } | null;
-  active_resume: { id: string } | null;
-  workspace?: {
-    profile_completion?: number;
-    profile_missing?: ProfileMissingItem[];
-    profile_completion_details?: { missing?: ProfileMissingItem[]; total?: number };
-  };
-};
-
-function completionFromBootstrap(data: Bootstrap | null): {
-  completion: number;
-  missing: ProfileMissingItem[];
-} {
-  if (!data) return { completion: 0, missing: [] };
-  const details =
-    data.workspace?.profile_completion_details || data.profile?.profile_completion_details || null;
-  const missing = extractMissing(details, data.workspace?.profile_missing);
-  const completion = resolveCompletion(
-    data.workspace?.profile_completion ?? data.profile?.profile_completion,
-    details,
-    missing,
-  );
-  return { completion, missing };
-}
 
 function readDemoMode() {
   return isDemoSession();
@@ -82,70 +54,35 @@ function subscribeDemoMode() {
 export function WorkspaceShell({ children }: { children: React.ReactNode }) {
   const { pathname } = useLocation();
   const navigate = useNavigate();
+  const { data: bootstrap } = useWorkspaceBootstrap();
   const [open, setOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
-  const [bootstrap, setBootstrap] = useState<Bootstrap | null>(null);
   const [failedAvatarUrl, setFailedAvatarUrl] = useState<string | null>(null);
   const demoMode = useSyncExternalStore(subscribeDemoMode, readDemoMode, () => false);
   const [liveCompletion, setLiveCompletion] = useState<{
     completion: number;
     missing: ProfileMissingItem[];
   } | null>(null);
-  const fetchGen = useRef(0);
   const profileMenuRef = useRef<HTMLDivElement | null>(null);
   const profileMenuId = useId();
 
-  const loadBootstrap = useCallback(() => {
-    // Always call bootstrap — demo mode is served by demoApiRequest in-memory,
-    // real mode hits Firestore. Skipping here left the shell empty forever.
-    const gen = ++fetchGen.current;
-    apiRequest<Bootstrap>("/me/bootstrap")
-      .then((data) => {
-        if (gen !== fetchGen.current) return;
-        setBootstrap(data);
-        setLiveCompletion(null);
-      })
-      .catch((err: Error) => {
-        if (gen !== fetchGen.current) return;
-        setBootstrap(null);
-        console.warn("[workspace] bootstrap failed:", err?.message || err);
-      });
-  }, []);
-
-  useEffect(() => {
-    loadBootstrap();
-  }, [loadBootstrap]);
-
+  // Optimistic completion from profile events (provider also refreshes bootstrap).
   useEffect(() => {
     function onProfileUpdated(event: Event) {
       const detail = (event as CustomEvent<ProfileUpdatedDetail>).detail;
-      if (
-        detail &&
-        (detail.profile_completion != null ||
-          detail.profile_missing ||
-          detail.profile_completion_details)
-      ) {
-        const details = detail.profile_completion_details;
-        const missing = extractMissing(details, detail.profile_missing);
-        const completion = resolveCompletion(detail.profile_completion, details, missing);
-        setLiveCompletion({ completion, missing });
-      }
-      loadBootstrap();
+      const live = applyLiveCompletionDetail(detail);
+      if (live) setLiveCompletion(live);
     }
     window.addEventListener(PROFILE_UPDATED_EVENT, onProfileUpdated);
     return () => window.removeEventListener(PROFILE_UPDATED_EVENT, onProfileUpdated);
-  }, [loadBootstrap]);
+  }, []);
 
-  const prevPathRef = useRef(pathname);
+  // Clear optimistic overlay when shared bootstrap catches up.
   useEffect(() => {
-    const prev = prevPathRef.current;
-    prevPathRef.current = pathname;
-    if (prev?.startsWith("/settings") && !pathname?.startsWith("/settings")) {
-      loadBootstrap();
-    }
-  }, [pathname, loadBootstrap]);
+    if (bootstrap) setLiveCompletion(null);
+  }, [bootstrap]);
 
   useEffect(() => {
     document.body.style.overflow = open ? "hidden" : "";
@@ -258,7 +195,14 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
       <aside className={`sidebar ${open ? "open" : ""}`} aria-label="Workspace navigation">
         <div className="sidebar-top">
           <div className="row sidebar-header">
-            <Link className="brand" href="/" onClick={() => setOpen(false)} aria-label="Career Copilot home">
+            <Link
+              className="brand"
+              href={routes.dashboard}
+              onClick={() => setOpen(false)}
+              onMouseEnter={() => prefetchRoute(routes.dashboard)}
+              onFocus={() => prefetchRoute(routes.dashboard)}
+              aria-label="Career Copilot dashboard"
+            >
               <span className="sidebar-brand-full">Career Copilot</span>
               <span className="sidebar-brand-short" aria-hidden="true">
                 CC
@@ -289,6 +233,8 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
                   key={item.href}
                   href={item.href}
                   onClick={() => setOpen(false)}
+                  onMouseEnter={() => prefetchRoute(item.href)}
+                  onFocus={() => prefetchRoute(item.href)}
                   className={`sidebar-link ${active ? "active" : ""}`}
                   aria-current={active ? "page" : undefined}
                   title={item.label}
@@ -349,11 +295,16 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
                 </div>
 
                 <div className="sidebar-account-menu-actions" role="none">
+                  <div className="sidebar-account-menu-item theme-menu-item" role="none">
+                    <ThemeToggle />
+                  </div>
                   <Link
                     href="/settings/profile"
                     className="sidebar-account-menu-item"
                     role="menuitem"
                     onClick={closeMenus}
+                    onMouseEnter={() => prefetchRoute("/settings/profile")}
+                    onFocus={() => prefetchRoute("/settings/profile")}
                   >
                     <UserRound size={16} aria-hidden />
                     View profile
@@ -363,6 +314,8 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
                     className="sidebar-account-menu-item"
                     role="menuitem"
                     onClick={closeMenus}
+                    onMouseEnter={() => prefetchRoute("/settings/account")}
+                    onFocus={() => prefetchRoute("/settings/account")}
                   >
                     <Settings size={16} aria-hidden />
                     Settings
@@ -443,7 +396,6 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
 
           <div className="app-header-actions">
             {demoMode ? <span className="demo-banner">Demo · no account data</span> : null}
-
           </div>
         </header>
 

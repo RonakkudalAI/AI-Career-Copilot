@@ -33,7 +33,7 @@ def parse_bearer_header(value: str | None) -> str:
     return token.strip()
 
 
-def create_access_token(user_id: UUID, email: str, settings: Settings) -> str:
+def create_access_token(user_id: UUID, email: str, settings: Settings, token_version: int = 0) -> str:
     now = datetime.now(UTC)
     ttl_seconds = max(60, int(getattr(settings, "jwt_ttl_seconds", 60 * 60 * 24 * 7)))
     payload = {
@@ -41,6 +41,7 @@ def create_access_token(user_id: UUID, email: str, settings: Settings) -> str:
         "email": email,
         "iat": int(now.timestamp()),
         "exp": int((now + timedelta(seconds=ttl_seconds)).timestamp()),
+        "ver": int(token_version),
     }
     return jwt.encode(payload, settings.auth_secret, algorithm=JWT_ALGORITHM)
 
@@ -61,7 +62,7 @@ def _user_from_token(token: str, settings: Settings) -> CurrentUser:
     rows = (
         database_client(settings)
         .table("users")
-        .select("id,email,full_name")
+        .select("id,email,full_name,token_version")
         .eq("id", str(user_id))
         .limit(1)
         .execute()
@@ -70,6 +71,8 @@ def _user_from_token(token: str, settings: Settings) -> CurrentUser:
     if not rows:
         raise ApiError(401, "invalid_user_identity", "The authentication identity is invalid.")
     row = rows[0]
+    if int(payload.get("ver") or 0) != int(row.get("token_version") or 0):
+        raise ApiError(401, "session_revoked", "This session is no longer valid. Sign in again.")
     return CurrentUser(
         id=user_id,
         email=row.get("email"),

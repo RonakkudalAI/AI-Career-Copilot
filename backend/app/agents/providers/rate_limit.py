@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import time
 from typing import Any
 
@@ -69,12 +70,12 @@ def parse_retry_after_seconds(value: str | None, *, default: float = 1.0) -> flo
 
 
 _provider_limiters: dict[str, AsyncRpmLimiter] = {}
-_provider_limiters_lock = asyncio.Lock()
+_provider_limiters_lock = threading.Lock()
 
 
 async def provider_rpm_limiter(name: str, rpm: float) -> AsyncRpmLimiter:
     """Return a shared per-provider RPM limiter, reconfigured when the budget changes."""
-    async with _provider_limiters_lock:
+    with _provider_limiters_lock:
         limiter = _provider_limiters.get(name)
         if limiter is None:
             limiter = AsyncRpmLimiter(rpm=rpm, name=name)

@@ -3,8 +3,11 @@ import { Link } from "@/shared/ui/router-link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 
+import { AgentAudioVisualizerAura } from "@/components/agents-ui/agent-audio-visualizer-aura";
+
 import { apiRequest, isAbortError } from "@/shared/api/client";
 import { Button, Card, PageHeader, Textarea } from "@/shared/ui/primitives";
+import { useTheme } from "@/shared/theme";
 import {
   DEFAULT_ANSWER_SILENCE_MS,
   DEFAULT_AUTO_ADVANCE_AFTER_FEEDBACK_MS,
@@ -12,7 +15,6 @@ import {
   DEFAULT_TTS_MAX_WAIT_MS,
   analyzeLiveSpeaking,
   buildProceedPrompt,
-  buildShortInterviewerLine,
   extractSpeechTranscript,
   isHoldIntent,
   isProceedIntent,
@@ -25,7 +27,6 @@ import {
   sessionMediaFlags,
   shouldAutoSubmitOnSilence,
   type InterviewTurnPhase,
-  type LiveSpeakingMetrics,
   type SpeechResultListLike,
 } from "@/features/interview/interview-voice";
 import {
@@ -42,7 +43,6 @@ import {
   type FaceDetectorLike,
   type GazeDetectorKind,
   type GazeSample,
-  type GazeSessionSummary,
 } from "@/features/interview/interview-gaze";
 import { ScoreRing } from "@/features/dashboard/components/interview-progress-charts";
 
@@ -113,6 +113,19 @@ type AnswerEvaluation = {
   gaze_metrics?: GazeMetricsPayload | null;
   provider?: string;
 };
+
+function buildConversationalCoachLine(evaluation: AnswerEvaluation | null): string {
+  const feedback = String(evaluation?.interviewer_feedback || "").trim();
+  const improvement = (evaluation?.improvements || []).map(String).find((item) => item.trim())?.trim();
+  const strongerApproach = String(evaluation?.better_approach || "").trim();
+  const strength = (evaluation?.strengths || []).map(String).find((item) => item.trim())?.trim();
+
+  if (feedback) return feedback.slice(0, 300);
+  if (improvement) return `That answer needs one adjustment: ${improvement}`.slice(0, 300);
+  if (strongerApproach) return `A stronger way to answer would be: ${strongerApproach}`.slice(0, 300);
+  if (strength) return `That was a clear point: ${strength}`.slice(0, 300);
+  return "Thanks, I’ve noted that answer. Let’s continue with the next question.";
+}
 
 type PracticeReadiness = {
   band?: string;
@@ -189,6 +202,10 @@ type SpeechRecognitionLike = {
   onresult: ((event: SpeechRecognitionResultEvent) => void) | null;
   onend: (() => void) | null;
   onerror: ((event: SpeechRecognitionErrorEvent) => void) | null;
+  onstart?: (() => void) | null;
+  onaudiostart?: (() => void) | null;
+  onspeechstart?: (() => void) | null;
+  maxAlternatives?: number;
   start: () => void;
   stop: () => void;
   abort?: () => void;
@@ -305,10 +322,7 @@ export function InterviewHome() {
               {loading ? "Refreshing…" : "Refresh"}
             </Button>
             <Link className="button button-secondary" href="/mock-interview/preparation">
-              Prepare first
-            </Link>
-            <Link className="button button-primary" href="/mock-interview/setup">
-              Create session
+              Prepare interview
             </Link>
           </>
         }
@@ -374,7 +388,15 @@ export function InterviewHome() {
       {!loading && !error && data.length === 0 && (
         <Card className="empty-state">
           <h2>No sessions yet</h2>
-          <p>Create a practice session to begin.</p>
+          <p>Prepare with your confirmed resume and job description, then start your first practice session.</p>
+          <div className="cluster">
+            <Link className="button button-primary" href="/mock-interview/preparation">
+              Prepare an interview
+            </Link>
+            <Link className="button button-secondary" href="/mock-interview/setup">
+              Start without preparation
+            </Link>
+          </div>
         </Card>
       )}
     </div>
@@ -404,7 +426,6 @@ export function InterviewSetup() {
   const [storedResumes, setStoredResumes] = useState<SetupResumeOption[]>([]);
   const [resumesLoading, setResumesLoading] = useState(true);
   const [targetRole, setTargetRole] = useState(searchParams.get("target_role") || "");
-  const [targetCompany, setTargetCompany] = useState("");
   const [jobDescriptionText, setJobDescriptionText] = useState("");
   const [difficulty, setDifficulty] = useState("balanced");
   const [questionCount, setQuestionCount] = useState(5);
@@ -462,7 +483,7 @@ export function InterviewSetup() {
           job_description_id: jobDescriptionId || null,
           job_description_text: jobDescriptionText.trim() || null,
           target_role: targetRole.trim() || null,
-          target_company: targetCompany.trim() || null,
+          target_company: null,
           difficulty: difficulty || "balanced",
           duration_minutes: Math.max(10, questionCount * 4),
           question_count: questionCount,
@@ -481,32 +502,20 @@ export function InterviewSetup() {
   }
 
   return (
-    <>
+    <div className="feature-page">
       <PageHeader
         eyebrow="Interview setup"
-        title="Create a practice session"
-        description="Pick a mode, reuse a resume already on your profile when helpful, and paste a job description if you have one. Questions use only your inputs (no invented career history)."
+        title="Start a focused practice session"
+        description="Choose your resume and role. Everything else is optional, and the interviewer uses only the context you provide."
       />
-      <Card className="stack">
+      <Card className="stack interview-setup-card">
         {linkedResumeVersionId && jobDescriptionId ? (
           <p role="status" className="muted" style={{ margin: 0 }}>
             Linked to confirmed resume and job description from preparation. You can still paste extra JD text below.
           </p>
         ) : null}
         <label className="field-label">
-          Interview mode
-          <select className="field" value={mode} onChange={(e) => setMode(e.target.value)}>
-            <option value="mixed">Mixed (recommended)</option>
-            <option value="behavioural">Behavioural</option>
-            <option value="technical">Technical</option>
-            <option value="hr">HR / screening</option>
-            <option value="role">Role-focused</option>
-            <option value="resume">Resume-based</option>
-            <option value="resume_and_jd">Resume + job description</option>
-          </select>
-        </label>
-        <label className="field-label">
-          Saved resume {needsResume ? "(required for this mode)" : "(optional)"}
+          Resume context <span className="field-hint">optional, but recommended</span>
           {resumesLoading ? (
             <p className="muted" style={{ margin: "8px 0 0" }}>
               Loading saved resumes…
@@ -549,24 +558,29 @@ export function InterviewSetup() {
             maxLength={200}
           />
         </label>
+        <details className="interview-setup-advanced">
+          <summary>Optional context and session preferences</summary>
+          <div className="stack" style={{ gap: 16, paddingTop: 16 }}>
         <label className="field-label">
-          Target company (optional)
-          <input
-            className="field"
-            value={targetCompany}
-            onChange={(e) => setTargetCompany(e.target.value)}
-            placeholder="e.g. Acme Corp"
-            maxLength={200}
-          />
-        </label>
-        <label className="field-label">
-          Paste job description (optional)
+          Paste a job description <span className="field-hint">optional</span>
           <Textarea
             value={jobDescriptionText}
             onChange={(e: { target: { value: string } }) => setJobDescriptionText(e.target.value)}
             placeholder="Paste the JD text here. Questions will only use requirements written in this text — nothing invented."
           />
         </label>
+            <label className="field-label">
+              Interview focus
+              <select className="field" value={mode} onChange={(e) => setMode(e.target.value)}>
+                <option value="mixed">Balanced practice</option>
+                <option value="behavioural">Behavioural</option>
+                <option value="technical">Technical</option>
+                <option value="hr">HR / screening</option>
+                <option value="role">Role-focused</option>
+                <option value="resume">Resume-based</option>
+                <option value="resume_and_jd">Resume + job description</option>
+              </select>
+            </label>
         <div className="cluster" style={{ gap: 16, flexWrap: "wrap" }}>
           <label className="field-label" style={{ flex: "1 1 160px" }}>
             Difficulty
@@ -593,27 +607,34 @@ export function InterviewSetup() {
         </div>
         <div className="stack" style={{ gap: 8 }}>
           <p className="muted" style={{ margin: 0 }}>
-            Camera is analyzed live for presence / eye-contact coaching (not recorded). Speech recognition uses the browser mic separately so answers are not blocked. Interviewer voice uses Fish Audio when configured, with browser speech as fallback.
+            Camera presence coaching is on by default and is not recorded. Speech recognition uses the browser microphone separately from the camera.
           </p>
           <label className="cluster" style={{ gap: 8 }}>
             <input type="checkbox" checked={cameraEnabled} onChange={(e) => setCameraEnabled(e.target.checked)} />
-            Enable camera preview
+            Use camera presence coaching
           </label>
           <label className="cluster" style={{ gap: 8 }}>
             <input type="checkbox" checked={microphoneEnabled} onChange={(e) => setMicrophoneEnabled(e.target.checked)} />
-            Enable microphone and voice answers
+            Use voice answers
           </label>
+        </div>
+          </div>
+        </details>
+        <div className="interview-setup-note">
+          <strong>What happens next</strong>
+          <span>The agent asks one question, waits for your complete answer, evaluates it, and then gives the next prompt.</span>
         </div>
         {error && <p className="field-error">{error}</p>}
         <Button disabled={busy} onClick={() => void create()}>
           {busy ? "Creating session…" : "Create session & start"}
         </Button>
       </Card>
-    </>
+    </div>
   );
 }
 
 export function InterviewSession() {
+  const { resolvedTheme } = useTheme();
   const navigate = useNavigate();
   const params = useParams();
   const sessionId = String(params?.sessionId || "");
@@ -636,12 +657,10 @@ export function InterviewSession() {
   const [speechSupported, setSpeechSupported] = useState(true);
   const [lastFeedback, setLastFeedback] = useState<AnswerEvaluation | null>(null);
   const [lastAnswerSnapshot, setLastAnswerSnapshot] = useState("");
-  const [liveMetrics, setLiveMetrics] = useState<LiveSpeakingMetrics | null>(null);
-  const [gazeSummary, setGazeSummary] = useState<GazeSessionSummary | null>(null);
   const [gazeCoach, setGazeCoach] = useState<string | null>(null);
   const [gazeSupported, setGazeSupported] = useState(true);
-  const [gazeDetectorKind, setGazeDetectorKind] = useState<GazeDetectorKind>("unavailable");
-  const [ttsProviderLabel, setTtsProviderLabel] = useState("browser");
+  const [, setGazeDetectorKind] = useState<GazeDetectorKind>("unavailable");
+  const [, setTtsProviderLabel] = useState("browser");
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -662,6 +681,8 @@ export function InterviewSession() {
   const gazeDetectorRef = useRef<FaceDetectorLike | null>(null);
   const gazeCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const recentGazeStatesRef = useRef<GazeSample["state"][]>([]);
+  const gazeAwaySinceRef = useRef<number | null>(null);
+  const gazeStopTriggeredRef = useRef(false);
   const gazeDetectorKindRef = useRef<GazeDetectorKind>("unavailable");
   /** Abort controller for the in-flight interviewer TTS turn. */
   const ttsAbortRef = useRef<AbortController | null>(null);
@@ -765,11 +786,27 @@ export function InterviewSession() {
     recognition.lang = navigator.language?.startsWith("en") ? navigator.language : "en-US";
     recognition.interimResults = true;
     recognition.continuous = true;
+    recognition.maxAlternatives = 1;
     lastSpeechAtRef.current = Date.now();
     listenStartedAtRef.current = Date.now();
     keepListeningRef.current = true;
 
     const bindHandlers = (instance: SpeechRecognitionLike) => {
+      instance.onstart = () => {
+        if (listenGenerationRef.current !== generation) return;
+        setPhase("listening");
+        setMediaMessage("Listening… speak your answer. Your words will appear as you talk.");
+      };
+      instance.onaudiostart = () => {
+        if (listenGenerationRef.current === generation) {
+          setMediaMessage("Microphone is active. Speak your answer now.");
+        }
+      };
+      instance.onspeechstart = () => {
+        if (listenGenerationRef.current === generation) {
+          setMediaMessage("Hearing you… keep speaking until your answer is complete.");
+        }
+      };
       instance.onresult = (event) => {
         if (listenGenerationRef.current !== generation) return;
         lastSpeechAtRef.current = Date.now();
@@ -780,9 +817,6 @@ export function InterviewSession() {
         setAnswer((prev) => {
           const merged = mergeSpokenAnswer(prev, finalChunk, "");
           answerRef.current = merged.committed;
-          const elapsed = Date.now() - listenStartedAtRef.current;
-          const display = mergeSpokenAnswer(merged.committed, "", interimText).display;
-          setLiveMetrics(analyzeLiveSpeaking(display, elapsed));
           return merged.committed;
         });
         setInterim(interimText);
@@ -792,7 +826,13 @@ export function InterviewSession() {
       instance.onerror = (event) => {
         if (listenGenerationRef.current !== generation) return;
         const code = String(event?.error || "");
-        // "no-speech" / "aborted" are normal; keep trying while in listen mode.
+        // "no-speech" / "aborted" are normal; onend will restart while the
+        // turn is active. Keep the user informed instead of failing silently.
+        if (code === "no-speech") {
+          setMediaMessage("I did not hear speech yet. Keep speaking, or type your answer.");
+          return;
+        }
+        if (code === "aborted") return;
         if (code === "not-allowed" || code === "service-not-allowed") {
           keepListeningRef.current = false;
           setMediaMessage("Microphone permission was denied. Enable it in the browser, or type your answer.");
@@ -829,6 +869,7 @@ export function InterviewSession() {
               again.lang = recognition.lang;
               again.interimResults = true;
               again.continuous = true;
+              again.maxAlternatives = 1;
               bindHandlers(again);
               recognitionRef.current = again;
               again.start();
@@ -848,7 +889,6 @@ export function InterviewSession() {
     recognitionRef.current = recognition;
     setPhase("listening");
     setInterim("");
-    setLiveMetrics(analyzeLiveSpeaking("", 0));
     setMediaMessage("Listening… speak your answer. It will appear below.");
     try {
       recognition.start();
@@ -857,7 +897,19 @@ export function InterviewSession() {
       window.setTimeout(() => {
         if (listenGenerationRef.current !== generation || !keepListeningRef.current) return;
         try {
-          recognition.start();
+          try {
+            recognition.abort?.();
+          } catch {
+            /* ignore a failed first start */
+          }
+          const retry = new Constructor();
+          retry.lang = recognition.lang;
+          retry.interimResults = true;
+          retry.continuous = true;
+          retry.maxAlternatives = 1;
+          bindHandlers(retry);
+          recognitionRef.current = retry;
+          retry.start();
         } catch {
           keepListeningRef.current = false;
           recognitionRef.current = null;
@@ -896,7 +948,6 @@ export function InterviewSession() {
 
       setPhase(options?.kind === "feedback" || options?.kind === "bridge" ? "feedback" : "asking");
       setInterim("");
-      setLiveMetrics(null);
       setMediaMessage(
         options?.kind === "feedback" || options?.kind === "bridge"
           ? "Interviewer speaking… please wait until they finish."
@@ -1093,7 +1144,7 @@ export function InterviewSession() {
       const next = nextActiveIndex(activeIndexRef.current, questionsRef.current.length);
       const isLast = next === null;
       const autoContinue = autoVoiceRef.current;
-      const shortLine = buildShortInterviewerLine(evaluation || {});
+      const shortLine = buildConversationalCoachLine(evaluation);
       const bridge = buildProceedPrompt({ isLastQuestion: isLast, autoContinue });
 
       setPhase("feedback");
@@ -1155,7 +1206,6 @@ export function InterviewSession() {
       const elapsedMs =
         listenStartedAtRef.current > 0 ? Date.now() - listenStartedAtRef.current : 0;
       const speech = analyzeLiveSpeaking(text, elapsedMs);
-      setLiveMetrics(speech);
       const detectorKind: GazeDetectorKind =
         gazeDetectorKindRef.current !== "unavailable"
           ? gazeDetectorKindRef.current
@@ -1168,7 +1218,6 @@ export function InterviewSession() {
         sampleIntervalMs: 400,
         detector: detectorKind,
       });
-      setGazeSummary(gaze);
       const answerPayload = {
         question_id: q.id,
         typed_response: text,
@@ -1388,15 +1437,31 @@ export function InterviewSession() {
           state: result.state === "unavailable" ? "no_face" : result.state,
           center_score: result.center_score,
         };
+
+        if (entry.state === "looking") {
+          gazeAwaySinceRef.current = null;
+        } else if (gazeAwaySinceRef.current === null) {
+          gazeAwaySinceRef.current = entry.at;
+        }
+
+        if (
+          gazeAwaySinceRef.current !== null &&
+          entry.at - gazeAwaySinceRef.current >= 10_000 &&
+          !gazeStopTriggeredRef.current
+        ) {
+          gazeStopTriggeredRef.current = true;
+          keepListeningRef.current = false;
+          stopRecognition({ keepPhase: true });
+          abortInterviewerSpeech();
+          setPhase("complete");
+          setMediaMessage("Camera check paused the interview. Preparing your evaluation report…");
+          void completeSession();
+          return;
+        }
+
         gazeSamplesRef.current = [...gazeSamplesRef.current, entry].slice(-600);
         recentGazeStatesRef.current = [...recentGazeStatesRef.current, entry.state].slice(-12);
         setGazeCoach(liveGazeCoachMessage(recentGazeStatesRef.current));
-        setGazeSummary(
-          summarizeGazeSamples(gazeSamplesRef.current, {
-            sampleIntervalMs: 400,
-            detector: gazeDetectorKindRef.current,
-          }),
-        );
       } catch {
         // Single-frame failures are fine — keep sampling.
       }
@@ -1410,7 +1475,7 @@ export function InterviewSession() {
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [media.camera, phase, current?.id]);
+  }, [abortInterviewerSpeech, completeSession, media.camera, phase, current?.id, stopRecognition]);
 
   // Auto ask → listen loop when the active question changes (skip while feedback is open)
   useEffect(() => {
@@ -1421,11 +1486,10 @@ export function InterviewSession() {
     setAnswer("");
     answerRef.current = "";
     setInterim("");
-    setLiveMetrics(null);
-    setGazeSummary(null);
     setGazeCoach(null);
     gazeSamplesRef.current = [];
     recentGazeStatesRef.current = [];
+    gazeAwaySinceRef.current = null;
     setMessage("");
     setLastFeedback(null);
     setLastAnswerSnapshot("");
@@ -1476,14 +1540,8 @@ export function InterviewSession() {
     if (phase !== "listening") return;
     const id = window.setInterval(() => {
       const msSince = Date.now() - lastSpeechAtRef.current;
-      const elapsed = Date.now() - (listenStartedAtRef.current || Date.now());
-      const display = interim
-        ? answerRef.current
-          ? `${answerRef.current} ${interim}`
-          : interim
-        : answerRef.current;
-      setLiveMetrics(analyzeLiveSpeaking(display, elapsed));
       if (
+        !interim.trim() &&
         shouldAutoSubmitOnSilence({
           phase: phaseRef.current,
           committedAnswer: answerRef.current,
@@ -1574,7 +1632,7 @@ export function InterviewSession() {
       : phase === "listening"
         ? "Your turn — speak now"
         : phase === "saving"
-          ? "Saving & evaluating…"
+          ? "Agent is thinking and evaluating your answer…"
           : phase === "feedback"
             ? "Short interviewer feedback"
             : phase === "awaiting_proceed"
@@ -1584,9 +1642,17 @@ export function InterviewSession() {
                 : phase === "complete"
                   ? "Session complete"
                   : "Ready";
+  const auraState =
+    phase === "asking" || phase === "feedback"
+      ? "speaking"
+      : phase === "listening"
+        ? "listening"
+        : phase === "saving" || phase === "between"
+          ? "thinking"
+          : "idle";
 
   return (
-    <>
+    <div className="feature-page interview-session-page">
       <PageHeader
         eyebrow="Interview session"
         title={session?.target_role ? `${session.target_role} practice` : "Practice workspace"}
@@ -1607,8 +1673,32 @@ export function InterviewSession() {
           {questionSource}
         </p>
       ) : null}
-      <Card className="stack">
-        <div className="cluster" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
+      <div className="interview-room-layout">
+        <aside className="interview-question-rail" aria-label="Interview progress">
+          <div className="interview-rail-kicker">Session map</div>
+          <div className="interview-rail-count">
+            <strong>{questions.length ? String(activeIndex + 1).padStart(2, "0") : "--"}</strong>
+            <span>/ {questions.length ? String(questions.length).padStart(2, "0") : "--"}</span>
+          </div>
+          <ol className="interview-question-list">
+            {questions.map((question, index) => (
+              <li key={question.id || index} className={index === activeIndex ? "is-current" : index < activeIndex ? "is-done" : ""}>
+                <span className="interview-question-index">{String(index + 1).padStart(2, "0")}</span>
+                <span className="interview-question-kind">{question.question_type || "practice"}</span>
+              </li>
+            ))}
+          </ol>
+          <p className="interview-rail-note">One answer at a time. The agent waits for the complete thought before moving on.</p>
+        </aside>
+        <main className="interview-room-main">
+          <div className="interview-room-statusbar">
+            <span className="interview-room-live-dot" aria-hidden="true" />
+            <span>{phaseLabel}</span>
+            <span className="interview-room-status-separator" aria-hidden="true">/</span>
+            <span>{media.camera ? "Presence check on" : "Camera off"}</span>
+          </div>
+      <Card className="stack interview-agent-card">
+        <div className="interview-agent-header">
           <div className="stack" style={{ gap: 6 }}>
             <h2 style={{ margin: 0 }}>Live practice</h2>
             <p className="muted" style={{ margin: 0 }}>
@@ -1616,16 +1706,7 @@ export function InterviewSession() {
             </p>
             <p style={{ margin: 0, fontWeight: 600 }}>{phaseLabel}</p>
             <p className="muted" style={{ margin: 0, fontSize: "var(--text-sm)" }}>
-              Interviewer voice: <strong>{ttsProviderLabel}</strong>
-              {media.camera
-                ? ` · Camera analysis: ${
-                    gazeDetectorKind === "face_detector"
-                      ? "FaceDetector"
-                      : gazeDetectorKind === "canvas_presence"
-                        ? "presence tracking"
-                        : "starting…"
-                  }`
-                : ""}
+              Voice interview · {media.camera ? "Presence coaching is on" : "Camera is off"}
             </p>
             {!speechSupported ? (
               <p className="field-error" style={{ margin: 0 }}>
@@ -1633,13 +1714,33 @@ export function InterviewSession() {
               </p>
             ) : null}
           </div>
+          <div className="interview-aura-stage" aria-label={`Interviewer ${auraState}`}>
+            <AgentAudioVisualizerAura
+              size="md"
+              color="#008cff"
+              colorShift={0.26}
+              state={auraState}
+              themeMode={resolvedTheme}
+              className="interview-agent-aura"
+            />
+            <span className="interview-aura-label">
+              {auraState === "speaking"
+                ? "Interviewer speaking"
+                : auraState === "listening"
+                  ? "Your turn"
+                  : auraState === "thinking"
+                    ? "Reviewing"
+                    : "Ready"}
+            </span>
+          </div>
           {media.camera ? (
-            <div style={{ position: "relative" }}>
+            <div className="interview-camera-frame">
               <video
                 ref={videoRef}
                 autoPlay
                 muted
                 playsInline
+                className="interview-camera-video"
                 style={{
                   width: 220,
                   maxWidth: "100%",
@@ -1648,12 +1749,14 @@ export function InterviewSession() {
                   transform: "scaleX(-1)",
                   border: gazeCoach
                     ? "2px solid var(--warning, #b45309)"
-                    : "2px solid color-mix(in srgb, var(--success, #15803d) 55%, transparent)",
+                  : "2px solid color-mix(in srgb, var(--success, #15803d) 55%, transparent)",
                 }}
               />
+              <span className="interview-video-label">Your camera</span>
               {gazeCoach ? (
                 <p
                   role="status"
+                  className="interview-gaze-coach"
                   style={{
                     position: "absolute",
                     left: 8,
@@ -1688,7 +1791,7 @@ export function InterviewSession() {
             ? "Natural back-and-forth: the interviewer finishes each full line before listening. After your answer you get a short coach note, then the next question."
             : "After each answer you’ll hear a short coach note, then “Shall we move on?” — say proceed / yes / next, or press Continue."}
         </p>
-        <div className="cluster">
+        <div className="cluster interview-agent-actions">
           <Button variant="secondary" onClick={askQuestionAloud} disabled={!current || phase === "asking" || phase === "saving"}>
             {phase === "asking" ? "Asking question…" : "Ask question aloud"}
           </Button>
@@ -1714,7 +1817,7 @@ export function InterviewSession() {
           </Button>
         </Card>
       ) : (
-        <Card className="stack">
+        <Card className="stack interview-question-card">
           <p className="mono" style={{ margin: 0 }}>
             Question {activeIndex + 1} of {questions.length}
             {current?.question_type ? ` · ${current.question_type}` : ""}
@@ -1737,42 +1840,9 @@ export function InterviewSession() {
               {interim
                 ? `Hearing now: “${interim}”`
                 : answer
-                  ? "Listening for more… pause ~3s when finished to auto-save."
+                  ? "Listening for more… pause 5 seconds when finished, or submit when you are done."
                   : "Listening… start speaking. Your words will show above."}
             </p>
-          ) : null}
-          {phase === "listening" && liveMetrics ? (
-            <div className="panel-blue" style={{ padding: 14, borderRadius: 12 }} aria-live="polite">
-              <strong>Live speaking coach</strong>
-              <div className="dashboard-metrics" style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))", marginTop: 10 }}>
-                <article className="metric-card">
-                  <p className="metric-card-label">Pace</p>
-                  <div className="metric-value" style={{ fontSize: "1.25rem" }}>
-                    {liveMetrics.words_per_minute != null ? `${liveMetrics.words_per_minute}` : "—"}
-                  </div>
-                  <p className="metric-card-note">{liveMetrics.pace_band}</p>
-                </article>
-                <article className="metric-card">
-                  <p className="metric-card-label">Fillers</p>
-                  <div className="metric-value" style={{ fontSize: "1.25rem" }}>
-                    {liveMetrics.filler_count}
-                  </div>
-                  <p className="metric-card-note">
-                    {liveMetrics.filler_unique.length ? liveMetrics.filler_unique.join(", ") : "none yet"}
-                  </p>
-                </article>
-                <article className="metric-card">
-                  <p className="metric-card-label">Words</p>
-                  <div className="metric-value" style={{ fontSize: "1.25rem" }}>
-                    {liveMetrics.word_count}
-                  </div>
-                  <p className="metric-card-note">{liveMetrics.duration_seconds}s</p>
-                </article>
-              </div>
-              <p className="muted" style={{ margin: "10px 0 0", fontSize: "var(--text-sm)" }}>
-                {liveMetrics.pace_notes} {liveMetrics.filler_notes}
-              </p>
-            </div>
           ) : null}
           {phase === "listening" && media.camera ? (
             <div
@@ -1784,56 +1854,30 @@ export function InterviewSession() {
               }}
               aria-live="polite"
             >
-              <strong>Camera presence</strong>
+              <strong>Camera check</strong>
               {!gazeSupported ? (
                 <p className="muted" style={{ margin: "6px 0 0", fontSize: "var(--text-sm)" }}>
                   Camera is not available. Your spoken answers are still scored.
                 </p>
               ) : (
                 <>
-                  <div
-                    className="dashboard-metrics"
-                    style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))", marginTop: 10 }}
-                  >
-                    <article className="metric-card">
-                      <p className="metric-card-label">Eye contact</p>
-                      <div className="metric-value" style={{ fontSize: "1.25rem" }}>
-                        {gazeSummary?.eye_contact_score != null ? `${gazeSummary.eye_contact_score}%` : "—"}
-                      </div>
-                      <p className="metric-card-note">{gazeSummary?.band || "measuring"}</p>
-                    </article>
-                    <article className="metric-card">
-                      <p className="metric-card-label">Looking</p>
-                      <div className="metric-value" style={{ fontSize: "1.25rem" }}>
-                        {gazeSummary?.looking_seconds ?? 0}s
-                      </div>
-                      <p className="metric-card-note">at camera</p>
-                    </article>
-                    <article className="metric-card">
-                      <p className="metric-card-label">Looking away</p>
-                      <div className="metric-value" style={{ fontSize: "1.25rem" }}>
-                        {gazeSummary?.away_seconds ?? 0}s
-                      </div>
-                      <p className="metric-card-note">avoid this</p>
-                    </article>
-                  </div>
                   {gazeCoach ? (
                     <p style={{ margin: "10px 0 0", fontWeight: 600, color: "var(--warning, #b45309)" }}>
                       {gazeCoach}
                     </p>
                   ) : (
                     <p className="muted" style={{ margin: "10px 0 0", fontSize: "var(--text-sm)" }}>
-                      {gazeSummary?.notes ||
-                        (gazeSummary?.sample_count
-                          ? "Keep your face centered and look into the camera."
-                          : "Analyzing your presence… sit in frame and look into the camera.")}
+                      {"Camera check is active. Keep your face centered while you answer."}
                     </p>
                   )}
+                  <p className="muted" style={{ margin: "8px 0 0", fontSize: "var(--text-sm)" }}>
+                    Repeated off-camera or no-face samples are flagged for the debrief; the check does not infer intent.
+                  </p>
                 </>
               )}
             </div>
           ) : null}
-          <div className="cluster">
+          <div className="cluster interview-question-actions">
             <Button
               disabled={
                 saving ||
@@ -1878,21 +1922,12 @@ export function InterviewSession() {
         </Card>
       )}
       {(phase === "feedback" || phase === "awaiting_proceed" || phase === "between") && lastFeedback ? (
-        <Card className="stack">
+        <Card className="stack interview-feedback-card">
           <div className="cluster" style={{ justifyContent: "space-between" }}>
-            <h2 style={{ margin: 0 }}>Interviewer (live)</h2>
-            <span
-              className="status-chip"
-              data-tone={
-                (lastFeedback.score ?? 0) >= 70 ? "success" : (lastFeedback.score ?? 0) >= 45 ? "info" : "warning"
-              }
-            >
-              {(lastFeedback.verdict || "reviewed").replaceAll("_", " ")}
-              {lastFeedback.score != null ? ` · ${lastFeedback.score}/100` : ""}
-            </span>
+            <h2 style={{ margin: 0 }}>Interviewer note</h2>
           </div>
           <p style={{ margin: 0, color: "var(--ink)", fontWeight: 600, fontSize: "1.05rem" }}>
-            {buildShortInterviewerLine(lastFeedback)}
+            {buildConversationalCoachLine(lastFeedback)}
           </p>
           {lastAnswerSnapshot ? (
             <details>
@@ -1908,17 +1943,6 @@ export function InterviewSession() {
             <p style={{ margin: 0 }}>
               <strong>Coach tip: </strong>
               {lastFeedback.improvements[0]}
-            </p>
-          ) : null}
-          {lastFeedback.filler_analysis || lastFeedback.speaking_delivery || lastFeedback.gaze_metrics ? (
-            <p className="muted" style={{ margin: 0, fontSize: "var(--text-sm)" }}>
-              Fillers: {lastFeedback.filler_analysis?.total_count ?? lastFeedback.speaking_delivery?.filler_count ?? 0}
-              {lastFeedback.speaking_delivery?.words_per_minute != null
-                ? ` · Pace ~${lastFeedback.speaking_delivery.words_per_minute} wpm`
-                : ""}
-              {lastFeedback.gaze_metrics?.eye_contact_score != null
-                ? ` · Eye contact ~${lastFeedback.gaze_metrics.eye_contact_score}%`
-                : ""}
             </p>
           ) : null}
           <div className="cluster" style={{ alignItems: "center" }}>
@@ -1950,7 +1974,9 @@ export function InterviewSession() {
           </div>
         </Card>
       ) : null}
-    </>
+        </main>
+      </div>
+    </div>
   );
 }
 

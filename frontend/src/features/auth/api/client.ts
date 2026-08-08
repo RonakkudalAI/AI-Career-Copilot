@@ -7,7 +7,12 @@ import {
 } from "@/shared/config";
 import {
   completeGoogleRedirectSignIn,
+  emailPasswordAuthErrorMessage,
   googleAuthErrorMessage,
+  resendEmailVerification,
+  signInWithEmailPassword,
+  signUpWithEmailPassword,
+  signOutFromFirebase,
   signInWithGoogle,
 } from "@/features/auth/firebase";
 
@@ -72,14 +77,28 @@ export function createClient() {
     auth: {
       async signInWithPassword({ email, password }: { email: string; password: string }) {
         try {
-          const payload = await request("/auth/sign-in", { email, password });
-          saveToken(payload.access_token);
-          return {
-            data: { session: { access_token: payload.access_token }, user: payload.user },
-            error: null as AuthError,
-          };
+          const result = await signInWithEmailPassword(email, password);
+          const session = await signInWithFirebaseIdToken(result.idToken);
+          if (session.error) return session;
+          return session;
         } catch (error) {
-          return { data: { session: null, user: null }, error: { message: (error as Error).message } };
+          // Preserve access for accounts created before Firebase email/password
+          // was enabled. Firebase remains the primary identity provider; this
+          // compatibility branch only applies to credential failures where the
+          // legacy backend may still own the account.
+          if (["auth/user-not-found", "auth/invalid-credential", "auth/wrong-password"].includes((error as { code?: string }).code || "")) {
+            try {
+              const payload = await request("/auth/sign-in", { email, password });
+              saveToken(payload.access_token);
+              return {
+                data: { session: { access_token: payload.access_token }, user: payload.user },
+                error: null as AuthError,
+              };
+            } catch (legacyError) {
+              return { data: { session: null, user: null }, error: { message: (legacyError as Error).message } };
+            }
+          }
+          return { data: { session: null, user: null }, error: { message: emailPasswordAuthErrorMessage(error) } };
         }
       },
       async signUp({
@@ -92,33 +111,35 @@ export function createClient() {
         options?: { data?: Record<string, unknown>; emailRedirectTo?: string };
       }) {
         try {
-          const payload = await request("/auth/sign-up", {
-            email,
-            password,
-            full_name: options?.data?.full_name,
-          });
-          saveToken(payload.access_token);
+          await signUpWithEmailPassword(email, password, String(options?.data?.full_name || ""));
           return {
-            data: { session: { access_token: payload.access_token }, user: payload.user },
+            data: { session: null, user: null },
             error: null as AuthError,
           };
         } catch (error) {
-          return { data: { session: null, user: null }, error: { message: (error as Error).message } };
+          return { data: { session: null, user: null }, error: { message: emailPasswordAuthErrorMessage(error) } };
         }
       },
       async resend({ email }: { type: string; email: string; options?: unknown }) {
         try {
-          await request("/auth/resend", { email });
+          await resendEmailVerification(email);
           return { error: null as AuthError };
         } catch (error) {
           return { error: { message: (error as Error).message } };
         }
       },
-      async signInWithOAuth({ provider }: { provider: string; options?: { redirectTo?: string } }) {
+      async signInWithOAuth({ provider, options }: { provider: string; options?: { redirectTo?: string } }) {
         if (provider !== "google") {
           return { error: { message: "Only Google sign-in is configured for local development." } };
         }
         try {
+          // Firebase returns to the URL that initiated the redirect. Move the
+          // SPA to the callback route before starting it so the redirect path
+          // can exchange the returned Firebase identity for the app JWT.
+          if (options?.redirectTo) {
+            const target = new URL(options.redirectTo, window.location.origin);
+            window.history.replaceState({}, "", `${target.pathname}${target.search}`);
+          }
           const result = await signInWithGoogle();
           if (!result) return { data: { session: null, user: null }, error: null as AuthError };
           return signInWithFirebaseIdToken(result.idToken);
@@ -170,7 +191,10 @@ export function createClient() {
           password,
           ...(current_password ? { current_password } : {}),
         })
-          .then(() => ({ error: null as AuthError }))
+          .then((payload) => {
+            if (payload?.access_token) saveToken(String(payload.access_token));
+            return { error: null as AuthError };
+          })
           .catch((error) => ({ error: { message: (error as Error).message } }));
       },
       async resetPasswordForEmail(email: string, options?: unknown) {
@@ -182,6 +206,7 @@ export function createClient() {
       async signOut() {
         window.localStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
         document.cookie = `${SESSION_COOKIE_NAME}=; Max-Age=0; Path=/; SameSite=Lax`;
+        await signOutFromFirebase().catch(() => undefined);
         if (isDemoCookiePresent()) return { error: null as AuthError };
         await request("/auth/sign-out").catch(() => undefined);
         return { error: null as AuthError };

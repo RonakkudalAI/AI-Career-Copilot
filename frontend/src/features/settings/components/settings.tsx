@@ -636,7 +636,8 @@ export function ProfileSettings() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [preferencesSaving, setPreferencesSaving] = useState(false);
   const [recordBusy, setRecordBusy] = useState(false);
   const [resumes, setResumes] = useState<ResumeListItem[]>([]);
   const [selectedVersionId, setSelectedVersionId] = useState("");
@@ -889,7 +890,7 @@ export function ProfileSettings() {
   }
 
   async function saveProfile() {
-    setSaving(true);
+    setProfileSaving(true);
     setMessage("");
     setError("");
     try {
@@ -908,22 +909,32 @@ export function ProfileSettings() {
           return [key, typeof value === "string" ? value.trim() : value];
         }).filter(([, value]) => value !== undefined),
       );
-      await apiRequest<ProfileRecord>("/profile", {
+      const savedProfile = await apiRequest<ProfileRecord>("/profile", {
         method: "PATCH",
         body: JSON.stringify(editable),
       });
-      // Re-read from API/DB so the UI only shows persisted values.
-      await loadAll();
+      // The form is already the optimistic source of truth. Do not re-read all
+      // profile resources here: that adds five requests and can overwrite a
+      // newer local edit with an older response. The API response is used only
+      // for completion metadata shared with the rest of the app.
+      const details = savedProfile?.profile_completion_details as
+        | { missing?: Array<{ key: string; label: string; points?: number }> }
+        | undefined;
+      notifyProfileUpdated({
+        profile_completion: Number(savedProfile?.profile_completion ?? form.profile_completion ?? 0),
+        profile_completion_details: details || null,
+        profile_missing: extractMissing(details, null),
+      });
       setMessage("Profile saved to your account.");
     } catch (e) {
       setError((e as Error).message);
     } finally {
-      setSaving(false);
+      setProfileSaving(false);
     }
   }
 
   async function savePreferences() {
-    setSaving(true);
+    setPreferencesSaving(true);
     setMessage("");
     setError("");
     try {
@@ -949,12 +960,14 @@ export function ProfileSettings() {
         throw new Error("Currency must be a 3-letter code such as INR or USD.");
       }
       await apiRequest("/profile/preferences", { method: "PUT", body: JSON.stringify(payload) });
-      await loadAll();
+      // Keep the edited draft visible immediately. The PUT above is the single
+      // persistence request; a full profile reload here caused stale fields to
+      // replace edits made in the meantime.
       setMessage("Career preferences saved to your account.");
     } catch (e) {
       setError((e as Error).message);
     } finally {
-      setSaving(false);
+      setPreferencesSaving(false);
     }
   }
 
@@ -977,21 +990,22 @@ export function ProfileSettings() {
     setRecordBusy(true);
     try {
       if (editingSkillId) {
-        await apiRequest(`/profile/skills/${editingSkillId}`, {
+        const savedSkill = await apiRequest<ProfileRecord>(`/profile/skills/${editingSkillId}`, {
           method: "PATCH",
           body: JSON.stringify({ name: skillName.trim() }),
         });
+        setSkills((current) => current.map((item) => (String(item.id) === editingSkillId ? savedSkill : item)));
         setMessage("Skill updated.");
       } else {
-        await apiRequest("/profile/skills", {
+        const savedSkill = await apiRequest<ProfileRecord>("/profile/skills", {
           method: "POST",
           body: JSON.stringify({ name: skillName.trim(), source: "candidate" }),
         });
+        setSkills((current) => [...current, savedSkill]);
         setMessage("Skill saved to your account.");
       }
       setSkillName("");
       setEditingSkillId(null);
-      await loadAll();
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -1003,10 +1017,15 @@ export function ProfileSettings() {
     setError("");
     setMessage("");
     try {
-      const result = await apiRequest<{ created_count: number; suggested: string[] }>("/profile/skills/from-resume", {
+      const result = await apiRequest<{
+        created_count: number;
+        suggested: string[];
+        created?: ProfileRecord[];
+      }>("/profile/skills/from-resume", {
         method: "POST",
       });
-      await loadAll();
+      const importedSkills = result.created || [];
+      if (importedSkills.length) setSkills((current) => [...current, ...importedSkills]);
       setMessage(
         result.created_count
           ? `Imported ${result.created_count} skill(s) from your confirmed resume.`
@@ -1067,16 +1086,43 @@ export function ProfileSettings() {
   async function removeRecord(resource: string, id: string, label: string) {
     setError("");
     setMessage("");
+    setRecordBusy(true);
+
+    const removed =
+      resource === "skills"
+        ? skills.find((item) => String(item.id) === id)
+        : resource === "experiences"
+          ? experiences.find((item) => String(item.id) === id)
+          : resource === "education"
+            ? education.find((item) => String(item.id) === id)
+            : resource === "links"
+              ? links.find((item) => String(item.id) === id)
+              : undefined;
+
+    // Remove from the visible collection before waiting for the network. The
+    // API call remains authoritative; the original row is restored on failure.
+    if (resource === "skills") setSkills((current) => current.filter((item) => String(item.id) !== id));
+    if (resource === "experiences") setExperiences((current) => current.filter((item) => String(item.id) !== id));
+    if (resource === "education") setEducation((current) => current.filter((item) => String(item.id) !== id));
+    if (resource === "links") setLinks((current) => current.filter((item) => String(item.id) !== id));
+    if (resource === "skills" && editingSkillId === id) cancelEditSkill();
+    if (resource === "experiences" && editingExperienceId === id) cancelEditExperience();
+    if (resource === "education" && editingEducationId === id) cancelEditEducation();
+    if (resource === "links" && editingLinkId === id) cancelEditLink();
+
     try {
       await apiRequest(`/profile/${resource}/${id}`, { method: "DELETE" });
-      if (resource === "skills" && editingSkillId === id) cancelEditSkill();
-      if (resource === "experiences" && editingExperienceId === id) cancelEditExperience();
-      if (resource === "education" && editingEducationId === id) cancelEditEducation();
-      if (resource === "links" && editingLinkId === id) cancelEditLink();
-      await loadAll();
       setMessage(`${label} removed from your account.`);
     } catch (e) {
+      if (removed) {
+        if (resource === "skills") setSkills((current) => [...current, removed]);
+        if (resource === "experiences") setExperiences((current) => [...current, removed]);
+        if (resource === "education") setEducation((current) => [...current, removed]);
+        if (resource === "links") setLinks((current) => [...current, removed]);
+      }
       setError((e as Error).message);
+    } finally {
+      setRecordBusy(false);
     }
   }
 
@@ -1124,20 +1170,23 @@ export function ProfileSettings() {
     };
     try {
       if (editingExperienceId) {
-        await apiRequest(`/profile/experiences/${editingExperienceId}`, {
+        const savedExperience = await apiRequest<ProfileRecord>(`/profile/experiences/${editingExperienceId}`, {
           method: "PATCH",
           body: JSON.stringify(body),
         });
+        setExperiences((current) =>
+          current.map((item) => (String(item.id) === editingExperienceId ? savedExperience : item)),
+        );
         setMessage("Experience updated.");
       } else {
-        await apiRequest("/profile/experiences", {
+        const savedExperience = await apiRequest<ProfileRecord>("/profile/experiences", {
           method: "POST",
           body: JSON.stringify(body),
         });
+        setExperiences((current) => [...current, savedExperience]);
         setMessage("Experience saved to your account.");
       }
       cancelEditExperience();
-      await loadAll();
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -1173,20 +1222,23 @@ export function ProfileSettings() {
     };
     try {
       if (editingEducationId) {
-        await apiRequest(`/profile/education/${editingEducationId}`, {
+        const savedEducation = await apiRequest<ProfileRecord>(`/profile/education/${editingEducationId}`, {
           method: "PATCH",
           body: JSON.stringify(body),
         });
+        setEducation((current) =>
+          current.map((item) => (String(item.id) === editingEducationId ? savedEducation : item)),
+        );
         setMessage("Education updated.");
       } else {
-        await apiRequest("/profile/education", {
+        const savedEducation = await apiRequest<ProfileRecord>("/profile/education", {
           method: "POST",
           body: JSON.stringify(body),
         });
+        setEducation((current) => [...current, savedEducation]);
         setMessage("Education saved to your account.");
       }
       cancelEditEducation();
-      await loadAll();
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -1222,20 +1274,21 @@ export function ProfileSettings() {
     };
     try {
       if (editingLinkId) {
-        await apiRequest(`/profile/links/${editingLinkId}`, {
+        const savedLink = await apiRequest<ProfileRecord>(`/profile/links/${editingLinkId}`, {
           method: "PATCH",
           body: JSON.stringify(body),
         });
+        setLinks((current) => current.map((item) => (String(item.id) === editingLinkId ? savedLink : item)));
         setMessage("Link updated.");
       } else {
-        await apiRequest("/profile/links", {
+        const savedLink = await apiRequest<ProfileRecord>("/profile/links", {
           method: "POST",
           body: JSON.stringify(body),
         });
+        setLinks((current) => [...current, savedLink]);
         setMessage("Link saved to your account.");
       }
       cancelEditLink();
-      await loadAll();
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -1323,16 +1376,22 @@ export function ProfileSettings() {
               </label>
               <label className="field-label">
                 Or upload PDF / DOCX (saved to library)
-                <Input
-                  type="file"
-                  accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                  disabled={fillBusy}
-                  onChange={(e: any) => {
-                    const file = e.target.files?.[0] || null;
-                    void previewFromUpload(file);
-                    e.target.value = "";
-                  }}
-                />
+                <span className="file-picker">
+                  <span className="file-picker-ui" aria-hidden="true">Choose file</span>
+                  <span className="file-picker-name" aria-hidden="true">No file selected</span>
+                  <Input
+                    className="file-picker-input"
+                    type="file"
+                    aria-label="Upload PDF or DOCX"
+                    accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    disabled={fillBusy}
+                    onChange={(e: any) => {
+                      const file = e.target.files?.[0] || null;
+                      void previewFromUpload(file);
+                      e.target.value = "";
+                    }}
+                  />
+                </span>
               </label>
             </div>
             <label className="row" style={{ justifyContent: "flex-start", gap: 8 }}>
@@ -1496,16 +1555,22 @@ export function ProfileSettings() {
               <div className="stack" style={{ gap: 10, flex: 1, minWidth: 200 }}>
                 <label className="field-label">
                   Upload photo
-                  <Input
-                    type="file"
-                    accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
-                    disabled={avatarBusy}
-                    onChange={(e: any) => {
-                      const file = e.target.files?.[0] || null;
-                      void uploadAvatar(file);
-                      e.target.value = "";
-                    }}
-                  />
+                  <span className="file-picker">
+                    <span className="file-picker-ui" aria-hidden="true">Choose photo</span>
+                    <span className="file-picker-name" aria-hidden="true">No file selected</span>
+                    <Input
+                      className="file-picker-input"
+                      type="file"
+                      aria-label="Choose profile photo"
+                      accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
+                      disabled={avatarBusy}
+                      onChange={(e: any) => {
+                        const file = e.target.files?.[0] || null;
+                        void uploadAvatar(file);
+                        e.target.value = "";
+                      }}
+                    />
+                  </span>
                 </label>
                 <div className="profile-identity-actions">
                   {form.avatar_path || form.avatar_url ? (
@@ -1595,8 +1660,8 @@ export function ProfileSettings() {
             <p className="mono" style={{ margin: 0 }}>
               Tip: choose 0 years if you are a fresher with no work history yet.
             </p>
-            <Button onClick={saveProfile} disabled={saving}>
-              Save profile
+            <Button onClick={saveProfile} disabled={profileSaving}>
+              {profileSaving ? "Saving profile…" : "Save profile"}
             </Button>
           </Card>
 
@@ -1692,8 +1757,8 @@ export function ProfileSettings() {
                 onChange={(e: any) => setPrefDraft({ ...prefDraft, willing_to_relocate: e.target.checked })}
               />
             </label>
-            <Button onClick={savePreferences} disabled={saving}>
-              Save career preferences
+            <Button onClick={savePreferences} disabled={preferencesSaving}>
+              {preferencesSaving ? "Saving preferences…" : "Save career preferences"}
             </Button>
           </Card>
 
@@ -2249,11 +2314,19 @@ function StoredSettings({ kind }: { kind: "notifications" | "privacy" }) {
     kind === "notifications"
       ? ["job_alerts", "learning_reminders", "interview_reminders", "product_updates"]
       : ["resume_processing_consent", "job_recommendation_consent"];
+  const labels: Record<string, string> = {
+    job_alerts: "Job alerts",
+    learning_reminders: "Learning reminders",
+    interview_reminders: "Interview reminders",
+    product_updates: "Product updates",
+    resume_processing_consent: "Allow resume processing",
+    job_recommendation_consent: "Allow job recommendations",
+  };
   return (
     <Card className="stack">
       {fields.map((key) => (
         <label className="row" key={key}>
-          <span>{key.replaceAll("_", " ")}</span>
+          <span>{labels[key] || key}</span>
           <input
             type="checkbox"
             disabled={!loaded}

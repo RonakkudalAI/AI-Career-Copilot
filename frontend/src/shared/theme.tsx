@@ -1,42 +1,98 @@
+import { createContext, useCallback, useContext, useEffect, useMemo, useSyncExternalStore, type ReactNode } from "react";
 
-import { createContext, useContext, type ReactNode } from "react";
+export type ThemePreference = "light" | "dark" | "system";
+export type ResolvedTheme = "light" | "dark";
 
-export type ThemePreference = "light";
-
-type LightThemeContextValue = {
+type ThemeContextValue = {
   theme: ThemePreference;
   setTheme: (theme: ThemePreference) => void;
   cycleTheme: () => void;
-  resolvedTheme: ThemePreference;
+  resolvedTheme: ResolvedTheme;
 };
 
-const LIGHT_THEME_VALUE: LightThemeContextValue = {
-  theme: "light",
+const STORAGE_KEY = "career-copilot-theme";
+const DEFAULT_THEME_VALUE: ThemeContextValue = {
+  theme: "system",
   setTheme: () => undefined,
   cycleTheme: () => undefined,
   resolvedTheme: "light",
 };
 
-const LightThemeContext = createContext(LIGHT_THEME_VALUE);
+export const ThemeContext = createContext(DEFAULT_THEME_VALUE);
 
-export function applyThemeToDocument(): void {
-  if (typeof document !== "undefined") {
-    document.documentElement.setAttribute("data-theme", "light");
-  }
+function isThemePreference(value: string | null): value is ThemePreference {
+  return value === "light" || value === "dark" || value === "system";
 }
 
 export function readStoredTheme(): ThemePreference {
+  if (typeof window === "undefined") return "system";
+  try {
+    const stored = window.localStorage.getItem(STORAGE_KEY);
+    return isThemePreference(stored) ? stored : "system";
+  } catch {
+    return "system";
+  }
+}
+
+export function resolveTheme(theme: ThemePreference = readStoredTheme()): ResolvedTheme {
+  if (theme !== "system") return theme;
+  if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  }
   return "light";
 }
 
-export function resolveTheme(): ThemePreference {
-  return "light";
+export function applyThemeToDocument(theme: ThemePreference = readStoredTheme()): void {
+  if (typeof document !== "undefined") {
+    const resolved = resolveTheme(theme);
+    document.documentElement.setAttribute("data-theme", resolved);
+    document.documentElement.style.colorScheme = resolved;
+  }
+}
+
+function subscribeToThemeChanges(onChange: () => void) {
+  const onStorage = (event: StorageEvent) => {
+    if (event.key === STORAGE_KEY) onChange();
+  };
+  const onThemeChange = () => onChange();
+  window.addEventListener("storage", onStorage);
+  window.addEventListener("career-copilot:theme-change", onThemeChange);
+  const media = window.matchMedia?.("(prefers-color-scheme: dark)");
+  media?.addEventListener?.("change", onChange);
+  return () => {
+    window.removeEventListener("storage", onStorage);
+    window.removeEventListener("career-copilot:theme-change", onThemeChange);
+    media?.removeEventListener?.("change", onChange);
+  };
+}
+
+function storeTheme(theme: ThemePreference) {
+  try {
+    window.localStorage.setItem(STORAGE_KEY, theme);
+  } catch {
+    // The document still updates when storage is unavailable.
+  }
+  applyThemeToDocument(theme);
+  window.dispatchEvent(new Event("career-copilot:theme-change"));
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  return <LightThemeContext.Provider value={LIGHT_THEME_VALUE}>{children}</LightThemeContext.Provider>;
+  const getServerTheme = (): ThemePreference => "system";
+  const theme = useSyncExternalStore(subscribeToThemeChanges, readStoredTheme, getServerTheme);
+  const resolvedTheme = resolveTheme(theme);
+  useEffect(() => applyThemeToDocument(theme), [theme]);
+  const setTheme = useCallback((nextTheme: ThemePreference) => storeTheme(nextTheme), []);
+  const cycleTheme = useCallback(() => {
+    const next = theme === "light" ? "dark" : theme === "dark" ? "system" : "light";
+    setTheme(next);
+  }, [setTheme, theme]);
+  const value = useMemo(
+    () => ({ theme, setTheme, cycleTheme, resolvedTheme }),
+    [cycleTheme, resolvedTheme, setTheme, theme],
+  );
+  return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }
 
-export function useTheme(): LightThemeContextValue {
-  return useContext(LightThemeContext);
+export function useTheme(): ThemeContextValue {
+  return useContext(ThemeContext);
 }

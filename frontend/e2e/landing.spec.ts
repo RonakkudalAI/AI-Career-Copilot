@@ -17,6 +17,10 @@ const zooms = [1, 1.25, 1.5, 2] as const;
 test.describe("Landing page audit acceptance", () => {
   test("loads hero, truthful job labels, and light mode", async ({ page }) => {
     const consoleErrors: string[] = [];
+    await page.route("https://fonts.googleapis.com/**", (route) =>
+      route.fulfill({ status: 200, contentType: "text/css", body: "" }),
+    );
+    await page.route("https://fonts.gstatic.com/**", (route) => route.fulfill({ status: 200, body: "" }));
     page.on("console", (msg) => {
       if (msg.type() === "error") consoleErrors.push(msg.text());
     });
@@ -56,7 +60,7 @@ test.describe("Landing page audit acceptance", () => {
     expect(globePresent).toBe(true);
 
     await expect(page.getByRole("link", { name: /Start Your Career Journey/i })).toBeVisible();
-    await expect(page.getByRole("link", { name: /Explore How It Works/i })).toBeVisible();
+    await expect(page.getByRole("link", { name: /See how it works/i })).toBeVisible();
 
     const serious = consoleErrors.filter(
       (e) => !/favicon/i.test(e) && !/Download the React DevTools/i.test(e)

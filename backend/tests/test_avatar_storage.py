@@ -58,7 +58,7 @@ class AvatarStorageTests(unittest.TestCase):
         self.assertEqual(enriched["avatar_path"], avatar_path)
         self.assertEqual(
             enriched["avatar_url"],
-            "/api/files/test-avatars/candidate-1/avatars/avatar.jpg",
+            "http://localhost:8000/api/v1/files/test-avatars/candidate-1/avatars/avatar.jpg",
         )
 
 

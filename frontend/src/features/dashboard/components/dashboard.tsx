@@ -1,14 +1,8 @@
-
 import { Link } from "@/shared/ui/router-link";
-import { useEffect, useState, useSyncExternalStore } from "react";
-
-
-import { apiRequest } from "@/shared/api/client";
+import { useSyncExternalStore } from "react";
 import {
-  PROFILE_UPDATED_EVENT,
   extractMissing,
   resolveCompletion,
-  type ProfileMissingItem,
 } from "@/features/profile/model/profile-completion";
 import { isDemoSession } from "@/features/auth/demo-session";
 import { Card, PageHeader, Progress } from "@/shared/ui/primitives";
@@ -16,67 +10,8 @@ import {
   InterviewProgressPanel,
   type InterviewProgress,
 } from "@/features/dashboard/components/interview-progress-charts";
+import { useWorkspaceBootstrap } from "@/features/workspace/bootstrap-context";
 
-type Activity = {
-  id: string;
-  event_type: string;
-  summary: string;
-  created_at: string;
-};
-
-type LatestResumeUpload = {
-  resume_id?: string | null;
-  title?: string | null;
-  filename?: string | null;
-  created_at?: string | null;
-};
-
-type LatestInterview = {
-  id?: string | null;
-  label?: string | null;
-  status?: string | null;
-  at?: string | null;
-};
-
-type LatestJobAction = {
-  job_id?: string | null;
-  label?: string | null;
-  title?: string | null;
-  company?: string | null;
-  status?: string | null;
-  is_application?: boolean;
-  at?: string | null;
-};
-
-type LatestActions = {
-  last_resume_upload?: LatestResumeUpload | null;
-  last_interview?: LatestInterview | null;
-  last_job_applied?: LatestJobAction | null;
-};
-
-type Bootstrap = {
-  profile: {
-    full_name?: string;
-    profile_completion?: number;
-    profile_completion_details?: { missing?: ProfileMissingItem[] };
-  } | null;
-  counts: Record<string, number>;
-  active_job_description: { title: string; role_title?: string | null } | null;
-  latest_ats_analysis: { id: string; overall_score: number | null; status: string } | null;
-  latest_actions?: LatestActions | null;
-  interview_progress?: InterviewProgress | null;
-  capabilities: Record<string, boolean>;
-  recent_activity?: Activity[];
-  workspace?: {
-    profile_completion: number;
-    profile_missing?: ProfileMissingItem[];
-    profile_completion_details?: { missing?: ProfileMissingItem[] };
-    has_active_resume: boolean;
-    has_confirmed_resume: boolean;
-    failed_ats_count: number;
-    ready_for_ats: boolean;
-  };
-};
 
 function formatWhen(value?: string | null) {
   if (!value) return "—";
@@ -126,40 +61,9 @@ function ActionRow({
 }
 
 export function Dashboard() {
-  const [data, setData] = useState<Bootstrap | null>(null);
-  const [error, setError] = useState("");
-  const [configHint, setConfigHint] = useState("");
+  // Single shared bootstrap from WorkspaceBootstrapProvider (no second /me/bootstrap).
+  const { data, error, loading, refresh } = useWorkspaceBootstrap();
   const demoMode = useSyncExternalStore(subscribeDemoMode, readDemoMode, () => false);
-
-  useEffect(() => {
-    let active = true;
-    function load() {
-      setError("");
-      setConfigHint("");
-      apiRequest<Bootstrap>("/me/bootstrap")
-        .then((payload) => {
-          if (!active) return;
-          setData(payload);
-        })
-        .catch((e: Error) => {
-          if (!active) return;
-          setData(null);
-          setError(e.message || "Could not load dashboard data from the API.");
-          setConfigHint(
-            "Check that npm run dev is running (frontend + backend), you are signed in, and Firestore is reachable. Open Network for GET /api/backend/me/bootstrap.",
-          );
-        });
-    }
-    load();
-    function onProfileUpdated() {
-      load();
-    }
-    window.addEventListener(PROFILE_UPDATED_EVENT, onProfileUpdated);
-    return () => {
-      active = false;
-      window.removeEventListener(PROFILE_UPDATED_EVENT, onProfileUpdated);
-    };
-  }, [demoMode]);
 
   const first = data?.profile?.full_name?.split(" ")[0] || "there";
   const details =
@@ -174,15 +78,22 @@ export function Dashboard() {
   const activities = (data?.recent_activity || []).slice(0, 5);
   const actions = data?.latest_actions;
   const lastResume = actions?.last_resume_upload;
+  // Uploading a document is not confirmation; the backend flag is the only
+  // source of truth for ATS/job readiness.
+  const hasConfirmedResume = Boolean(data?.workspace?.has_confirmed_resume);
   const lastInterview = actions?.last_interview;
   const lastJob = actions?.last_job_applied;
   const atsScore =
     data?.latest_ats_analysis?.overall_score == null
       ? null
       : Math.round(Number(data.latest_ats_analysis.overall_score));
-  const interviewProgress = data?.interview_progress;
+  const interviewProgress = data?.interview_progress as InterviewProgress | null | undefined;
   const interviewLatest = interviewProgress?.latest_overall ?? null;
   const interviewDelta = interviewProgress?.delta ?? null;
+  const configHint = error
+    ? "Check that npm run dev is running (frontend + backend), you are signed in, and Firestore is reachable. Open Network for GET /api/backend/me/bootstrap."
+    : "";
+
 
   return (
     <div className="feature-page">
@@ -218,14 +129,37 @@ export function Dashboard() {
         <div className="feature-alert" role="alert">
           <p className="field-error">{error}</p>
           {configHint ? <p className="muted">{configHint}</p> : null}
+          <button type="button" className="button button-secondary" onClick={() => refresh()}>
+            Retry
+          </button>
         </div>
       )}
 
-      {!data && !error && (
+      {!data && !error && loading && (
         <div className="feature-loading" aria-live="polite">
           Loading account snapshot from the API…
         </div>
       )}
+
+      {data && !error && !hasConfirmedResume ? (
+        <Card className="feature-alert" data-tone="info">
+          <div>
+            <p className="eyebrow" style={{ margin: 0 }}>Next step</p>
+            <h2 style={{ margin: "4px 0 0" }}>Upload your resume</h2>
+            <p style={{ margin: "6px 0 0" }}>Start with one confirmed resume. It powers ATS analysis, learning gaps, jobs, and interview preparation.</p>
+          </div>
+          <Link className="button button-primary" href="/resume-analysis?tab=upload">Upload resume</Link>
+        </Card>
+      ) : data && !error && hasConfirmedResume && atsScore == null ? (
+        <Card className="feature-alert" data-tone="info">
+          <div>
+            <p className="eyebrow" style={{ margin: 0 }}>Next step</p>
+            <h2 style={{ margin: "4px 0 0" }}>Run your first ATS analysis</h2>
+            <p style={{ margin: "6px 0 0" }}>Compare your confirmed resume with a job description to see evidence-backed gaps.</p>
+          </div>
+          <Link className="button button-primary" href="/resume-analysis?tab=upload">Start ATS analysis</Link>
+        </Card>
+      ) : null}
 
       <section className="dashboard-metrics" aria-label="Account metrics">
         <article className="metric-card">

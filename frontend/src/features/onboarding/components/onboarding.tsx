@@ -124,7 +124,7 @@ export function Onboarding() {
           onboarding_completed: true,
         }),
       });
-      navigate("/dashboard");
+      navigate("/resume-analysis?tab=upload");
 
     } catch (e) {
       setError((e as Error).message);

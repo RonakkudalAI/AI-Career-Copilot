@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     groq_max_output_tokens: int = Field(default=2048, ge=256, le=8192)
     groq_temperature: float = Field(default=0.4, ge=0, le=1)
     groq_resume_parser_enabled: bool = True
-    groq_resume_parser_model: str = "openai/gpt-oss-120b"
+    groq_resume_parser_model: str = "llama-3.3-70b-versatile"
     groq_resume_parser_fallback_model: str = "llama-3.3-70b-versatile"
     groq_resume_parser_timeout_seconds: float = Field(default=60.0, gt=0, le=180)
     groq_resume_parser_max_retries: int = Field(default=2, ge=0, le=5)
@@ -163,10 +163,10 @@ class Settings(BaseSettings):
         return self.supabase_storage_configured
     @property
     def nvidia_configured(self) -> bool:
-        return self.omniroute_configured or bool(self.nvidia_api_key and self.nvidia_model and self.nvidia_base_url)
+        return bool(self.nvidia_api_key and self.nvidia_model and self.nvidia_base_url)
     @property
     def groq_configured(self) -> bool:
-        return self.omniroute_configured or bool(self.groq_api_key and self.groq_model and self.groq_base_url)
+        return bool(self.groq_api_key and self.groq_model and self.groq_base_url)
 
     @property
     def omniroute_configured(self) -> bool:

@@ -82,3 +82,21 @@ export function resolveCompletion(
 
   return clampCompletion(stored);
 }
+
+export function applyLiveCompletionDetail(detail: ProfileUpdatedDetail | undefined): {
+  completion: number;
+  missing: ProfileMissingItem[];
+} | null {
+  if (
+    !detail ||
+    (detail.profile_completion == null &&
+      !detail.profile_missing &&
+      !detail.profile_completion_details)
+  ) {
+    return null;
+  }
+  const details = detail.profile_completion_details;
+  const missing = extractMissing(details, detail.profile_missing);
+  const completion = resolveCompletion(detail.profile_completion, details, missing);
+  return { completion, missing };
+}

@@ -21,8 +21,20 @@
       rel="stylesheet"
     />
     <script>
-      document.documentElement.dataset.theme = "light";
-      document.documentElement.style.colorScheme = "light";
+      (() => {
+        try {
+          const stored = localStorage.getItem("career-copilot-theme");
+          const preference = stored === "light" || stored === "dark" || stored === "system" ? stored : "system";
+          const resolved = preference === "system"
+            ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
+            : preference;
+          document.documentElement.dataset.theme = resolved;
+          document.documentElement.style.colorScheme = resolved;
+        } catch {
+          document.documentElement.dataset.theme = "light";
+          document.documentElement.style.colorScheme = "light";
+        }
+      })();
     </script>
     <title>Career Copilot</title>
   </head>
