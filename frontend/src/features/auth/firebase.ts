@@ -3,6 +3,7 @@ import {
   getAuth,
   initializeAuth,
   browserLocalPersistence,
+  browserPopupRedirectResolver,
   browserSessionPersistence,
   getRedirectResult,
   GoogleAuthProvider,
@@ -56,6 +57,7 @@ function firebaseAuth(): Auth {
   if (!existing) {
     return initializeAuth(app, {
       persistence: [browserLocalPersistence, browserSessionPersistence],
+      popupRedirectResolver: browserPopupRedirectResolver,
     });
   }
   return getAuth(app);
