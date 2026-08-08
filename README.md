@@ -255,7 +255,7 @@ Full map: [docs/api-reference.md](./docs/api-reference.md) · deep dive: [docs/D
 
 Covers aim, problem statement, tech stack, **how every subsystem works**, agents, data model, full API map, code map, frontend architecture, operations, Mermaid diagrams, and known contracts.
 
-Satellite docs under `docs/` (architecture, API, data model, frontend, flows, operations, features/*) summarize and link back to that file.
+Satellite docs under `docs/` (architecture, API, data model, frontend, flows, operations, deployment, features/*) summarize and link back to that file. Production deployment instructions are in [docs/deployment.md](./docs/deployment.md).
 
 ---
 

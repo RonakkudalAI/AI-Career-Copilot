@@ -3,6 +3,8 @@ node_modules/
 frontend/node_modules/
 backend/.venv/
 .venv/
+
+# Deployment templates and provider-specific deployment files stay local.
 deployment/
 
 # Build / framework caches

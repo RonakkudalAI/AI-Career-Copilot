@@ -27,6 +27,7 @@ That file is the single source of truth for:
 | [frontend.md](./frontend.md) | SPA routes and BFF |
 | [flows.md](./flows.md) | Confirm gate and product journey |
 | [operations.md](./operations.md) | Setup, scripts, troubleshooting |
+| [deployment.md](./deployment.md) | Vercel frontend, Render backend, provider variables, and release verification |
 | [code-map.md](./code-map.md) | File purpose index |
 | [diagrams.md](./diagrams.md) | Diagram pointer |
 | [features/](./features/) | Per-feature how-it-works notes |

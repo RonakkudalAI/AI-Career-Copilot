@@ -713,6 +713,14 @@ Single root `.env` (template: `.env.example`). Only `VITE_*` reaches the browser
 
 `APP_ENV=test` forces in-memory object storage for automated tests.
 
+### Current Firebase and deployment state
+
+The active Firebase project is `career-copilot05`. The server uses the `(default)` Firestore database and the Firebase Admin service-account JSON configured by `FIREBASE_CREDENTIALS_PATH`. The browser uses the Web SDK values in `VITE_FIREBASE_*`; these are build-time values and must be configured independently in Vercel.
+
+Email/Password and Google are intended sign-in providers. Firebase Authorized Domains must include the deployed frontend hostname as well as `localhost` and `127.0.0.1` for local development. A Firebase Console provider toggle is not a substitute for a production browser smoke test: after changing a provider or client value, rebuild and deploy the frontend, then verify the actual sign-in flow.
+
+The Vercel frontend and Render backend are separate services. The Vercel build must use the Render origin in `VITE_API_BASE_URL`; the Render service must allow the Vercel origin in `FRONTEND_ORIGINS`. See [deployment.md](./deployment.md) for the release checklist. The `deployment/` directory is local-only and ignored by Git.
+
 ---
 
 ## 14. Operations, scripts, and testing

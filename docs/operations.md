@@ -53,6 +53,11 @@ There is **no** Celery worker process. All product work is synchronous request/r
 3. Proxy `/api/backend` (or build with `VITE_API_BASE_URL`) **and** `/api/files` → API `/api/v1/files`.  
 4. Firestore rules remain deny-all for clients.  
 5. Supabase bucket private; only service role on server.  
+6. Firebase project is career-copilot05 and FIREBASE_DATABASE_ID=(default).
+7. Email/Password and Google providers are enabled, and the exact Vercel hostname is in Firebase Authorized Domains.
+8. Vercel was rebuilt after changing any VITE_* value; those values are embedded at build time.
+
+The full split-host Vercel/Render procedure is in deployment.md.
 
 ## Troubleshooting
 
