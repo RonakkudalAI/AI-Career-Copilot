@@ -192,7 +192,7 @@ function AuthRedirectRoute() {
     let active = true;
     void (async () => {
       const next = new URLSearchParams(location.search).get("next");
-      const result = await createClient().auth.completeGoogleRedirect();
+      const result = await createClient().auth.completeAuthRedirect();
       if (!active) return;
       if (result.error) {
         setError(result.error.message);

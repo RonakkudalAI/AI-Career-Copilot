@@ -9,12 +9,11 @@ import {
   completeGoogleRedirectSignIn,
   emailPasswordAuthErrorMessage,
   googleAuthErrorMessage,
-  resendEmailVerification,
   signInWithEmailPassword,
-  signUpWithEmailPassword,
   signOutFromFirebase,
   signInWithGoogle,
 } from "@/features/auth/firebase";
+import { supabaseAuthClient, SupabaseWebConfigError } from "@/features/auth/supabase";
 
 type AuthError = { message: string } | null;
 type AuthUser = { id: string; email: string; user_metadata?: { full_name?: string } };
@@ -73,32 +72,48 @@ export function createClient() {
     }
   }
 
+  async function signInWithSupabaseAccessToken(accessToken: string) {
+    try {
+      const payload = await request("/auth/supabase", { access_token: accessToken });
+      saveToken(payload.access_token);
+      return {
+        data: { session: { access_token: payload.access_token }, user: payload.user },
+        error: null as AuthError,
+      };
+    } catch (error) {
+      return { data: { session: null, user: null }, error: { message: (error as Error).message } };
+    }
+  }
+
   return {
     auth: {
       async signInWithPassword({ email, password }: { email: string; password: string }) {
         try {
-          const result = await signInWithEmailPassword(email, password);
-          const session = await signInWithFirebaseIdToken(result.idToken);
-          if (session.error) return session;
-          return session;
-        } catch (error) {
-          // Preserve access for accounts created before Firebase email/password
-          // was enabled. Firebase remains the primary identity provider; this
-          // compatibility branch only applies to credential failures where the
-          // legacy backend may still own the account.
-          if (["auth/user-not-found", "auth/invalid-credential", "auth/wrong-password"].includes((error as { code?: string }).code || "")) {
+          const result = await supabaseAuthClient().auth.signInWithPassword({ email: email.trim(), password });
+          if (!result.error && result.data.session?.access_token) {
+            return signInWithSupabaseAccessToken(result.data.session.access_token);
+          }
+          if (result.error) {
+            // Preserve existing Firebase and legacy app-password accounts during migration.
             try {
-              const payload = await request("/auth/sign-in", { email, password });
-              saveToken(payload.access_token);
-              return {
-                data: { session: { access_token: payload.access_token }, user: payload.user },
-                error: null as AuthError,
-              };
-            } catch (legacyError) {
-              return { data: { session: null, user: null }, error: { message: (legacyError as Error).message } };
+              const firebaseResult = await signInWithEmailPassword(email, password);
+              return signInWithFirebaseIdToken(firebaseResult.idToken);
+            } catch {
+              try {
+                const payload = await request("/auth/sign-in", { email, password });
+                saveToken(payload.access_token);
+                return {
+                  data: { session: { access_token: payload.access_token }, user: payload.user },
+                  error: null as AuthError,
+                };
+              } catch {
+                return { data: { session: null, user: null }, error: { message: result.error.message } };
+              }
             }
           }
-          return { data: { session: null, user: null }, error: { message: emailPasswordAuthErrorMessage(error) } };
+          return { data: { session: null, user: null }, error: { message: "Supabase did not return an authentication session." } };
+        } catch (error) {
+          return { data: { session: null, user: null }, error: { message: error instanceof SupabaseWebConfigError ? error.message : emailPasswordAuthErrorMessage(error) } };
         }
       },
       async signUp({
@@ -111,21 +126,26 @@ export function createClient() {
         options?: { data?: Record<string, unknown>; emailRedirectTo?: string };
       }) {
         try {
-          await signUpWithEmailPassword(email, password, String(options?.data?.full_name || ""));
-          return {
-            data: { session: null, user: null },
-            error: null as AuthError,
-          };
+          const result = await supabaseAuthClient().auth.signUp({
+            email: email.trim(),
+            password,
+            options: {
+              data: { full_name: String(options?.data?.full_name || "") },
+              emailRedirectTo: options?.emailRedirectTo,
+            },
+          });
+          if (result.error) return { data: { session: null, user: null }, error: { message: result.error.message } };
+          return { data: { session: null, user: null }, error: null as AuthError };
         } catch (error) {
-          return { data: { session: null, user: null }, error: { message: emailPasswordAuthErrorMessage(error) } };
+          return { data: { session: null, user: null }, error: { message: error instanceof SupabaseWebConfigError ? error.message : emailPasswordAuthErrorMessage(error) } };
         }
       },
       async resend({ email }: { type: string; email: string; options?: unknown }) {
         try {
-          await resendEmailVerification(email);
-          return { error: null as AuthError };
+          const result = await supabaseAuthClient().auth.resend({ type: "signup", email });
+          return result.error ? { error: { message: result.error.message } } : { error: null as AuthError };
         } catch (error) {
-          return { error: { message: (error as Error).message } };
+          return { error: { message: error instanceof SupabaseWebConfigError ? error.message : (error as Error).message } };
         }
       },
       async signInWithOAuth({ provider, options }: { provider: string; options?: { redirectTo?: string } }) {
@@ -203,10 +223,24 @@ export function createClient() {
           .then(() => ({ error: null as AuthError }))
           .catch((error) => ({ error: { message: (error as Error).message } }));
       },
+      async completeAuthRedirect() {
+        try {
+          const { data } = await supabaseAuthClient().auth.getSession();
+          if (data.session?.access_token) return signInWithSupabaseAccessToken(data.session.access_token);
+        } catch {
+          // If there is no Supabase session, complete the Firebase Google flow.
+        }
+        return this.completeGoogleRedirect();
+      },
       async signOut() {
         window.localStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
         document.cookie = `${SESSION_COOKIE_NAME}=; Max-Age=0; Path=/; SameSite=Lax`;
         await signOutFromFirebase().catch(() => undefined);
+        try {
+          await supabaseAuthClient().auth.signOut();
+        } catch {
+          // Supabase configuration is optional for Firebase Google sign-out.
+        }
         if (isDemoCookiePresent()) return { error: null as AuthError };
         await request("/auth/sign-out").catch(() => undefined);
         return { error: null as AuthError };

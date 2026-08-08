@@ -15,11 +15,15 @@ VITE_FIREBASE_PROJECT_ID=career-copilot05
 VITE_FIREBASE_STORAGE_BUCKET=career-copilot05.firebasestorage.app
 VITE_FIREBASE_MESSAGING_SENDER_ID=<Firebase web app sender id>
 VITE_FIREBASE_APP_ID=<Firebase web app id>
+VITE_SUPABASE_URL=<Supabase project URL>
+VITE_SUPABASE_PUBLISHABLE_KEY=<Supabase publishable key>
 ```
 
 `VITE_API_BASE_URL` must be the backend origin only; do not append `/api/v1`. The frontend adds the API prefix. After changing any `VITE_*` value, create a new Vercel deployment because Vite embeds these values at build time.
 
 Firebase Authentication must have Email/Password and Google enabled. Authorized domains must include the exact frontend hostname, `localhost`, and `127.0.0.1` when those local hosts are used. Do not include protocols or ports in Firebase authorized domains.
+
+Supabase Authentication must have Email enabled. Add the local and deployed frontend callback origins to Supabase Authentication URL Configuration. The current email flow signs in with Supabase, exchanges the Supabase access token at `POST /api/v1/auth/supabase`, and then uses the existing Career Copilot API session. The Supabase OAuth Server settings shown in the dashboard are not required for this email/password flow.
 
 ## Backend on Render
 

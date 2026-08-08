@@ -21,7 +21,7 @@
 
 | Area | Prefix under `/api/v1` |
 |------|------------------------|
-| Auth | `/auth/*` (sign-up, sign-in, session, firebase, sign-out, update-password) |
+| Auth | `/auth/*` (sign-up, sign-in, session, supabase, firebase, sign-out, update-password) |
 | Health | `/health/live`, `/health`, `/health/ready`, `/health/database`, `/agents/status` |
 | Me | `/me/bootstrap`, `/me/activity` |
 | Profile | `/profile`, avatar, preferences, child resources, from-resume |

@@ -63,7 +63,7 @@ Career Copilot is a **private career workspace for one candidate at a time**. It
 
 | Area | What you get |
 |------|----------------|
-| **Auth** | Email/password (scrypt) + app JWT; Firebase email/password + Google exchange to app JWT |
+| **Auth** | Supabase email/password + app JWT; Firebase Google exchange to app JWT; legacy Firebase/local email fallback during migration |
 | **Profile** | Structured fields, avatar, completion 0–100, fill-from-resume preview → apply |
 | **Resume / JD** | Upload or paste → review → **confirm** |
 | **ATS** | Deterministic keyword coverage (`evidence-keyword-coverage-v4`); history shows resume + JD used |
@@ -92,7 +92,7 @@ Career Copilot is a **private career workspace for one candidate at a time**. It
 | **Frontend** | Vite 8, React 19, TypeScript, React Router 7, Tailwind CSS 4 | SPA UI |
 | **UI** | Base UI, Lucide, Motion, CVA | Components / icons / motion |
 | **3D / globe** | Three.js, R3F/Drei, Cobe | Jobs globe |
-| **Auth client** | Firebase Web SDK | Email/password + Google |
+| **Auth client** | Supabase Web SDK + Firebase Web SDK | Email/password via Supabase; Google via Firebase |
 | **Backend** | FastAPI, Uvicorn, Pydantic v2 | HTTP API |
 | **Auth server** | PyJWT (HS256), scrypt | App JWT + password hashes |
 | **Database** | Cloud Firestore (`firebase-admin`) | Structured candidate data |
@@ -546,7 +546,7 @@ Browser download: `GET /api/v1/files/{bucket}/{path}` with JWT; path must start 
 
 | Area | Methods / paths |
 |------|-----------------|
-| **Auth** | `POST /auth/sign-up`, `/sign-in`, `/session`, `/firebase`, `/sign-out`, `/update-password`; stubs `/resend`, `/reset-password` |
+| **Auth** | `POST /auth/sign-up`, `/sign-in`, `/session`, `/supabase`, `/firebase`, `/sign-out`, `/update-password`; stubs `/resend`, `/reset-password` |
 | **Health** | `GET /health/live`, `/health`, `/health/ready`, `/health/database`, `/agents/status` |
 | **Me** | `GET /me/bootstrap`, `/me/activity` |
 | **Profile** | `GET/PATCH /profile`, avatar upload/delete, preferences, skills import, from-resume preview/apply/upload, CRUD `/profile/{resource}` |
@@ -697,7 +697,7 @@ Paths relative to repository root.
 
 ## 13. Configuration and environment
 
-Single root `.env` (template: `.env.example`). Only `VITE_*` reaches the browser.
+Single root `.env` (template: `.env.example`). Only `VITE_*` reaches the browser. Email authentication requires `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`; the backend validates the Supabase access token before issuing the app JWT.
 
 | Group | Examples |
 |-------|----------|

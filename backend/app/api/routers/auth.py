@@ -6,6 +6,8 @@ import uuid
 from typing import Any
 from uuid import UUID
 
+import httpx
+
 from fastapi import APIRouter, Body, Depends, Response
 from app.core.config import Settings, get_settings
 from app.core.constants import MIN_PASSWORD_LENGTH
@@ -70,6 +72,30 @@ def _create_user_records(client, user: dict[str, Any]) -> dict[str, Any]:
             except Exception:
                 logger.exception("signup_rollback_failed table=users user_id=%s", user_id)
         raise ApiError(500, "account_creation_incomplete", "The account could not be created completely.") from exc
+
+
+def _supabase_user(access_token: str, settings: Settings) -> dict[str, Any]:
+    base_url = settings.resolved_supabase_url
+    api_key = settings.supabase_publishable_key or settings.supabase_server_key
+    if not base_url or not api_key:
+        raise ApiError(503, "supabase_auth_unavailable", "Supabase authentication is not configured.")
+    try:
+        response = httpx.get(
+            f"{base_url}/auth/v1/user",
+            headers={"apikey": api_key, "Authorization": f"Bearer {access_token}"},
+            timeout=15,
+        )
+    except httpx.HTTPError as exc:
+        raise ApiError(503, "supabase_auth_unavailable", "Supabase authentication could not be reached.") from exc
+    if response.status_code != 200:
+        raise ApiError(401, "invalid_supabase_token", "The Supabase session is invalid or expired.")
+    try:
+        user = response.json()
+    except ValueError as exc:
+        raise ApiError(401, "invalid_supabase_token", "Supabase returned an invalid identity response.") from exc
+    if not isinstance(user, dict) or not user.get("id") or not user.get("email"):
+        raise ApiError(401, "invalid_supabase_identity", "The Supabase identity is incomplete.")
+    return user
 
 
 @router.post("/auth/sign-up", status_code=201)
@@ -202,6 +228,39 @@ def auth_firebase(payload: dict[str, Any] = Body(...), settings: Settings = Depe
                 "firebase_uid": uid,
                 "password_hash": "",
             },
+        )
+    return _auth_payload(user, settings)
+
+
+@router.post("/auth/supabase")
+def auth_supabase(payload: dict[str, Any] = Body(...), settings: Settings = Depends(get_settings)):
+    """Exchange a verified Supabase Auth access token for the app JWT."""
+    access_token = str(payload.get("access_token") or "").strip()
+    if not access_token:
+        raise ApiError(400, "invalid_supabase_token", "A Supabase access token is required.")
+    identity = _supabase_user(access_token, settings)
+    supabase_uid = str(identity["id"]).strip()
+    email = str(identity["email"]).strip().lower()
+    client = database_client(settings)
+    rows = client.table("users").select("*").eq("email", email).limit(1).execute().data or []
+    if rows:
+        user = rows[0]
+        existing_uid = str(user.get("supabase_uid") or "").strip()
+        if existing_uid and existing_uid != supabase_uid:
+            raise ApiError(409, "supabase_uid_conflict", "This email is already linked to a different Supabase account.")
+        if not existing_uid:
+            client.table("users").update({"supabase_uid": supabase_uid}).eq("id", str(user["id"])).execute()
+            user["supabase_uid"] = supabase_uid
+    else:
+        metadata = identity.get("user_metadata") if isinstance(identity.get("user_metadata"), dict) else {}
+        full_name = str(metadata.get("full_name") or metadata.get("name") or "").strip()[:120] or None
+        try:
+            user_id = str(UUID(supabase_uid))
+        except ValueError:
+            user_id = str(uuid.uuid4())
+        user = _create_user_records(
+            client,
+            {"id": user_id, "email": email, "full_name": full_name, "supabase_uid": supabase_uid, "password_hash": ""},
         )
     return _auth_payload(user, settings)
 
