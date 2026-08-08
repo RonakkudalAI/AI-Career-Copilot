@@ -1,5 +1,14 @@
 # Feature docs
 
-All feature deep-dives are consolidated into the unified documentation:
+Each file explains **how that feature works** in Career Copilot. Full cross-cutting narrative: [../DOCUMENTATION.md](../DOCUMENTATION.md).
 
-→ **[../DOCUMENTATION.md](../DOCUMENTATION.md)** — section *Feature deep-dives* (auth, parsing, ATS, profile, interview, learning, jobs, resume improvement) and related Mermaid diagrams.
+| Feature | Doc |
+|---------|-----|
+| Auth | [auth.md](./auth.md) |
+| Document parsing | [document-parsing.md](./document-parsing.md) |
+| Profile | [profile.md](./profile.md) |
+| ATS scoring | [ats-scoring.md](./ats-scoring.md) |
+| Resume improvement | [resume-improvement.md](./resume-improvement.md) |
+| Interview | [interview.md](./interview.md) |
+| Learning | [learning.md](./learning.md) |
+| Jobs | [jobs.md](./jobs.md) |

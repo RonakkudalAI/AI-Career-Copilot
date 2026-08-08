@@ -21,8 +21,11 @@ class Settings(BaseSettings):
     firebase_credentials_path: str = ""
     # Supabase Storage is the only production object-storage provider.
     supabase_url: str = ""
+    supabase_publishable_key: str = ""
+    supabase_secret_key: str = ""
     supabase_service_role_key: str = ""
     supabase_storage_bucket: str = "career-copilot-files"
+    supabase_jwks_url: str = ""
     firebase_clock_skew_seconds: int = Field(default=60, ge=0, le=300)
     # Revocation checks call Firebase Auth after signature verification.
     # Default False for local Admin setups that lack Auth lookup; production
@@ -154,9 +157,14 @@ class Settings(BaseSettings):
     def supabase_storage_configured(self) -> bool:
         return bool(
             self.resolved_supabase_url
-            and self.supabase_service_role_key
+            and self.supabase_server_key
             and self.supabase_storage_bucket
         )
+
+    @property
+    def supabase_server_key(self) -> str:
+        """Prefer the legacy name while accepting Supabase's new secret-key name."""
+        return (self.supabase_service_role_key or self.supabase_secret_key or "").strip()
 
     @property
     def storage_configured(self) -> bool:

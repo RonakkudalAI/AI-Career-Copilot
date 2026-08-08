@@ -1,8 +1,9 @@
 # Career Copilot — Unified Technical Documentation
 
 **Version:** 1.0.0  
-**Source of truth:** this file (generated from the repository as of the last documentation update)  
-**Scope:** product purpose, problem statement, tech stack, architecture, data model, APIs, agents, code map, flows, operations, and Mermaid diagrams  
+**Last updated:** 2026-08-08  
+**Source of truth:** this file (generated from the repository)  
+**Scope:** product purpose, architecture, how every subsystem works, data model, APIs, agents, code map, frontend, operations, and diagrams  
 
 > **Golden rule:** Do not invent the candidate’s career. Only text the user types, uploads, **confirms**, or explicitly accepts is used for ATS, learning gaps, interview evidence, and job matching. LLM / YouTube / Adzuna / storage service keys stay on the server. The browser never talks to Firestore directly.
 
@@ -16,17 +17,17 @@
 4. [Models, frameworks, and libraries](#4-models-frameworks-and-libraries)
 5. [Project architecture](#5-project-architecture)
 6. [How the project works (end-to-end)](#6-how-the-project-works-end-to-end)
-7. [Agents](#7-agents)
-8. [Data model (Firestore + Supabase Storage)](#8-data-model-firestore--supabase-storage)
-9. [API surface](#9-api-surface)
-10. [Code map — every application file and purpose](#10-code-map--every-application-file-and-purpose)
-11. [Feature deep-dives](#11-feature-deep-dives)
-12. [Frontend routes and BFF](#12-frontend-routes-and-bff)
-13. [Configuration and environment](#13-configuration-and-environment)
-14. [Operations, scripts, and testing](#14-operations-scripts-and-testing)
+7. [How each feature works](#7-how-each-feature-works)
+8. [Agents and LLM providers](#8-agents-and-llm-providers)
+9. [Data model](#9-data-model-firestore--supabase-storage)
+10. [API surface](#10-api-surface)
+11. [Code map](#11-code-map--application-layout)
+12. [Frontend architecture](#12-frontend-architecture)
+13. [Configuration](#13-configuration-and-environment)
+14. [Operations and testing](#14-operations-scripts-and-testing)
 15. [Mermaid diagrams](#15-mermaid-diagrams)
-16. [Design principles and non-goals](#16-design-principles-and-non-goals)
-17. [What is not used / outdated claims removed](#17-what-is-not-used--outdated-claims-removed)
+16. [Design principles](#16-design-principles-and-non-goals)
+17. [Known contracts and caveats](#17-known-contracts-and-caveats)
 
 ---
 
@@ -39,29 +40,20 @@ Career Copilot is a **private career workspace for one candidate at a time**. It
 1. Build a structured profile and upload a resume (PDF/DOCX).
 2. Review extracted text/sections, then **confirm** them (confirm gate).
 3. Score the resume against a confirmed job description with **exact keyword evidence**.
-4. Practice mock interviews (optional browser voice Q&A) with practice feedback.
-5. Generate free YouTube learning paths from ATS gaps (no invented video IDs).
+4. Practice mock interviews (optional browser voice Q&A + optional Fish Audio TTS) with practice feedback.
+5. Generate free learning paths from ATS gaps (YouTube API / search URLs + allowlisted article search URLs — no invented IDs).
 6. Browse job recommendations grounded in **confirmed resume evidence**.
 
 ### Problem statement
 
-Job seekers face fragmented tools and opaque “AI scores” that invent skills, employers, or metrics. Typical pain:
-
 | Problem | Product response |
 |---------|------------------|
-| ATS scores with no proof | Deterministic keyword coverage + exact resume quotes (`evidence-keyword-coverage-v3`) |
-| OCR/LLM extraction errors feed scoring silently | **Confirm gate** — only `confirmed` resume/JD text powers ATS, learning, prep evidence, job match |
-| Invented YouTube videos / fake IDs | YouTube Data API or search-page URLs only (`ats-youtube-api-v1`) |
+| ATS scores with no proof | Deterministic keyword coverage + exact resume quotes (`evidence-keyword-coverage-v4`) |
+| OCR/LLM extraction errors feed scoring silently | **Confirm gate** — only `confirmed` resume/JD text powers ATS, learning, prep, job match |
+| Invented YouTube videos / fake IDs | YouTube Data API or search-page URLs only; articles are allowlisted search URLs |
 | Client-side DB access bypasses ownership | FastAPI + Admin SDK only; Firestore rules deny all client access |
-| Secrets in the browser | Only `VITE_*` keys reach the frontend; service keys stay server-side |
-| Over-promising “hireability AI” | No hiring-decision scores; interview feedback is **practice coaching**, not a recruiter verdict |
-
-### Product goals
-
-1. **Evidence-grounded ATS** — auditable keyword quotes.
-2. **Confirm gate** — unreviewed extraction never drives product decisions.
-3. **Helpful AI without invention** — LLMs plan/draft/brief; they do not invent experience or video IDs.
-4. **Owned data lifecycle** — create, list, delete, full account wipe (`DELETE MY ACCOUNT`).
+| Secrets in the browser | Only `VITE_*` keys reach the frontend |
+| Over-promising “hireability AI” | No hiring-decision scores; interview feedback is **practice coaching** |
 
 ---
 
@@ -71,65 +63,66 @@ Job seekers face fragmented tools and opaque “AI scores” that invent skills,
 
 | Area | What you get |
 |------|----------------|
-| **Auth** | Email/password (scrypt) + app JWT; optional Google via Firebase ID-token exchange |
-| **Profile** | Structured fields, avatar, completion checklist (0–100), fill-from-resume preview → apply |
+| **Auth** | Email/password (scrypt) + app JWT; Firebase email/password + Google exchange to app JWT |
+| **Profile** | Structured fields, avatar, completion 0–100, fill-from-resume preview → apply |
 | **Resume / JD** | Upload or paste → review → **confirm** |
-| **ATS** | Deterministic keyword coverage (`evidence-keyword-coverage-v3`); history shows resume + JD used |
-| **Interviews** | Question packs + practice sessions; optional TTS / speech-to-text; practice answer evaluation & session report (Groq or deterministic heuristics) — **not** a hiring prediction |
-| **Learning** | ATS gaps → YouTube videos (API) or search-page URLs only |
-| **Jobs** | Evidence-based recommendations; optional Adzuna sync |
-| **Resume improvement** | Evidence-checked rewrite suggestions via crew (API); primary product loop remains re-upload |
+| **ATS** | Deterministic keyword coverage (`evidence-keyword-coverage-v4`); history shows resume + JD used |
+| **Interviews** | Question packs, practice sessions, optional Fish Audio TTS / browser STT, gaze metrics, practice evaluation |
+| **Learning** | ATS gaps → YouTube + allowlisted educational search URLs (`ats-mixed-learning-v1`) |
+| **Jobs** | Evidence-based recommendations; optional Adzuna sync; saved/pipeline tracking |
+| **Resume improvement** | Evidence-checked rewrite suggestions via sequential crew |
 | **Account wipe** | Confirm with phrase `DELETE MY ACCOUNT` |
+| **Theme** | Light / dark / system preference |
 
 ### Not included (by design)
 
-- Invented skills, employers, metrics, or YouTube video IDs
-- AI hiring decisions or “you will get the job” scores
-- Product-path embedding / cosine-similarity ATS
-- Direct browser access to Firestore or storage service keys
-- Multi-tenant recruiter portal
-- Firebase Storage as the product object store (product files use **Supabase Storage**)
+- Invented skills, employers, metrics, or YouTube video IDs  
+- AI hiring decisions or “you will get the job” prediction scores  
+- Product-path embedding / cosine-similarity ATS  
+- Direct browser access to Firestore or storage service keys  
+- Multi-tenant recruiter portal  
+- Background Celery workers (all product paths are request/response synchronous; long work runs in-process with timeouts)
 
 ---
 
 ## 3. Tech stack
 
-| Layer | Technology | Role in this repo |
-|-------|------------|-------------------|
-| **Frontend** | Vite 8, React 19, TypeScript 5.9, React Router 7, Tailwind CSS 4 | SPA UI, BFF proxy in dev |
-| **UI libs** | Base UI (`@base-ui/react`), Lucide icons, Motion, class-variance-authority | Components, icons, motion |
-| **3D / globe** | Three.js, React Three Fiber/Drei, Cobe | Jobs globe visualization |
-| **Auth client** | Firebase Web SDK (`firebase`) | Optional Google sign-in only |
-| **Backend** | FastAPI, Uvicorn, Pydantic v2, pydantic-settings | HTTP API, validation, DI |
-| **Auth server** | PyJWT (HS256), scrypt passwords | App JWT + password hashes |
-| **Database** | Cloud Firestore via `firebase-admin` | Structured candidate data |
-| **Object storage** | Supabase Storage (HTTP API, service role) | Resumes, avatars, exports |
-| **Documents** | pypdf, python-docx; optional pymupdf, pdfplumber | PDF/DOCX text extract |
-| **PDF export** | reportlab | Resume export generation |
-| **HTTP client** | httpx | LLM providers, YouTube, Adzuna, Supabase |
-| **LLM** | Groq (preferred default), NVIDIA Integrate (fallback) | OpenAI-compatible chat APIs |
-| **Crews** | Optional official `crewai`; else built-in sequential orchestrator | Learning + resume improvement crews |
-| **Optional sidecar** | OmniRoute (`OMNIROUTE_ENABLED`, default off) | OpenAI-compatible proxy rewrite |
-| **Tooling** | Node 20+, npm scripts, pytest, ruff, Vitest, Playwright, ESLint | Setup, tests, e2e |
+| Layer | Technology | Role |
+|-------|------------|------|
+| **Frontend** | Vite 8, React 19, TypeScript, React Router 7, Tailwind CSS 4 | SPA UI |
+| **UI** | Base UI, Lucide, Motion, CVA | Components / icons / motion |
+| **3D / globe** | Three.js, R3F/Drei, Cobe | Jobs globe |
+| **Auth client** | Firebase Web SDK | Email/password + Google |
+| **Backend** | FastAPI, Uvicorn, Pydantic v2 | HTTP API |
+| **Auth server** | PyJWT (HS256), scrypt | App JWT + password hashes |
+| **Database** | Cloud Firestore (`firebase-admin`) | Structured candidate data |
+| **Object storage** | Supabase Storage (service role HTTP) | Resumes, avatars, exports |
+| **Documents** | pypdf, python-docx; optional pymupdf, pdfplumber | Text extract |
+| **PDF export** | reportlab | Resume export |
+| **HTTP** | httpx | LLMs, YouTube, Adzuna, Supabase, Fish Audio |
+| **LLM** | Groq preferred, NVIDIA fallback | Chat completions |
+| **Crews** | Optional `crewai`; else built-in sequential orchestrators | Learning + resume improve |
+| **TTS** | Fish Audio (optional) | Interviewer voice |
+| **Optional sidecar** | OmniRoute (`OMNIROUTE_ENABLED`, default off) | OpenAI-compatible proxy |
 
-### Runtime versions
+### Runtime
 
 | Runtime | Constraint |
 |---------|------------|
 | Node.js | 20+ |
-| Python | 3.11–3.13 (repo pin often 3.12; `requires-python = ">=3.11,<3.14"`) |
+| Python | 3.11–3.13 (repo pin often 3.12) |
 
-### Monorepo layout (high level)
+### Monorepo layout
 
 ```text
 career-copilot/
 ├── frontend/          # Vite + React SPA
 ├── backend/           # FastAPI package career-copilot-api
-├── docs/              # This documentation (DOCUMENTATION.md is canonical)
-├── firebase/          # Client deny-all rules (product path is Admin SDK)
+├── docs/              # Documentation (this file is canonical)
+├── firebase/          # Deny-all client rules
 ├── scripts/           # setup, dev, diagnostics
 ├── secrets/           # local service-account JSON (gitignored)
-├── integrations/      # optional OmniRoute (off by default; not required to run app)
+├── integrations/      # optional OmniRoute (not required)
 ├── package.json       # root scripts
 └── .env / .env.example
 ```
@@ -138,70 +131,25 @@ career-copilot/
 
 ## 4. Models, frameworks, and libraries
 
-### Backend dependencies (`backend/pyproject.toml`)
-
-| Package | Purpose |
-|---------|---------|
-| `fastapi` | REST API framework |
-| `uvicorn[standard]` | ASGI server |
-| `pydantic` / `pydantic-settings` | Request/response models + env settings |
-| `python-dotenv` | `.env` loading support |
-| `httpx` | Outbound HTTP (LLMs, YouTube, Adzuna, Supabase) |
-| `python-multipart` | File uploads |
-| `pypdf` | PDF text extraction (default chain) |
-| `python-docx` | DOCX read + export path |
-| `reportlab` | PDF export generation |
-| `PyJWT[crypto]` | App JWT sign/verify |
-| `firebase-admin` | Firestore Admin + Firebase ID token verify |
-
-**Optional extras**
-
-| Extra | Packages | When |
-|-------|----------|------|
-| `crewai` | `crewai>=0.80,<2` | Official CrewAI runtime for crews |
-| `pdf-extras` | `pymupdf`, `pdfplumber` | Faster PDF backends tried before pypdf |
-| `dev` | `pytest`, `ruff` | Tests and lint |
-
-### Frontend dependencies (`frontend/package.json`)
-
-| Package | Purpose |
-|---------|---------|
-| `react` / `react-dom` 19 | UI runtime |
-| `react-router-dom` 7 | Client routing |
-| `firebase` | Google Auth Web SDK |
-| `@base-ui/react` | Accessible primitives |
-| `lucide-react` | Icons |
-| `motion` | Animations |
-| `class-variance-authority` | Variant class helpers |
-| `three` / `@react-three/fiber` / `@react-three/drei` | 3D globe |
-| `cobe` | Lightweight globe alternative/helper |
-| `vite` + `@vitejs/plugin-react` | Build & dev server |
-| `tailwindcss` 4 + `@tailwindcss/postcss` | Styling |
-| `typescript` | Types |
-| `vitest` / `@testing-library/react` / `jsdom` | Unit tests |
-| `@playwright/test` | E2E (landing) |
-| `eslint` + plugins | Lint |
-
-### LLM models (configured via env; not hard-coded as sole product truth)
-
-Defaults from `.env.example` / `core/config.py`:
-
-| Provider | Env keys | Typical model (template default) | Used for |
-|----------|----------|----------------------------------|----------|
-| **Groq** | `GROQ_API_KEY`, `GROQ_MODEL`, `GROQ_BASE_URL` | `llama-3.3-70b-versatile` | Interviews, ATS brief, learning planner, many agents when `LLM_PROVIDER=groq` |
-| **Groq resume parser** | `GROQ_RESUME_PARSER_*` | `openai/gpt-oss-120b` + fallback `llama-3.3-70b-versatile` | Document section segregation path |
-| **NVIDIA** | `NVIDIA_API_KEY`, `NVIDIA_MODEL`, `NVIDIA_BASE_URL` | `deepseek-ai/deepseek-v4-flash` (template) | Fallback / when preferred |
-| Preference | `LLM_PROVIDER=groq\|nvidia` | — | Preferred first, then other configured provider |
-
-**Interview questions** use **Groq only** (local templates on failure). **Product ATS score uses no LLM.**
-
 ### Algorithm versions (product)
 
 | Algorithm | Constant | File |
 |-----------|----------|------|
-| ATS scoring | `evidence-keyword-coverage-v3` | `backend/app/features/ats/ats_score.py` |
+| ATS scoring | `evidence-keyword-coverage-v4` | `backend/app/features/ats/ats_score.py` |
 | Job match | `evidence-keyword-match-v1` | `backend/app/features/career_matching.py` |
-| Learning path | `ats-youtube-api-v1` | `backend/app/features/learning/youtube_catalog.py` |
+| Learning path | `ats-mixed-learning-v1` | `backend/app/features/learning/youtube_catalog.py` |
+| Interview report | `evidence-report-v2` | `backend/app/features/interview/agent/evaluator.py` |
+
+### LLM models (env-configured)
+
+| Provider | Env keys | Typical use |
+|----------|----------|-------------|
+| **Groq** | `GROQ_*` | Interviews, briefs, learning planner, many agents when preferred |
+| **Groq resume parser** | `GROQ_RESUME_PARSER_*` | Optional section segregation model |
+| **NVIDIA** | `NVIDIA_*` | Fallback / when preferred |
+| Preference | `LLM_PROVIDER=groq\|nvidia` | Primary first, then the other if configured |
+
+**Product ATS score uses no LLM.** Interview questions prefer Groq; templates on failure/unconfigured.
 
 ### Prompt packs (`backend/app/agents/prompts/`)
 
@@ -215,8 +163,8 @@ Defaults from `.env.example` / `core/config.py`:
 | `interview_session_report_v1.txt` | Session completion report |
 | `ats_improvement_v1.txt` | ATS improvement brief |
 | `learning_youtube_path_v1.txt` | Learning planner |
-| `document_section_extract_v1.txt` | Section segregation |
-| `repair_structured_output_v1.txt` | JSON repair pass (`LLM_ALLOW_REPAIR`) |
+| `document_section_extract_v1.txt` | Section segregation (when LLM used) |
+| `repair_structured_output_v1.txt` | JSON repair pass |
 
 ---
 
@@ -231,7 +179,7 @@ backend/app/
 ├── api/                    # HTTP surface (router, schemas, auth router)
 ├── database/               # Firestore + Supabase Storage adapters, ownership helpers
 ├── agents/                 # provider clients, prompts, registry, preferred routing
-└── features/               # domain modules (auth, parsing, ATS, interview, …)
+└── features/               # domain modules
 ```
 
 ### Trust boundaries
@@ -241,14 +189,14 @@ backend/app/
 | Browser | Untrusted; never holds service keys |
 | Vite BFF | Dev/preview proxy only; not a second auth system |
 | FastAPI | Authenticates JWT; owns multi-tenant isolation |
-| Firestore rules | Deny all client SDK access (`firebase/firestore.rules`) |
-| Storage | Private Supabase bucket; bytes only via authenticated `/files` route |
+| Firestore rules | Deny all client SDK access |
+| Storage | Private Supabase bucket; bytes only via authenticated file route |
 
-### Request path (local dev)
+### Local request path
 
 ```text
 Browser (Vite + React)
-  Authorization: Bearer <JWT>
+  Authorization: Bearer <JWT>  (+ cookie career_copilot_session for <img>)
         │
         ├─ /api/backend/*  ──Vite proxy──►  FastAPI /api/v1/*
         └─ /api/files/*    ──Vite proxy──►  FastAPI /api/v1/files/*
@@ -257,10 +205,10 @@ Browser (Vite + React)
            FastAPI (ownership enforced)
                 ├─ Firestore      (rows)
                 ├─ Supabase Storage (files under {user_id}/…)
-                └─ Groq / NVIDIA / YouTube / Adzuna  (server .env)
+                └─ Groq / NVIDIA / YouTube / Adzuna / Fish Audio  (server .env)
 ```
 
-See [§15 Mermaid diagrams](#15-mermaid-diagrams) for architecture, auth/db, Firebase, ATS, mock interview, jobs, and learning path.
+**Important file URL contract:** signed URLs are stored as relative `/api/files/{bucket}/{path}`. The Vite (or production reverse proxy) must rewrite that path to `/api/v1/files/...`. Direct hits on FastAPI without the rewrite return 404.
 
 ---
 
@@ -270,262 +218,348 @@ See [§15 Mermaid diagrams](#15-mermaid-diagrams) for architecture, auth/db, Fir
 
 1. Root `npm run dev` → `scripts/dev/preflight.mjs` (env/Firestore checks) → spawns frontend + backend.
 2. Backend: `uvicorn app.main:app` loads `Settings` from root `.env`.
-3. Frontend: Vite on `127.0.0.1:3000` with proxy to `PUBLIC_API_BASE_URL` (default `http://127.0.0.1:8000`).
+3. Frontend: Vite on `127.0.0.1:3000` proxies API to `PUBLIC_API_BASE_URL` (default `http://127.0.0.1:8000`).
+
+There is **no** separate Celery/worker process in the product path. Work runs inside the API request (with timeouts, RPM limiting, and graceful deterministic fallbacks).
 
 ### 6.2 Authenticated API call
 
 ```text
 UI → shared/api/client.ts :: apiRequest
-  → if demo cookie (dev only) → demo-session mocks (no network)
-  → else Bearer JWT + credentials include
+  → if demo cookie (non-production only) → demo-session mocks (no network)
+  → else Bearer JWT + credentials: include
   → /api/backend/... → Vite rewrite → /api/v1/...
-  → get_current_user (JWT + load users row)
+  → get_current_user (JWT decode + users row lookup in a worker thread)
   → handler → features/* → database/client (owned rows / storage)
+  → JSON + X-Request-ID
 ```
+
+GET requests without AbortSignal are de-duplicated in-flight per `method:path:token`.
 
 ### 6.3 Confirm gate (central product rule)
 
 ```text
-pending → processing → review_required → confirmed
-                              ↘ failed
+upload/parse → extraction_status = review_required
+             → user PATCH extraction (optional)
+             → POST confirm → extraction_status = confirmed (+ candidate_confirmed_at)
 ```
 
-Only **`confirmed`** resume versions and job descriptions may enter ATS, learning generation, interview prep evidence, and job-match evidence paths.
+**Only confirmed** resume versions and job descriptions may enter:
+
+- ATS scoring  
+- Learning path generation (via completed ATS evidence)  
+- Interview preparation evidence  
+- Job-match evidence (confirmed resume text)
+
+Profile fill may use any version with extractable text (its own preview/apply gate), but ATS/interview still require confirmation separately.
 
 ### 6.4 Primary candidate journey
 
-1. **Sign up / sign in** → app JWT  
-2. **Profile / onboarding**  
-3. **Upload resume** → parse → review → **confirm**  
+1. **Sign up / sign in** → app JWT stored in `localStorage` + cookie  
+2. **Onboarding / profile** (optional fill-from-resume)  
+3. **Upload resume** → deterministic parse → review → **confirm**  
 4. **Paste/upload JD** → review → **confirm**  
 5. **ATS analysis** → evidence rows + optional LLM brief  
-6. Optional: **learning path**, **interview prep/mock**, **job recommendations**, **profile fill**, **resume improvement**  
+6. Optional: learning path, mock interview, job recommendations, resume improvement  
 7. Iterate by re-uploading a revised resume  
 
 ### 6.5 Provider routing
 
 `backend/app/agents/providers/routing.py`:
 
-- `preferred_llm_provider(settings)` → `LLM_PROVIDER` (`groq` | `nvidia`)
-- `preferred_llm_providers(settings)` → configured providers in preference order
+1. `preferred_llm_provider` reads `LLM_PROVIDER` (`groq` | `nvidia`).  
+2. `preferred_llm_providers` returns configured providers in preference order.  
+3. If only OmniRoute is enabled (no native keys), routing may list a logical provider — clients still require native `*_configured` keys to call unless OmniRoute rewrites the route credentials when `omniroute_configured`.  
+4. Agents try preferred first, then the other, then deterministic behavior where defined.
 
-Agents try preferred first, then the other, then deterministic behavior where defined.
+### 6.6 Data access patterns
 
-Optional **OmniRoute** (`OMNIROUTE_ENABLED=false` by default) can rewrite provider base URL/key when a local OpenAI-compatible sidecar is running. Deleting `integrations/omniroute` does not break the app when OmniRoute is disabled.
+| Pattern | Behavior |
+|---------|----------|
+| Ownership | Nearly all queries filter `user_id` via `owned_row` / `owned_rows` |
+| Recency | In-process `sort_rows_by_recency` — Firestore `order_by(created_at)` drops docs missing the field |
+| Soft delete | Resumes set `deleted_at`; live lists use `is_("deleted_at", "null")` (client-side null-or-missing filter) |
+| Counts | `count="exact", head=True` materializes matching docs and counts them |
+| Storage | Logical prefixes `DOCUMENT_BUCKET` / `AVATAR_BUCKET` inside one Supabase bucket |
+| Activity | Written best-effort; pruned to a max event count |
 
-### 6.6 Data access notes
+### 6.7 Bootstrap
 
-- Firestore queries that `order_by("created_at")` **omit documents missing that field**. User-scoped lists use fetch + `sort_rows_by_recency` (`database/repository.py`). New writes always set `created_at`.
-- Object storage (`database/client.py`): in-memory when `APP_ENV=test`; else Supabase when URL + service role + bucket are set; fail closed otherwise.
+`GET /me/bootstrap` fans out parallel Firestore reads (profile, active resume, confirmed resume count, latest JD/ATS, activity, interview progress, counts) and returns:
+
+- Profile + avatar URL  
+- Workspace readiness flags (`has_active_resume`, `has_confirmed_resume`, `ready_for_ats`, …)  
+- Capability flags (which AI features are configured)  
+- Agent status inventory  
+
+Bootstrap is **read-only** (no completion recalculation or cleanup writes).
 
 ---
 
-## 7. Agents
+## 7. How each feature works
 
-Inventory is defined in `backend/app/agents/registry.py` and exposed at `GET /api/v1/agents/status` and in health summaries.
+### 7.1 Auth
 
-| ID | Name | Provider | Prompt(s) | Endpoint | Fallback |
-|----|------|----------|-----------|----------|----------|
-| `resume_improvement` | Resume improvement | preferred LLM | `improve_resume_v1.txt` | `POST /resume-improvements` | Manual edit / re-upload |
-| `resume_improvement_crew` | Resume improvement crew | preferred + CrewAI-compat | improve + crew tools | same | Sequential built-in if no official crewai |
-| `profile_fill` | Profile fill from resume | preferred LLM | `fill_profile_from_resume_v1.txt` | `POST /profile/from-resume/preview` | Deterministic mapping |
-| `interview_questions` | Interview question generation | **Groq only** | `interview_questions_v1.txt` | `POST /interviews/{id}/start` | Local templates |
-| `interview_evaluation` | Answer evaluation & debrief | Groq or deterministic | `interview_answer_eval_v1.txt` + `interview_session_report_v1.txt` | responses + complete | Heuristic scoring + filler detection |
-| `ats_improvement_brief` | ATS improvement brief | preferred LLM | `ats_improvement_v1.txt` | `POST /ats-analyses` (summary) | Deterministic missing-keyword brief |
-| `learning_youtube_crew` | Learning path YouTube crew | Groq + tools | `learning_youtube_path_v1.txt` | `POST /learning-paths/generate` | Deterministic gap→search plan |
-| `document_section_extract` | Document section segregation | preferred LLM | `document_section_extract_v1.txt` | resume/JD upload | Structural layout parser |
+**Password path (backend):**
+
+1. Sign-up: validate email/password → scrypt hash → create `users` + `profiles` + preference rows (rollback on partial failure).  
+2. Sign-in: verify scrypt → issue app JWT.  
+3. Password update: require current password when a hash exists; Firebase-only accounts (empty hash) may set a first password.
+
+**Firebase path (frontend primary for email + Google):**
+
+1. Firebase Web SDK signs in (email/password or Google popup/redirect).  
+2. Client obtains Firebase ID token.  
+3. `POST /auth/firebase` verifies with Admin SDK (`check_revoked` configurable).  
+4. Server upserts user by verified email + `firebase_uid` (refuses silent link onto existing password accounts).  
+5. Issues **app JWT** — all product APIs use the app JWT, not long-lived Firebase tokens.
+
+**Frontend compatibility:** if Firebase email sign-in fails with user-not-found / invalid-credential, the client falls back to `POST /auth/sign-in` for legacy backend-only accounts.
+
+**Session storage:**
+
+| Location | Key |
+|----------|-----|
+| localStorage | `career_copilot_access_token` |
+| Cookie | `career_copilot_session` (SameSite=Lax; used for authenticated file GETs in `<img>`) |
+
+**Account deletion:** phrase `DELETE MY ACCOUNT` + email match → collect storage paths → purge objects → delete user-owned collections → profile → user.
+
+### 7.2 Document parsing
+
+**Entry:** `parse_document_bytes` (`features/document_parsing/pipeline.py`).
+
+1. **Validate** mime/size (`validate_document`).  
+2. **Extract text** off the event loop (`asyncio.to_thread` → `text_extract.py`): optional PyMuPDF/pdfplumber, then pypdf; DOCX via python-docx.  
+3. **Sections:** upload path uses `prefer_llm=False` so review never blocks on a remote model. Structural layout parser (`llm_sections.extract_sections_structural` / sections heuristics). LLM segregation is available when explicitly preferred for AI-powered flows.  
+4. **Clean structured content:** strip empty lines, preserve URLs into a `links` section.  
+5. Persist `extraction_status=review_required`, warnings, plain text.
+
+User flow: PATCH extraction → POST confirm → `confirmed`.
+
+### 7.3 Profile
+
+- **Completion:** weighted checklist 0–100 (`completion.py`); recalculated after mutations.  
+- **Child resources:** skills, experiences, projects, education, certifications, languages, links via `/profile/{resource}`.  
+- **Avatar:** upload to `AVATAR_BUCKET/{user_id}/avatars/...`; profile stores path; browser uses signed `/api/files/...` URL.  
+- **Fill-from-resume:**  
+  1. Load version (preferred confirmed, or any with text).  
+  2. AI extract (preferred LLM) + deterministic mapping.  
+  3. Evidence filter (must ground in resume text — imperfect; see caveats).  
+  4. **Preview** returns draft; **apply** writes only selected rows.  
+- **Skills import:** deterministic skill candidates from confirmed resume text.
+
+### 7.4 ATS scoring (product path)
+
+| Item | Value |
+|------|--------|
+| Scorer | `features/ats/ats_score.py` |
+| Version | `evidence-keyword-coverage-v4` |
+| Persist | `POST /api/v1/ats-analyses` |
+| Stateless | `POST /api/v1/ats/score` |
+
+**How scoring works:**
+
+1. Require confirmed resume version + confirmed JD.  
+2. Fingerprint source texts + confirm timestamps; if an identical completed analysis exists, return it.  
+3. Extract JD requirement terms (required vs preferred weights; section markers; alias groups for JS/TS/k8s/…).  
+4. Match against resume plain text + structured sections.  
+5. Match strengths: strong (1.0), partial (0.5), missing (0.0) → weighted overall 0–100.  
+6. Persist `ats_analyses` + one `ats_evidence` row per term (exact resume quote or null).  
+7. Optional improvement brief (preferred LLM, deterministic fallback) attached to summary — never invents experience.
+
+**Not the product path:** `features/ats/agent/*` and `features/ats/scoring/*` composite/crew libraries for tests/experiments. Product persist always uses deterministic `score_resume`.
+
+### 7.5 Resume improvement
+
+**Route module:** `features/resume_improvement/routes.py`.
+
+Sequential crew (`agents/crew/orchestrator.py`):
+
+1. **Gap analyst** — missing keywords from ATS evidence only.  
+2. **Resume improver** — preferred LLM generates rewrite suggestions for selected blocks.  
+3. **Evidence validator** — drops suggestions that fail server-side grounding checks.  
+
+Suggestions can be accepted/rejected/edited; apply creates a new resume version. Export PDF/DOCX via reportlab/docx. Primary product loop remains: edit locally → re-upload → re-confirm → re-score.
+
+### 7.6 Mock interview
+
+```text
+POST /interviews
+  → POST /interviews/{id}/start   (generate questions)
+  → POST /interviews/{id}/responses  (answer + optional evaluation)
+  → POST /interviews/{id}/complete   (requires all questions answered)
+  → GET  /interviews/{id}/report
+```
+
+| Piece | How it works |
+|-------|----------------|
+| Questions | Groq structured JSON, else local templates (`question_generator.py`) |
+| Preparation | Evidence packs from confirmed resume + JD (`preparation.py`) |
+| TTS | Optional Fish Audio server-side (`POST /interviews/tts`); browser speechSynthesis fallback |
+| STT | Browser Web Speech API (Chromium / secure context) |
+| Gaze | Client-side metrics; server normalizes without inventing camera data |
+| Evaluation | Practice feedback (score, strengths, improvements, fillers, pace) — coaching only |
+| Complete | Rejects with 409 if unanswered questions remain |
+
+### 7.7 Learning paths
+
+Algorithm `ats-mixed-learning-v1`:
+
+1. Require a completed ATS analysis.  
+2. Extract gaps from evidence (`not_found` / `partial_match`).  
+3. Crew plans search queries (model never invents video IDs).  
+4. Materialize:  
+   - YouTube Data API → real `watch?v=` IDs, or  
+   - YouTube search-page URLs only, plus  
+   - Allowlisted educational **search** URLs (MDN, docs sites, freeCodeCamp search, etc.) — no invented article paths.  
+5. Persist `learning_paths` + `learning_items` + `learning_resources`.  
+6. Item progress updates path `progress_percentage`.
+
+### 7.8 Jobs and recommendations
+
+| Endpoint | Behavior |
+|----------|----------|
+| `GET /jobs` | Active jobs catalog (newest published first, client-side order) |
+| `POST /jobs/external/sync` | Adzuna page 1 search from candidate preferences; cooldown + process lock |
+| `POST /job-recommendations/generate` | Score catalog against confirmed resume evidence; paginate with offset/limit |
+| `GET /job-recommendations` | Stored recommendations joined to active jobs |
+| Saved jobs | Save / pipeline status (saved → applied → interviewing → offer / rejected / withdrawn) |
+
+**Match algorithm** (`evidence-keyword-match-v1`):
+
+- Skills from confirmed resume sections/text; profile skills only if also present in resume evidence.  
+- Requirements from job `requirements` list or extracted tech phrases from description.  
+- Score: with requirements ≈ `(matched/total)*80 + min(role_hits,4)*5`; without ≈ `min(role_hits*12, 40)`.
+
+Frontend uses sessionStorage stale-while-revalidate cache for recommendation feeds (`job-recs-cache.ts`) and a 3D globe for geo-tagged jobs.
+
+### 7.9 Settings
+
+- Profile patch, preferences, notification/privacy toggles.  
+- Password update.  
+- Account deletion with typed confirmation phrase.
+
+### 7.10 Marketing / workspace chrome
+
+- Landing page with feature sections and starfield/theme.  
+- Workspace shell: nav, bootstrap context provider, theme toggle, demo-mode banner.  
+- Route prefetch for faster navigation.
+
+---
+
+## 8. Agents and LLM providers
+
+Inventory: `backend/app/agents/registry.py` → `GET /api/v1/agents/status` and bootstrap `agents`.
+
+| ID | Provider | Endpoint | Fallback |
+|----|----------|----------|----------|
+| `resume_improvement` | preferred LLM | `POST /resume-improvements` | Manual edit / re-upload |
+| `resume_improvement_crew` | preferred + sequential crew | same | Built-in orchestrator if no official crewai |
+| `profile_fill` | preferred LLM | `POST /profile/from-resume/preview` | Deterministic mapping |
+| `interview_questions` | **Groq only** | `POST /interviews/{id}/start` | Local templates |
+| `interview_evaluation` | Groq or deterministic | responses + complete | Heuristics + filler/pace |
+| `ats_improvement_brief` | preferred LLM | part of ATS persist | Deterministic missing-keyword brief |
+| `learning_youtube_crew` | Groq + tools | `POST /learning-paths/generate` | Deterministic gap→search plan |
+| `document_section_extract` | preferred LLM | optional enrichment | Structural layout parser |
 
 ### Provider clients
 
 | File | Role |
 |------|------|
-| `agents/providers/groq_client.py` | Groq OpenAI-compatible client |
+| `agents/providers/groq_client.py` | Groq OpenAI-compatible client + structured output + repair |
 | `agents/providers/nvidia_client.py` | NVIDIA Integrate client |
-| `agents/providers/common.py` | Shared completion / JSON helpers |
+| `agents/providers/common.py` | JSON extract / fence strip |
 | `agents/providers/rate_limit.py` | Process-level RPM (`LLM_RPM_LIMIT`) |
-| `agents/providers/routing.py` | Preferred order; optional OmniRoute rewrite |
+| `agents/providers/routing.py` | Preferred order; OmniRoute credential rewrite |
 | `agents/providers/prompts.py` | Load prompt text files |
-| `agents/registry.py` | Agent inventory + status |
 
 ### Crew runtimes
 
-- **Official `crewai`** when installed (`pip install -e "backend/.[crewai]"`) and Python allows.
-- Otherwise **built-in sequential orchestrator** (same tool steps; compatible shape in `resume_improvement/agents/crew/compat.py`).
-
-Crews used in product paths:
-
-1. **Learning YouTube crew** — gap extract → plan queries → validate/materialize (API or search URLs).  
-2. **Resume improvement crew** — gap analyze → LLM improve → evidence validate.
-
-**Not product persist path:** optional composite LLM ATS under `features/ats/agent/` + `features/ats/scoring/` is library/tests only. Product `POST /ats-analyses` always uses deterministic `score_resume`.
+- Official `crewai` when installed (`pip install -e "backend/.[crewai]"`).  
+- Otherwise built-in sequential orchestrator with the same tool steps.
 
 ---
 
-## 8. Data model (Firestore + Supabase Storage)
+## 9. Data model (Firestore + Supabase Storage)
 
 ### Stores
 
 | Store | Role |
 |-------|------|
-| **Cloud Firestore** | Structured candidate data |
-| **Supabase Storage** | Binary objects (resumes, avatars, exports) |
+| Cloud Firestore | Structured candidate data |
+| Supabase Storage | Binary objects |
 
-Access path: **FastAPI only** (Admin SDK + service role). Browser rules deny direct Firestore access.
+Access path: **FastAPI only**. Browser Firestore rules: deny all.
 
-### Ownership
+### Collections (summary)
 
-Almost every candidate row includes `user_id` and `id`. Helpers: `owned_row` / `owned_rows`, `sort_rows_by_recency` in `database/repository.py`.
-
-### Collections
-
-#### Identity
-
-| Collection | Key fields | Created by |
-|------------|------------|------------|
-| `users` | `id`, `email`, `password_hash`, `full_name`, optional `firebase_uid` | Sign-up, Firebase exchange |
-| `profiles` | `id` (= user id), completion fields, avatar paths | Signup + profile patches |
-
-#### Preferences
-
-| Collection | Notes |
-|------------|--------|
-| `candidate_preferences` | Target roles, locations, work modes, etc. |
-| `notification_preferences` | Notification toggles |
-| `privacy_preferences` | Privacy toggles |
-
-#### Profile content (`CANDIDATE_TABLES`)
-
-| API resource | Collection |
-|--------------|------------|
-| `skills` | `candidate_skills` |
-| `experiences` | `candidate_experiences` |
-| `projects` | `candidate_projects` |
-| `education` | `candidate_education` |
-| `certifications` | `candidate_certifications` |
-| `languages` | `candidate_languages` |
-| `links` | `candidate_links` |
-
-#### Documents
-
-| Collection | Purpose |
-|------------|---------|
-| `resumes` | Parent (`title`, `is_active`, soft `deleted_at`, `created_at`) |
-| `resume_versions` | File version: text, structured content, extraction status, `storage_path` |
-| `job_descriptions` | JD text/file, metadata, extraction status |
-
-Key fields: `plain_text` / `raw_text`, `structured_content`, `extraction_status`, `candidate_confirmed_at`, `storage_path`, `created_at`.
-
-#### ATS
-
-| Collection | Purpose |
-|------------|---------|
-| `ats_analyses` | Score run: status, overall score, breakdown, summary, algorithm version |
-| `ats_evidence` | One row per JD term: match status, exact quote or null |
-
-Idempotency: fingerprint of source text + confirm times; unchanged fingerprint returns existing completed analysis.
-
-#### Resume improvement
-
-| Collection | Purpose |
-|------------|---------|
-| `resume_improvement_runs` | Job metadata |
-| `resume_suggestions` | Accept/reject/edit suggestions |
-| `resume_exports` | Generated export files |
-
-#### Interview
-
-| Collection | Purpose |
-|------------|---------|
-| `interview_sessions` | Mode, role, difficulty, camera/mic flags, status |
-| `interview_questions` | Generated questions + source_context |
-| `interview_responses` | Typed text / transcript fields |
-| `interview_reports` | Completion artifacts (practice feedback; not hiring decisions) |
-
-#### Learning
-
-| Collection | Purpose |
-|------------|---------|
-| `learning_paths` | Path metadata, progress, source analysis id |
-| `learning_items` | Steps |
-| `learning_resources` | YouTube watch or search URLs |
-
-#### Jobs
-
-| Collection | Purpose |
-|------------|---------|
-| `jobs` | Local catalog (optional Adzuna fill) |
-| `job_recommendations` | Ranked matches |
-| `saved_jobs` | User bookmarks |
-
-#### Activity
-
-| Collection | Purpose |
-|------------|---------|
-| `activity_events` | Dashboard recent activity (pruned; `created_at` on write) |
+| Group | Collections |
+|-------|-------------|
+| Identity | `users`, `profiles` |
+| Preferences | `candidate_preferences`, `notification_preferences`, `privacy_preferences` |
+| Profile content | `candidate_skills`, `candidate_experiences`, `candidate_projects`, `candidate_education`, `candidate_certifications`, `candidate_languages`, `candidate_links` |
+| Documents | `resumes`, `resume_versions`, `job_descriptions` |
+| ATS | `ats_analyses`, `ats_evidence` |
+| Improvement | `resume_improvement_runs`, `resume_suggestions`, `resume_exports` |
+| Interview | `interview_sessions`, `interview_questions`, `interview_responses`, `interview_reports` |
+| Learning | `learning_paths`, `learning_items`, `learning_resources` |
+| Jobs | `jobs`, `job_recommendations`, `saved_jobs` |
+| Activity | `activity_events`, `user_notifications` |
 
 ### Object storage layout
-
-Bucket: `SUPABASE_STORAGE_BUCKET` (default `career-copilot-files`).
-
-Logical prefixes:
-
-| Env | Typical value | Contents |
-|-----|---------------|----------|
-| `DOCUMENT_BUCKET` | `candidate-documents` | Resumes, JDs, exports |
-| `AVATAR_BUCKET` | `candidate-avatars` | Profile images |
 
 ```text
 {SUPABASE_STORAGE_BUCKET}/
   {DOCUMENT_BUCKET}/{user_id}/resumes/...
   {DOCUMENT_BUCKET}/{user_id}/job-descriptions/...
+  {DOCUMENT_BUCKET}/{user_id}/exports/...
   {AVATAR_BUCKET}/{user_id}/avatars/...
 ```
 
-Browser download: `GET /api/v1/files/{bucket}/{path}` with JWT; path must start with `{user_id}/`. Vite maps `/api/files/*` to that route.
+Browser download: `GET /api/v1/files/{bucket}/{path}` with JWT; path must start with `{user_id}/`.
 
-### Account deletion cascade
+### Table allow-list
 
-`features/auth/account_deletion.py`: confirm phrase **`DELETE MY ACCOUNT`**, collect storage paths, purge objects, delete `USER_OWNED_TABLES` then profile/user.
+`database/client.py` only permits known collection names in `_TABLES` (unknown table → `ValueError`).
 
 ---
 
-## 9. API surface
+## 10. API surface
 
-Base path: **`/api/v1`** (`API_V1_PREFIX`).  
-Browser (local Vite): **`/api/backend/...`** → `/api/v1/...`.  
-Files: **`/api/files/...`** → `/api/v1/files/...`.  
-OpenAPI (non-production): `http://127.0.0.1:8000/docs`.
-
-Implementation: `backend/app/api/router.py`, `backend/app/api/routers/auth.py`, `features/ats/routes.py`, `features/resume_improvement/routes.py`.
+**Base path:** `/api/v1` (`API_V1_PREFIX`)  
+**Browser (local Vite):** `/api/backend/...` → `/api/v1/...`  
+**Files (local Vite):** `/api/files/...` → `/api/v1/files/...`  
+**OpenAPI (non-production):** `http://127.0.0.1:8000/docs`
 
 ### Authentication
 
 | Mechanism | Detail |
 |-----------|--------|
-| Header | `Authorization: Bearer <JWT>` (preferred) |
-| Cookie | `career_copilot_session=<JWT>` |
-| Algorithm | HS256 (`core/constants.py`) |
+| Header | `Authorization: Bearer <JWT>` (preferred for XHR) |
+| Cookie | `career_copilot_session` (file/media) |
+| Algorithm | HS256 |
 | Secret | `AUTH_SECRET` |
-| Claims | `sub` (user id), `email`, `iat`, `exp` |
-| Dep | `features/auth/service.py` → `get_current_user` |
+| Claims | `sub`, `email`, `iat`, `exp` |
 
-### Endpoint map
+### Endpoint map (prefix `/api/v1`)
 
-| Area | Endpoints (prefix `/api/v1`) |
-|------|------------------------------|
-| Auth | `POST /auth/sign-up`, `/sign-in`, `/session`, `/firebase`, `/sign-out`, `/update-password`; stubs: `/resend`, `/reset-password` |
-| Health | `GET /health`, `/health/database`, `/agents/status` |
-| Me | `GET /me/bootstrap`, `/me/activity` |
-| Profile | `/profile`, avatar, preferences, child resources, from-resume preview/apply |
-| Resumes / JDs | `/resumes`, versions, confirm; `/job-descriptions` |
-| ATS | `/ats-analyses`, evidence, suggestions; `POST /ats/score` (stateless) |
-| Improvement | `/resume-improvements*`, suggestions, apply, exports |
-| Interview | `/interview-preparation`, `/interviews` (+ start / responses / complete) |
-| Learning | `/learning-paths`, `/learning-paths/generate` |
-| Jobs | `/jobs`, recommendations, saved jobs, optional external sync |
-| Settings | `/settings`, notifications, privacy |
-| Account | `DELETE /account` |
-| Files | `GET /files/{bucket}/{path}` |
+| Area | Methods / paths |
+|------|-----------------|
+| **Auth** | `POST /auth/sign-up`, `/sign-in`, `/session`, `/firebase`, `/sign-out`, `/update-password`; stubs `/resend`, `/reset-password` |
+| **Health** | `GET /health/live`, `/health`, `/health/ready`, `/health/database`, `/agents/status` |
+| **Me** | `GET /me/bootstrap`, `/me/activity` |
+| **Profile** | `GET/PATCH /profile`, avatar upload/delete, preferences, skills import, from-resume preview/apply/upload, CRUD `/profile/{resource}` |
+| **Resumes** | list/create/get/patch/delete, preview, activate, versions, version get/patch extraction/confirm |
+| **JDs** | list/create/upload/get, metadata, extraction, confirm |
+| **ATS** | list/get/delete/create analyses, evidence, suggestions; `POST /ats/score` |
+| **Improvement** | capabilities, create run, get run/suggestions, patch suggestion, apply, comparisons, exports |
+| **Interview** | preparation, tts status/synthesize, CRUD sessions, start, responses, complete, report |
+| **Learning** | list/get/delete/create/generate paths, patch item progress |
+| **Jobs** | list/get jobs, external sync, recommendations list/generate, saved-jobs CRUD/patch |
+| **Settings** | get settings, put notifications/privacy |
+| **Account** | `DELETE /account` |
+| **Files** | `GET /files/{bucket}/{path}` |
 
 ### Error shape
 
@@ -540,384 +574,144 @@ Implementation: `backend/app/api/router.py`, `backend/app/api/routers/auth.py`, 
 }
 ```
 
-Every response includes `X-Request-ID` (middleware in `main.py`).
+Every response includes `X-Request-ID`.
 
-### Rate limits and caps
+### Caps and limits
 
 | Area | Behavior |
 |------|----------|
-| LLM | Process-level RPM via `LLM_RPM_LIMIT` + `rate_limit.py` |
-| Lists | User-owned; newest-first via in-process recency sort when timestamps may be missing |
-| ATS terms | Cap 80 JD terms in scorer |
-| Improvement | `IMPROVEMENT_MAX_SECTIONS`, source/JD char caps |
+| LLM | Process-level RPM (`LLM_RPM_LIMIT`) |
+| Documents | `DOCUMENT_MAX_BYTES` (default 10 MB) |
+| Avatars | `AVATAR_MAX_BYTES` (default 3 MB) |
+| Interview media | `INTERVIEW_MEDIA_MAX_BYTES=0` disables binary media uploads |
+| ATS terms | Scorer caps JD terms |
+| Improvement | Max sections / source & JD char caps |
+| Adzuna sync | Per-user cooldown + process-wide lock |
+| Job recs generate | In-process generation generation counter per user |
 
 ---
 
-## 10. Code map — every application file and purpose
+## 11. Code map — application layout
 
-Paths relative to repository root. Excludes `node_modules`, `__pycache__`, `dist`, and vendored `integrations/omniroute` internals (optional sidecar).
+Paths relative to repository root.
 
-### Root
-
-| Path | Purpose |
-|------|---------|
-| `package.json` | Monorepo scripts: setup, dev, checks, `test:backend` |
-| `.env` / `.env.example` | Single env file for frontend + backend |
-| `README.md` | Product overview + quick start |
-| `docs/DOCUMENTATION.md` | **This unified documentation (canonical)** |
-| `firebase/firestore.rules` | Deny all client Firestore access |
-| `firebase/storage.rules` | Legacy Firebase Storage rules (product files use Supabase) |
-| `scripts/` | Install, dev orchestration, diagnostics |
-| `secrets/` | Local service-account JSON (**gitignored**) |
-
-### Scripts
+### Root & scripts
 
 | Path | Purpose |
 |------|---------|
-| `scripts/setup/project.mjs` | Full install orchestration |
-| `scripts/setup/backend.mjs` | Create venv, `pip install -e backend` |
-| `scripts/setup/firebase.mjs` | Firebase connectivity checks |
-| `scripts/dev/preflight.mjs` | Env/Firestore preflight before `dev` |
-| `scripts/dev/run.mjs` | Spawn frontend + backend |
-| `scripts/dev/frontend.mjs` | Frontend process launcher |
-| `scripts/dev/backend.mjs` | Backend process launcher |
-| `scripts/shared/load-env.mjs` | Load root `.env` for Node scripts |
-| `scripts/shared/ports.mjs` | Port resolution |
-| `scripts/shared/backend-venv.mjs` | Locate `backend/.venv` Python |
-| `scripts/diagnostics/verify-environment.mjs` | `npm run check:env` |
-| `scripts/diagnostics/check-secrets.mjs` | Credential leak scan |
-| `scripts/diagnostics/check-firestore.py` | Firestore probe |
-| `scripts/diagnostics/e2e-smoke.py` | API workflow smoke |
-| `scripts/diagnostics/audit-local-api.py` | Local API audit |
-| `scripts/diagnostics/_audit_once.py` | Offline stack audit |
-| `scripts/diagnostics/check-resume-proceed.mjs` | Resume flow diagnostic |
-| `scripts/verify-boundaries.mjs` | Import boundary checks |
-| `scripts/run-frontend.mjs` | Run frontend npm tasks from root |
-| `scripts/integrations/omniroute.mjs` | Optional OmniRoute install/dev/check |
+| `package.json` | setup, dev, checks, `test:backend` |
+| `.env.example` | Env template (single file for FE+BE) |
+| `README.md` | Product quick start |
+| `docs/DOCUMENTATION.md` | **This file (canonical)** |
+| `firebase/firestore.rules` | Deny all client access |
+| `scripts/setup/*` | Install orchestration |
+| `scripts/dev/*` | Preflight + process spawn |
+| `scripts/diagnostics/*` | Env/secrets/API/Firestore audits |
+| `scripts/integrations/omniroute.mjs` | Optional OmniRoute helper |
 
-### Backend core and entry
+### Backend
 
 | Path | Purpose |
 |------|---------|
-| `backend/pyproject.toml` | Package `career-copilot-api`, deps, ruff, optional extras |
-| `backend/app/__init__.py` | Package marker |
-| `backend/app/main.py` | FastAPI app: CORS, middleware, exception handlers, router mounts |
-| `backend/app/core/__init__.py` | Core package |
-| `backend/app/core/config.py` | `Settings` from root `.env`; provider validators |
-| `backend/app/core/constants.py` | JWT algo, password min length, optional ATS composite weights |
-| `backend/app/core/errors.py` | `ApiError` + JSON error handlers |
+| `backend/app/main.py` | FastAPI app, CORS, middleware |
+| `backend/app/core/config.py` | Settings from root `.env` |
+| `backend/app/core/errors.py` | `ApiError` handlers |
+| `backend/app/api/router.py` | Primary HTTP product surface |
+| `backend/app/api/routers/auth.py` | Auth endpoints |
+| `backend/app/api/schemas.py` | Request/response models |
+| `backend/app/database/client.py` | Firestore query adapter + storage facades |
+| `backend/app/database/repository.py` | Ownership, recency, activity, completion |
+| `backend/app/agents/*` | Registry, providers, prompts |
+| `backend/app/features/auth/*` | JWT user, account deletion |
+| `backend/app/features/document_parsing/*` | Parse pipeline, extractors, sections |
+| `backend/app/features/ats/*` | Product scorer, brief, optional library |
+| `backend/app/features/profile/*` | Completion, avatars, fill agent |
+| `backend/app/features/interview/*` | Questions, evaluation, prep, TTS |
+| `backend/app/features/learning/*` | YouTube/article catalogs, crew |
+| `backend/app/features/career_matching.py` | Job match scoring |
+| `backend/app/features/adzuna_api.py` | External job provider |
+| `backend/app/features/resume_management/*` | Evidence, improve logic, exports |
+| `backend/app/features/resume_improvement/*` | HTTP + crew for improvements |
+| `backend/tests/*` | pytest suite |
 
-### Backend API
-
-| Path | Purpose |
-|------|---------|
-| `backend/app/api/__init__.py` | API package |
-| `backend/app/api/router.py` | **Primary HTTP surface** — product routes, account, ATS persist, interviews, learning, jobs |
-| `backend/app/api/schemas.py` | Pydantic request bodies |
-| `backend/app/api/routers/auth.py` | Auth router: sign-up/in, Firebase exchange, password helpers |
-
-### Backend database
-
-| Path | Purpose |
-|------|---------|
-| `backend/app/database/__init__.py` | Database package |
-| `backend/app/database/client.py` | Firestore query adapter, table allow-list, Supabase storage facade |
-| `backend/app/database/repository.py` | `owned_row(s)`, recency sort, activity, profile completion, `CANDIDATE_TABLES` |
-| `backend/app/database/activity.py` | Activity prune limits and helpers |
-
-### Backend agents
+### Frontend
 
 | Path | Purpose |
 |------|---------|
-| `backend/app/agents/__init__.py` | Re-exports for agent helpers |
-| `backend/app/agents/registry.py` | Agent inventory for `/agents/status` |
-| `backend/app/agents/providers/__init__.py` | Provider exports |
-| `backend/app/agents/providers/common.py` | Shared completion / JSON helpers |
-| `backend/app/agents/providers/groq_client.py` | Groq client |
-| `backend/app/agents/providers/nvidia_client.py` | NVIDIA client |
-| `backend/app/agents/providers/prompts.py` | Load prompt files |
-| `backend/app/agents/providers/rate_limit.py` | RPM budget |
-| `backend/app/agents/providers/routing.py` | Preferred provider order; OmniRoute rewrite |
-| `backend/app/agents/prompts/*.txt` | Versioned prompt packs (see §4) |
-
-### Backend features — auth
-
-| Path | Purpose |
-|------|---------|
-| `backend/app/features/auth/__init__.py` | Auth package |
-| `backend/app/features/auth/service.py` | `CurrentUser`, JWT create/decode, `get_current_user` |
-| `backend/app/features/auth/account_deletion.py` | Confirm phrase, storage path collect, cascade delete |
-
-### Backend features — profile
-
-| Path | Purpose |
-|------|---------|
-| `backend/app/features/profile/__init__.py` | Profile package |
-| `backend/app/features/profile/completion.py` | Checklist weights → 0–100 |
-| `backend/app/features/profile/avatars.py` | Upload validation, storage paths |
-| `backend/app/features/profile/importer.py` | Apply validated batch from draft |
-| `backend/app/features/profile/agent/__init__.py` | Agent package |
-| `backend/app/features/profile/agent/pipeline.py` | Fill-from-resume orchestration |
-| `backend/app/features/profile/agent/deterministic.py` | Non-LLM mapping |
-| `backend/app/features/profile/agent/normalize.py` | Date/value normalization |
-
-### Backend features — document parsing
-
-| Path | Purpose |
-|------|---------|
-| `backend/app/features/document_parsing/__init__.py` | Parsing package |
-| `backend/app/features/document_parsing/pipeline.py` | `parse_document_bytes` public entry |
-| `backend/app/features/document_parsing/service.py` | Validate, skills candidates, metadata helpers |
-| `backend/app/features/document_parsing/schemas.py` | Extraction schemas |
-| `backend/app/features/document_parsing/confidence.py` | Confidence helpers |
-| `backend/app/features/document_parsing/contamination.py` | Contamination checks |
-| `backend/app/features/document_parsing/grounding.py` | Grounding utilities |
-| `backend/app/features/document_parsing/reconciliation.py` | Merge/reconcile helpers |
-| `backend/app/features/document_parsing/source_blocks.py` | Source block types |
-| `backend/app/features/document_parsing/parsing/text_extract.py` | PDF/DOCX text extraction chain |
-| `backend/app/features/document_parsing/parsing/llm_sections.py` | LLM line→section mapping |
-| `backend/app/features/document_parsing/parsing/sections.py` | Structural/heuristic sections |
-| `backend/app/features/document_parsing/extractors/pdf.py` | Lightweight PDF blocks |
-| `backend/app/features/document_parsing/extractors/docx.py` | DOCX blocks |
-
-### Backend features — ATS
-
-| Path | Purpose |
-|------|---------|
-| `backend/app/features/ats/__init__.py` | ATS package |
-| `backend/app/features/ats/ats_score.py` | **Product scorer** `evidence-keyword-coverage-v3` |
-| `backend/app/features/ats/deterministic.py` | Deterministic helpers |
-| `backend/app/features/ats/routes.py` | Stateless `POST /ats/score` |
-| `backend/app/features/ats/agents/improvement_brief.py` | LLM/deterministic brief after score |
-| `backend/app/features/ats/agent/*` | Optional CrewAI structured ATS **library** (not product persist path) |
-| `backend/app/features/ats/scoring/*` | Optional composite scoring service/schemas (library/tests) |
-
-### Backend features — interview
-
-| Path | Purpose |
-|------|---------|
-| `backend/app/features/interview/preparation.py` | Evidence-grounded prep packs |
-| `backend/app/features/interview/question_bank.py` | Local question templates |
-| `backend/app/features/interview/agent/question_generator.py` | Groq structured questions |
-| `backend/app/features/interview/agent/evaluator.py` | Answer evaluation + session report (practice coaching) |
-
-### Backend features — learning
-
-| Path | Purpose |
-|------|---------|
-| `backend/app/features/learning/__init__.py` | Learning package |
-| `backend/app/features/learning/service.py` | `generate_learning_path_from_ats` |
-| `backend/app/features/learning/youtube_api.py` | YouTube Data API v3 client |
-| `backend/app/features/learning/youtube_catalog.py` | Algorithm version + catalog helpers |
-| `backend/app/features/learning/agents/crew/orchestrator.py` | Sequential crew wiring |
-| `backend/app/features/learning/agents/crew/tools.py` | Gap extract, plan, materialize tools |
-| `backend/app/features/learning/agents/crew/models.py` | Crew result types |
-
-### Backend features — jobs & resume improvement
-
-| Path | Purpose |
-|------|---------|
-| `backend/app/features/career_matching.py` | Job match score `evidence-keyword-match-v1` |
-| `backend/app/features/adzuna_api.py` | External job sync client |
-| `backend/app/features/resume_management/evidence.py` | Evidence hashing / validation |
-| `backend/app/features/resume_management/validation.py` | Suggestion validation |
-| `backend/app/features/resume_management/improvements.py` | Improvement domain logic |
-| `backend/app/features/resume_management/improvement_repository.py` | Persistence for runs/suggestions |
-| `backend/app/features/resume_management/exports.py` | PDF/DOCX export generation |
-| `backend/app/features/resume_improvement/routes.py` | HTTP for improvement |
-| `backend/app/features/resume_improvement/agents/crew/*` | Gap → improve → validate crew + compat runtime |
-
-### Backend tests (overview)
-
-| Path | Purpose |
-|------|---------|
-| `backend/tests/ats_scoring/` | Keyword score, gate, schemas, service, enrichment |
-| `backend/tests/document_parsing/` | Sections, validation, e2e parse, performance |
-| `backend/tests/interview/` | Preparation, answer evaluator, question fallback |
-| `backend/tests/learning/` | YouTube crew |
-| `backend/tests/fixtures/resumes/` | PDF/DOCX/JSON fixtures |
-| `backend/tests/test_*.py` | Auth, avatars, jobs sync, rate limit, Firestore guards, LLM routing |
-
-### Frontend entry and shared
-
-| Path | Purpose |
-|------|---------|
-| `frontend/package.json` | Vite app scripts and deps |
-| `frontend/vite.config.mjs` | Alias `@`, BFF proxy rewrite |
-| `frontend/index.html` | SPA shell |
-| `frontend/src/main.tsx` | React bootstrap |
-| `frontend/src/App.tsx` | Routes, lazy imports, `ProtectedRoute` |
-| `frontend/src/globals.css` | Theme tokens / Tailwind |
-| `frontend/src/vite-env.d.ts` | Vite types |
-| `frontend/src/shared/api/client.ts` | Authenticated `apiRequest` |
-| `frontend/src/shared/config.ts` | Token keys, demo cookie, API base |
-| `frontend/src/shared/routes.ts` | Route constants |
-| `frontend/src/shared/router.ts` | Router helpers |
-| `frontend/src/shared/theme.tsx` | Theme provider |
-| `frontend/src/shared/theme-utils.ts` | Theme utilities |
-| `frontend/src/shared/utils.ts` | Shared utils |
-| `frontend/src/shared/dynamic.tsx` | Dynamic import helper |
-| `frontend/src/shared/ui/*` | Shared UI (primitives, job-ticker, parallax, router-link) |
-| `frontend/src/components/ui/*` | Design-system primitives (button, card, dialog, …) |
-
-### Frontend features
-
-| Path | Purpose |
-|------|---------|
-| `features/auth/api/client.ts` | Sign-in/up, token save (clears demo cookie) |
-| `features/auth/components/auth-screen.tsx` | Auth screens |
-| `features/auth/firebase.ts` | Google Web SDK |
-| `features/auth/demo-session.ts` | Dev-only in-memory API mocks |
-| `features/auth/safe-path.ts` | Safe redirect path |
-| `features/dashboard/components/dashboard.tsx` | Dashboard metrics + activity |
-| `features/dashboard/components/interview-progress-charts.tsx` | Interview progress charts |
-| `features/resume/components/resume-flow.tsx` | Resume library, ATS history, report |
-| `features/resume/analysis-labels.ts` | Label helpers for analyses |
-| `features/interview/components/interview-flow.tsx` | Mock interview session UI |
-| `features/interview/components/interview-preparation.tsx` | Prep UI |
-| `features/interview/interview-voice.ts` | TTS / speech recognition pure helpers |
-| `features/interview/preparation.ts` | Prep client helpers |
-| `features/learning/components/learning.tsx` | Learning paths UI |
-| `features/jobs/components/jobs.tsx` | Jobs list/detail |
-| `features/jobs/components/career-globe.tsx` | 3D globe |
-| `features/jobs/components/globe-utils.ts` | Globe helpers |
-| `features/jobs/components/job-card-skeleton.tsx` | Loading skeleton |
-| `features/jobs/components/job-modal.tsx` | Job modal |
-| `features/jobs/components/job-types.ts` | Job TypeScript types |
-| `features/jobs/utils/globe-lifecycle.ts` | Globe mount/unmount lifecycle |
-| `features/settings/components/settings.tsx` | Profile, account, preferences, privacy |
-| `features/onboarding/components/onboarding.tsx` | First-run onboarding |
-| `features/marketing/components/landing.tsx` | Marketing landing |
-| `features/marketing/components/sections/*` | Landing sections |
-| `features/workspace/components/workspace-shell.tsx` | Nav / workspace chrome |
-| `features/profile/components/profile-completion-toast.tsx` | Completion toast |
-| `features/profile/model/profile-completion.ts` | Completion model helpers |
-| `frontend/public/icon.svg` | App icon |
+| `frontend/src/main.tsx` | React bootstrap + theme |
+| `frontend/src/App.tsx` | Routes, auth gate, lazy pages |
+| `frontend/src/shared/api/client.ts` | Authenticated fetch |
+| `frontend/src/shared/config.ts` | API base, token keys |
+| `frontend/src/shared/theme.tsx` | Light/dark/system theme |
+| `frontend/src/shared/route-prefetch.ts` | Prefetch helpers |
+| `frontend/src/features/auth/*` | Firebase + app JWT client, screens, demo session |
+| `frontend/src/features/workspace/*` | Shell + bootstrap context |
+| `frontend/src/features/dashboard/*` | Metrics, interview charts |
+| `frontend/src/features/resume/*` | Library, ATS history, report |
+| `frontend/src/features/interview/*` | Session UI, voice, gaze, TTS, prep |
+| `frontend/src/features/learning/*` | Paths UI |
+| `frontend/src/features/jobs/*` | Feed, cache, globe, modal |
+| `frontend/src/features/settings/*` | Account/profile/privacy |
+| `frontend/src/features/onboarding/*` | First-run |
+| `frontend/src/features/marketing/*` | Landing |
+| `frontend/vite.config.mjs` | Alias `@`, API/file proxies |
+| `frontend/vercel.json` | SPA rewrite for static hosting |
 
 ---
 
-## 11. Feature deep-dives
+## 12. Frontend architecture
 
-### 11.1 Auth
+### Routes (React Router)
 
-**Password storage** (`api/routers/auth.py`): `scrypt(password, salt, n=2**14, r=8, p=1)` stored as `scrypt$salt_hex$digest_hex`; verify with `hmac.compare_digest`. Min length: `MIN_PASSWORD_LENGTH` (8).
-
-**JWT:** payload `sub`, `email`, `iat`, `exp`; signed with `AUTH_SECRET`, HS256; TTL `JWT_TTL_SECONDS` (default 7 days).
-
-**Sign-up graph:** `users` → `profiles` → `candidate_preferences` → `notification_preferences` → `privacy_preferences` (rollback children on failure).
-
-**Google (optional):** Firebase Web SDK → ID token → `POST /auth/firebase` → server verifies → upserts user → issues **app JWT** (API still uses app JWT, not Firebase ID tokens long-term).
-
-**Frontend tokens:** `localStorage[career_copilot_access_token]` + cookie `career_copilot_session`.
-
-### 11.2 Document parsing & confirm
-
-Entry: `parse_document_bytes` (`pipeline.py`).
-
-1. Extract text (`text_extract.py`: PyMuPDF → pdfplumber → pypdf for PDF; python-docx for DOCX; quality gates).  
-2. Section segregation (`llm_sections.py` preferred LLM, else structural `sections.py`).  
-3. Bodies reconstructed only from source lines.  
-4. Persist `extraction_status=review_required`.  
-5. User may PATCH extraction → **confirm** → `confirmed`.
-
-### 11.3 ATS scoring (product)
-
-| Item | Value |
-|------|--------|
-| File | `features/ats/ats_score.py` |
-| Version | `evidence-keyword-coverage-v3` |
-| Persist | `POST /ats-analyses` |
-| Stateless | `POST /ats/score` |
-
-Steps:
-
-1. Extract JD terms (required weight 2.0, preferred 1.0).  
-2. Match resume lines (structured sections preferred) with alias groups.  
-3. Strong = 1.0, partial = 0.5, missing = 0.0.  
-4. Weighted overall 0–100.  
-5. Evidence = exact resume quote or `null`.  
-
-Optional brief: `improvement_brief.py` via preferred LLM (capped timeout); deterministic fallback. History enriched with resume + JD labels.
-
-### 11.4 Profile
-
-Completion checklist (`completion.py`) sums to **100** points (name, location, role, targets, experience, skills, education, work modes, locations, links). Recalculated on mutations via `recalculate_completion`.
-
-Fill-from-resume: **preview → apply** human gate; deterministic merge always available.
-
-### 11.5 Mock interview
-
-```text
-POST /interviews → start → responses → complete
-```
-
-- Questions: Groq structured or local templates.  
-- Optional browser voice: Web Speech Synthesis + Recognition (Chromium / secure context).  
-- Media uploads disabled when `INTERVIEW_MEDIA_MAX_BYTES=0` (text/transcript only).  
-- Evaluation: practice feedback (verdict, strengths, improvements, filler notes) + session report — **coaching**, not a recruiter hire/no-hire decision.
-
-### 11.6 Learning path
-
-Algorithm `ats-youtube-api-v1`:
-
-1. Extract gaps from `ats_evidence` (`not_found` / `partial_match`).  
-2. Plan YouTube **search queries** (no video IDs from the model).  
-3. Materialize: YouTube Data API (`watch?v=<api_id>`) or search-page URL only.  
-
-Persist `learning_paths` + items + resources.
-
-### 11.7 Job recommendations
-
-Algorithm `evidence-keyword-match-v1` (`career_matching.py`):
-
-- Evidence from **confirmed** resume text/sections; profile skills only if grounded in resume text.  
-- With requirements: ~`(matched/requirements)*80 + min(role_hits, 4)*5`.  
-- Without requirements: `min(role_hits*12, 40)`.  
-- Boundary-aware phrase matching.  
-- Optional catalog fill: Adzuna (`POST /jobs/external/sync`).
-
-### 11.8 Resume improvement
-
-Crew: gap analyze → LLM generate → evidence validate. Suggestions accept/reject/edit; export PDF/DOCX. Primary product loop remains re-upload after local edits.
-
----
-
-## 12. Frontend routes and BFF
-
-| Path | Module |
-|------|--------|
+| Path | Feature |
+|------|---------|
 | `/` | Marketing landing |
-| `/sign-in`, `/sign-up`, … | Auth screens |
-| `/onboarding` | Onboarding |
+| `/sign-in`, `/sign-up`, password/verify screens | Auth |
+| `/auth/callback` | Google redirect completion |
+| `/onboarding` | First-run profile |
 | `/dashboard` | Bootstrap metrics + activity |
-| `/resume-analysis` | ATS history, resume library, upload |
+| `/resume-analysis` | Resume library + ATS history |
 | `/resume-analysis/report/:id` | ATS report + evidence |
-| `/mock-interview/*` | Setup, session, preparation |
-| `/learning/*` | Paths |
-| `/jobs/*` | Catalog, saved, detail |
+| `/mock-interview/*` | Setup, session, report, preparation |
+| `/learning/*` | Paths list + detail |
+| `/jobs`, `/jobs/saved`, `/jobs/:jobId` | Recommendations, pipeline, detail |
 | `/settings/*` | Profile, account, preferences, privacy |
 
-**API base:** `resolveApiBase()` uses `VITE_API_BASE_URL` if set (→ origin + `/api/v1`), else `/api/backend` for same-origin proxy.
+### Key FE systems
 
-**Demo mode:** cookie `career_copilot_demo=1` only in non-production; `apiRequest` short-circuits to in-memory mocks. Real sign-in clears the cookie. Production ignores demo.
+| System | How it works |
+|--------|----------------|
+| **ProtectedRoute** | Optimistic if token present; background `/auth/session` revalidation; listens for `career-copilot:auth-expired` |
+| **BootstrapContext** | Loads `/me/bootstrap` once per workspace; generation counter ignores stale responses |
+| **apiRequest** | Bearer JWT, 401 clears session + dispatches auth-expired, abort-aware errors |
+| **Theme** | `data-theme` on `<html>`, localStorage + system preference, custom event for same-tab updates |
+| **Demo mode** | Cookie `career_copilot_demo` only in non-production; mocks entire API in-memory; real sign-in clears it |
+| **Job recs cache** | sessionStorage key by filter; stale-while-revalidate paint |
+
+### API base resolution
+
+- Unset `VITE_API_BASE_URL` → `/api/backend` (same-origin Vite proxy) — **recommended for local dev**.  
+- Set absolute `VITE_API_BASE_URL` → browser talks to that host’s `/api/v1` (file URLs still relative `/api/files` unless a proxy exists on the page origin).
 
 ---
 
 ## 13. Configuration and environment
 
-Single root `.env` (template: `.env.example`). Only `VITE_*` is exposed to the browser.
+Single root `.env` (template: `.env.example`). Only `VITE_*` reaches the browser.
 
 | Group | Examples |
 |-------|----------|
 | App / CORS | `APP_ENV`, `API_V1_PREFIX`, `PUBLIC_API_BASE_URL`, `FRONTEND_ORIGINS` |
 | Auth | `AUTH_SECRET`, `JWT_TTL_SECONDS` |
-| Firestore | `FIREBASE_PROJECT_ID`, `FIREBASE_CREDENTIALS_PATH`, `FIREBASE_DATABASE_ID` |
-| Storage | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_STORAGE_BUCKET`, `DOCUMENT_BUCKET`, `AVATAR_BUCKET` |
+| Firestore | `FIREBASE_PROJECT_ID`, `FIREBASE_CREDENTIALS_PATH`, `FIREBASE_DATABASE_ID`, `FIREBASE_CHECK_REVOKED` |
+| Storage | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (or `SUPABASE_SECRET_KEY`), `SUPABASE_STORAGE_BUCKET`, `DOCUMENT_BUCKET`, `AVATAR_BUCKET` |
 | LLM | `LLM_PROVIDER`, `GROQ_*`, `NVIDIA_*`, `LLM_RPM_LIMIT`, `LLM_ALLOW_REPAIR` |
-| Optional | `YOUTUBE_API_KEY`, `ADZUNA_*`, `OMNIROUTE_*` (default off) |
-| Browser | `VITE_FIREBASE_*` for Google sign-in |
+| YouTube / Jobs | `YOUTUBE_API_KEY`, `ADZUNA_*` |
+| TTS | `FISH_AUDIO_*` |
+| OmniRoute | `OMNIROUTE_ENABLED` (default false) + base/key/model |
+| Browser | `VITE_FIREBASE_*` |
 
-Do **not** set `VITE_API_BASE_URL` for normal local dev (use Vite proxy).
+`APP_ENV=test` forces in-memory object storage for automated tests.
 
 ---
 
@@ -938,7 +732,7 @@ npm run dev
 | API | http://127.0.0.1:8000 |
 | OpenAPI (dev) | http://127.0.0.1:8000/docs |
 
-Optional:
+Optional extras:
 
 ```bash
 backend\.venv\Scripts\python.exe -m pip install -e "backend/.[crewai]"
@@ -957,6 +751,7 @@ backend\.venv\Scripts\python.exe -m pip install -e "backend/.[pdf-extras]"
 | `check:boundaries` | Import boundaries |
 | `check:frontend` | lint + types + test + build |
 | `test:backend` | pytest |
+| `omniroute:*` | Optional sidecar helpers |
 
 ### Testing
 
@@ -966,22 +761,33 @@ cd frontend && npm run test && npm run typecheck
 cd frontend && npm run e2e:landing
 ```
 
-### Troubleshooting (summary)
+Diagnostics (examples):
 
-| Symptom | Fix direction |
-|---------|----------------|
-| Dashboard metrics `—` | Backend up? JWT valid? `/me/bootstrap` |
-| Empty lists with data present | Prefer latest recency sort (not bare `order_by(created_at)`) |
+```bash
+backend\.venv\Scripts\python.exe scripts/diagnostics/check-firestore.py
+backend\.venv\Scripts\python.exe scripts/diagnostics/full-bugs-audit.py
+backend\.venv\Scripts\python.exe scripts/diagnostics/connection-bugs-audit.py
+```
+
+### Troubleshooting
+
+| Symptom | Direction |
+|---------|-----------|
+| Dashboard metrics `—` | Backend up? JWT valid? `GET /me/bootstrap` |
+| Empty lists with data present | Prefer recency sort; missing `created_at` on legacy docs |
 | Storage 503 | Configure Supabase URL, service role, private bucket |
+| Avatars/files 404 in production | Proxy `/api/files` → `/api/v1/files` on the page origin |
 | Agents not ready | Set GROQ/NVIDIA keys or rely on deterministic fallbacks |
-| Demo data instead of real | Clear `career_copilot_demo` / sign in again |
+| Demo data instead of real | Clear demo cookie / sign in again |
+| Google sign-in incomplete | Prefer popup; redirect path needs `/auth/callback` completion |
 
 ### Production notes
 
 - `APP_ENV=production` disables OpenAPI docs.  
 - Restrict `FRONTEND_ORIGINS`.  
-- Proxy `/api/backend` and `/api/files` or set `VITE_API_BASE_URL` at build time.  
-- Production ignores the demo cookie.
+- Proxy both `/api/backend` (or set `VITE_API_BASE_URL`) **and** `/api/files` to the API.  
+- Production ignores the demo cookie.  
+- Prefer strong `AUTH_SECRET`; treat JWT TTL and cookie flags as security-sensitive.
 
 ---
 
@@ -992,47 +798,45 @@ cd frontend && npm run e2e:landing
 ```mermaid
 flowchart TB
   subgraph CLIENT["Browser (untrusted)"]
-    UI["React app<br/>frontend/src"]
+    UI["React app"]
     TOK["JWT localStorage + cookie"]
-    DEMO{"Demo cookie?<br/>dev only"}
+    DEMO{"Demo cookie?\ndev only"}
     MOCK["demo-session mocks"]
   end
 
-  subgraph EDGE["Vite BFF · vite.config.mjs"]
+  subgraph EDGE["Vite BFF"]
     P1["/api/backend → /api/v1"]
     P2["/api/files → /api/v1/files"]
   end
 
-  subgraph API["FastAPI · backend/app"]
+  subgraph API["FastAPI"]
     MW["CORS · X-Request-ID · ApiError"]
     AUTH["get_current_user"]
-    RTR["router.py · ats/routes · resume_improvement/routes"]
+    RTR["router · ats/routes · resume_improvement/routes"]
   end
 
   subgraph DOMAIN["features/*"]
-    F1["auth · document_parsing · ats"]
-    F2["profile · interview · learning"]
-    F3["career_matching · resume_improvement"]
+    F1["auth · parsing · ats · profile"]
+    F2["interview · learning · jobs · improve"]
   end
 
   subgraph AGENTS["agents/*"]
     A1["routing · Groq · NVIDIA · prompts"]
   end
 
-  subgraph DATA["Server SDKs only"]
+  subgraph DATA["Server only"]
     FS[("Firestore")]
     ST[("Supabase Storage")]
   end
 
-  subgraph EXT["External · server secrets"]
-    X1["Groq · NVIDIA · YouTube · Adzuna"]
+  subgraph EXT["External"]
+    X1["Groq · NVIDIA · YouTube · Adzuna · Fish Audio"]
   end
 
   UI --> TOK
   UI --> DEMO
   DEMO -->|yes| MOCK
   DEMO -->|no| EDGE
-  TOK -.-> EDGE
   EDGE --> API
   MW --> AUTH --> RTR --> DOMAIN
   DOMAIN --> AGENTS
@@ -1041,211 +845,131 @@ flowchart TB
   AGENTS --> X1
 ```
 
-### 15.2 Product flow (confirm → outcomes)
+### 15.2 Product flow
 
 ```mermaid
 flowchart LR
-  A[Sign up / sign in] --> B[Profile / onboarding]
-  B --> C[Upload resume PDF/DOCX]
-  C --> D[Parse text + sections]
-  D --> E{User reviews}
-  E -->|PATCH extraction| E
-  E -->|Confirm| F[resume_versions.confirmed]
-  G[Paste / upload JD] --> H[Confirm JD]
-  F --> I[POST /ats-analyses]
-  H --> I
-  I --> J[score_resume<br/>evidence-keyword-coverage-v3]
-  J --> K[(ats_analyses + ats_evidence)]
-  K --> L[Optional ATS brief LLM]
-  K --> M[Learning path<br/>YouTube crew]
-  K --> N[Interview prep / mock]
-  F --> O[Job recommendations<br/>evidence-keyword-match-v1]
-  F --> P[Profile fill preview→apply]
-  K --> Q[Re-upload revised resume]
-  Q --> D
+  A[Sign in] --> B[Profile]
+  B --> C[Upload resume]
+  C --> D[Parse + review]
+  D --> E[Confirm resume]
+  F[Paste JD] --> G[Confirm JD]
+  E --> H[POST /ats-analyses]
+  G --> H
+  H --> I[score_resume v4]
+  I --> J[(ats_analyses + evidence)]
+  J --> K[Learning path]
+  J --> L[Interview prep/mock]
+  E --> M[Job recommendations]
+  E --> N[Profile fill]
+  J --> O[Resume improve]
 ```
 
-### 15.3 Authenticated request sequence
+### 15.3 Authenticated request
 
 ```mermaid
 sequenceDiagram
   autonumber
   actor User
-  participant UI as React UI
+  participant UI as React
   participant API as apiRequest
-  participant Proxy as Vite proxy
+  participant Proxy as Vite
   participant FA as FastAPI
   participant Auth as get_current_user
-  participant H as Handler
-  participant Feat as features/*
+  participant Feat as features
   participant DB as Firestore/Storage
 
   User->>UI: action
-  UI->>API: apiRequest(path, init)
-  alt demo cookie set
-    API-->>UI: demo-session mock
-  else live session
-    API->>Proxy: /api/backend/... + Bearer JWT
-    Proxy->>FA: /api/v1/...
-    FA->>Auth: Depends(get_current_user)
-    Auth->>DB: load users by sub
+  UI->>API: apiRequest
+  alt demo mode
+    API-->>UI: mock
+  else live
+    API->>Proxy: /api/backend + Bearer
+    Proxy->>FA: /api/v1
+    FA->>Auth: JWT + users lookup
     Auth-->>FA: CurrentUser
-    FA->>H: route handler
-    H->>Feat: domain logic
-    Feat->>DB: owned_row / insert / storage
+    FA->>Feat: handler
+    Feat->>DB: owned ops
     DB-->>Feat: data
-    Feat-->>H: result
-    H-->>UI: JSON + X-Request-ID
+    Feat-->>UI: JSON + X-Request-ID
   end
 ```
 
-### 15.4 Auth and database
+### 15.4 ATS
 
 ```mermaid
 flowchart TB
-  subgraph AUTH_FLOW["Auth"]
-    SU[POST /auth/sign-up] --> HASH[scrypt password]
-    HASH --> USER[(users + profiles + prefs)]
-    SI[POST /auth/sign-in] --> MATCH[verify scrypt]
-    MATCH --> JWT[create_access_token HS256]
-    SU --> JWT
-    GOOG[Firebase ID token] --> FB[POST /auth/firebase]
-    FB --> VERIFY[Admin verify_id_token]
-    VERIFY --> UPSERT[upsert user + firebase_uid]
-    UPSERT --> JWT
-    JWT --> STORE[localStorage + career_copilot_session cookie]
-  end
-
-  subgraph DB_LAYER["Data layer"]
-    JWT --> DEP[get_current_user]
-    DEP --> OWN[owned_row / owned_rows]
-    OWN --> FS[(Firestore collections)]
-    OWN --> ST[(Supabase Storage<br/>path must start with user_id/)]
-  end
-```
-
-### 15.5 Firebase
-
-```mermaid
-flowchart LR
-  subgraph BROWSER["Browser"]
-    WEB["Firebase Web SDK<br/>VITE_FIREBASE_* only"]
-    APP["App JWT for all product APIs"]
-  end
-
-  subgraph SERVER["FastAPI trusted"]
-    ADMIN["firebase-admin<br/>service account JSON"]
-    FS[(Cloud Firestore)]
-    RULES["firestore.rules<br/>allow read, write: if false"]
-  end
-
-  WEB -->|Google sign-in ID token| SERVER
-  SERVER -->|exchange → app JWT| APP
-  ADMIN -->|Admin SDK bypasses rules| FS
-  WEB -.->|no direct product data path| RULES
-  APP -->|Bearer to API only| SERVER
-```
-
-**Note:** Product binary files are **not** stored in Firebase Storage. They use **Supabase Storage** with JWT file proxy. `firebase/storage.rules` is legacy / non-product for the main file path.
-
-### 15.6 ATS
-
-```mermaid
-flowchart TB
-  UI["resume-flow.tsx"] -->|multipart| R["POST /resumes"]
-  R --> V["validate_document"]
-  V --> U["Supabase Storage upload"]
-  V --> P["parse_document_bytes"]
-  P --> T["extract_text"]
-  P --> S["extract_sections_enriched"]
-  S --> RV[("resume_versions review_required")]
-  RV -->|confirm| CF[("confirmed")]
-  JD[("job_descriptions confirmed")] --> ATS
-  CF --> ATS["POST /ats-analyses"]
+  CF[confirmed resume] --> ATS[POST /ats-analyses]
+  JD[confirmed JD] --> ATS
   ATS --> GATE{both confirmed?}
-  GATE -->|no| E409[409 resume/JD not confirmed]
-  GATE -->|yes| FP[fingerprint check]
-  FP -->|same| PREV[return prior analysis]
-  FP -->|new| SC["score_resume<br/>evidence-keyword-coverage-v3"]
-  SC --> AE[("ats_analyses + ats_evidence")]
-  AE --> BR["optional improvement_brief"]
+  GATE -->|no| E409[409]
+  GATE -->|yes| FP[source fingerprint]
+  FP -->|same| PREV[return prior]
+  FP -->|new| SC[score_resume v4]
+  SC --> AE[(ats_analyses + ats_evidence)]
+  AE --> BR[optional improvement brief]
 ```
 
-### 15.7 Mock interview
+### 15.5 Mock interview
 
 ```mermaid
 flowchart TB
-  PREP["POST /interview-preparation"] --> PREP_MOD["preparation.py<br/>resume+JD evidence"]
-  CREATE["POST /interviews"] --> START["POST /interviews/{id}/start"]
-  START --> QG["question_generator.py<br/>Groq structured"]
-  QG -->|fail| QB["question_bank.py templates"]
-  QG --> QS[("interview_questions")]
+  CREATE[POST /interviews] --> START[start]
+  START --> QG[Groq questions]
+  QG -->|fail| QB[templates]
+  QG --> QS[(interview_questions)]
   QB --> QS
-  QS --> UI["interview-flow.tsx<br/>optional TTS + STT"]
-  UI --> RESP["POST .../responses"]
-  RESP --> EVAL["evaluator.py<br/>practice feedback"]
-  EVAL --> RR[("interview_responses")]
-  RESP --> COMP["POST .../complete"]
-  COMP --> REP["session report<br/>interview_reports"]
+  QS --> UI[session UI + TTS/STT/gaze]
+  UI --> RESP[responses + evaluate]
+  RESP --> COMP[complete all answered]
+  COMP --> REP[(interview_reports)]
 ```
 
-### 15.8 Job recommendation
+### 15.6 Jobs
 
 ```mermaid
 flowchart TB
-  GEN["POST /job-recommendations/generate"] --> RES[load active resume + confirmed version]
-  RES --> EV["candidate_skill_evidence<br/>career_matching.py"]
-  EV --> SK[skills from resume sections + plain text]
-  EV --> PR[profile skills only if in resume text]
-  SK --> LOOP[for each job in catalog]
-  PR --> LOOP
-  LOOP --> SC["score_job<br/>evidence-keyword-match-v1"]
-  SC --> STORE[("job_recommendations ranked")]
-  SYNC["POST /jobs/external/sync"] --> ADZ["adzuna_api.py"]
-  ADZ --> JOBS[("jobs catalog")]
-  JOBS --> LOOP
+  GEN[generate recommendations] --> RES[confirmed resume evidence]
+  RES --> SC[score_job v1]
+  SC --> STORE[(job_recommendations)]
+  SYNC[external sync] --> ADZ[Adzuna page 1]
+  ADZ --> JOBS[(jobs)]
+  JOBS --> SC
 ```
 
-### 15.9 Learning path
+### 15.7 Learning
 
 ```mermaid
 flowchart TB
-  GEN["POST /learning-paths/generate"] --> REQ[require completed ATS analysis]
-  REQ --> EV[load ats_evidence]
-  EV --> CREW["run_learning_youtube_crew"]
-  CREW --> T1["1 extract_ats_gaps<br/>not_found + partial_match"]
-  T1 --> T2["2 plan_youtube_lessons<br/>queries only · no video IDs"]
-  T2 --> T3["3 validate_and_materialize"]
-  T3 -->|YOUTUBE_API_KEY| YT["YouTube Data API v3<br/>watch?v=api_id"]
-  T3 -->|no key| SRCH["YouTube search page URL only"]
-  YT --> SAVE[("learning_paths + items + resources")]
-  SRCH --> SAVE
+  GEN[generate path] --> EV[ats_evidence gaps]
+  EV --> CREW[learning crew]
+  CREW --> YT[YouTube API or search URL]
+  CREW --> ART[allowlisted article search URLs]
+  YT --> SAVE[(learning_paths + items + resources)]
+  ART --> SAVE
 ```
 
-### 15.10 Trust boundary
+### 15.8 Trust boundary
 
 ```mermaid
 flowchart LR
   subgraph UNTRUSTED["Untrusted"]
-    B[Browser UI]
-    JWT[JWT in localStorage/cookie]
-    VITE[VITE_FIREBASE_* only]
+    B[Browser]
+    JWT[JWT storage]
+    VITE[VITE_* only]
   end
-
-  subgraph TRUSTED["Trusted · FastAPI process"]
-    SEC[AUTH_SECRET · service account<br/>GROQ · NVIDIA · YouTube · Adzuna · Supabase role]
-    OWN[user_id ownership checks]
+  subgraph TRUSTED["Trusted API"]
+    SEC[secrets + service roles]
+    OWN[user_id ownership]
   end
-
-  subgraph STORE["Stores · server only"]
+  subgraph STORE["Server stores"]
     FS[(Firestore Admin)]
-    ST[(Supabase Storage)]
-    DENY[Firestore client rules: deny all]
+    ST[(Supabase)]
+    DENY[client rules deny all]
   end
-
   B -->|HTTPS + JWT| TRUSTED
-  TRUSTED -->|Admin / service role| STORE
-  B -.->|no direct product data path| DENY
+  TRUSTED --> STORE
+  B -.-> DENY
 ```
 
 ---
@@ -1258,17 +982,18 @@ flowchart LR
 2. **Server-enforced ownership** — every row and file path is scoped to the signed-in user.  
 3. **Deterministic product ATS** — LLMs enrich; they do not own the score.  
 4. **Degrade gracefully** — missing LLM/YouTube/Adzuna reduces features, not the whole app.  
+5. **Confirm gate** — unreviewed extraction does not drive product decisions.
 
 ### Key decisions
 
 | Decision | Trade-off |
 |----------|-----------|
-| Confirm gate before ATS | Extra step; prevents scoring unreviewed OCR garbage |
+| Confirm before ATS | Extra step; prevents scoring unreviewed garbage |
 | Deterministic product ATS | Less “smart,” more auditable |
-| Supabase for files, Firestore for rows | Two clouds; clear ownership of each concern |
-| Groq-first agents | Faster/cheaper default; NVIDIA remains fallback |
-| Interview practice feedback | Coaching signals only; not hiring predictions |
-| Demo cookie only in non-PROD | Production never serves empty in-memory mocks as real data |
+| Supabase files + Firestore rows | Two clouds; clear ownership |
+| Groq-first agents | Faster/cheaper default; NVIDIA fallback |
+| Synchronous API work | Simpler ops; long requests need timeouts |
+| Relative `/api/files` URLs | Requires same-origin proxy for media |
 
 ### Non-goals
 
@@ -1276,41 +1001,39 @@ flowchart LR
 - AI hiring decisions  
 - Client-side Firestore access  
 - Product-path embedding/cosine ATS  
+- Invented media IDs or career facts  
 
 ---
 
-## 17. What is not used / outdated claims removed
+## 17. Known contracts and caveats
 
-This unified document **replaces** the previous multi-file set as the single source of truth. The following outdated claims must **not** reappear:
+Documented so operators and contributors know real system behavior (not product promises):
 
-| Old / incorrect claim | Current reality (from code) |
-|-----------------------|----------------------------|
-| Firebase Storage is the product file store | **Supabase Storage** is the product object store |
-| NVIDIA always primary for agents | **`LLM_PROVIDER`** (default `groq`) then fallback |
-| Product ATS is LLM composite | Deterministic keyword coverage only (`evidence-keyword-coverage-v3`) |
-| Interviews have no evaluation at all | Practice evaluation + session report exist; **not** hiring decisions |
-| Supabase is “legacy optional” | Supabase Storage is **required** for product files when not `APP_ENV=test` |
-| Browser talks to Firestore | Denied by rules; Admin SDK server-only |
-| OmniRoute required | Optional (`OMNIROUTE_ENABLED=false` by default) |
-| Embedding / cosine ATS on product path | Not used for product `POST /ats-analyses` |
-
-Optional / library-only (present in tree but not product ATS path):
-
-- `features/ats/agent/*` composite crew  
-- `features/ats/scoring/*` composite service  
-- Full `integrations/omniroute` tree (sidecar; app runs without it)
+| Contract | Detail |
+|----------|--------|
+| File URLs | Relative `/api/files/...` require a rewrite to `/api/v1/files/...` on the **page origin** |
+| Soft-deleted resumes | Parent soft-delete does not cascade-unconfirm versions; some paths still see confirmed versions unless they join parent `deleted_at` |
+| Numeric ordering | Firestore adapter client-sorts with `str()` for `.order()` — positions/version numbers ≥10 can lexicographically mis-order |
+| JWT after password change | Existing tokens remain valid until `exp` (no server-side revocation list) |
+| Upsert races | Preference/saved-job uniqueness is app-level, not a Firestore unique constraint |
+| Bootstrap capability | `capabilities.job_recommendations` may be hard-coded `false` even though generate endpoints exist |
+| OmniRoute-only | Logical routing may list a provider while clients still require native configuration unless OmniRoute supplies credentials |
+| Adzuna | Sync fetches page 1 only; process-global lock under concurrent users |
+| Split deploy | `vercel.json` SPA rewrite alone does not proxy API/files — configure reverse proxy or absolute API + file proxy |
 
 ---
 
-## Keeping this document accurate
+## Related docs in this folder
 
-When behavior changes:
+| File | Role |
+|------|------|
+| [README.md](./README.md) | Docs index |
+| [api-reference.md](./api-reference.md) | API pointer + summary |
+| [architecture.md](./architecture.md) | Architecture pointer |
+| [data-model.md](./data-model.md) | Data model pointer |
+| [frontend.md](./frontend.md) | Frontend pointer |
+| [flows.md](./flows.md) | Flow pointer |
+| [operations.md](./operations.md) | Ops pointer |
+| [features/](./features/) | Per-feature deep-dives |
 
-1. Update **this file** (`docs/DOCUMENTATION.md`) first.  
-2. Bump algorithm version strings in **code and this doc** together.  
-3. Update root `README.md` only for quick-start / stack summary drift.  
-4. Do not reintroduce claims from the “outdated” table without verifying against code.
-
----
-
-*End of unified documentation.*
+Root product README: [../README.md](../README.md)

@@ -1,5 +1,43 @@
-# Jobs
+# Jobs & recommendations — how it works
 
-Moved to the unified documentation:
+**Canonical:** [../DOCUMENTATION.md](../DOCUMENTATION.md) §7.8.
 
-→ **[../DOCUMENTATION.md](../DOCUMENTATION.md)** — *Feature deep-dives → Job recommendations* and Mermaid *Job recommendation*.
+## Goal
+
+Recommend jobs from a local catalog using **confirmed resume evidence** only; optional external fill via Adzuna.
+
+## Catalog
+
+| Path | Behavior |
+|------|----------|
+| `GET /jobs` | Active jobs |
+| `POST /jobs/external/sync` | Adzuna search (page 1) from candidate preferences; cooldown + process lock |
+| `GET /jobs/{id}` | Job detail |
+
+Synced jobs store title, company, location, description, optional geo, extracted tech `requirements`, `external_id`.
+
+## Recommendations
+
+Algorithm `evidence-keyword-match-v1` (`career_matching.py`):
+
+1. Load confirmed resume version (active resume default).  
+2. Build skill/evidence text (profile skills only if grounded in resume).  
+3. Score each active job (requirement coverage + title role hits).  
+4. Rank, paginate (`offset`/`limit`), persist `job_recommendations`.
+
+## Saved / pipeline
+
+`saved_jobs` tracks statuses: saved, applied, interviewing, offer, rejected, withdrawn. Frontend pipeline filters map these into saved/applied/rejected buckets.
+
+## Frontend
+
+- `jobs.tsx` generate feed + saved view  
+- `job-recs-cache.ts` sessionStorage SWR  
+- `career-globe.tsx` geo visualization  
+
+## Key files
+
+- `features/career_matching.py`  
+- `features/adzuna_api.py`  
+- `api/router.py` jobs handlers  
+- `frontend/src/features/jobs/*`

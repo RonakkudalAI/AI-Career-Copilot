@@ -52,10 +52,11 @@ Career Copilot is a monorepo web app where a candidate can:
 | **Auth** | Email/password (scrypt) + app JWT; optional Google via Firebase ID-token exchange |
 | **Profile** | Structured fields, avatar, completion checklist (0–100), fill-from-resume preview → apply |
 | **Resume / JD** | Upload or paste → review → **confirm** |
-| **ATS** | Deterministic keyword coverage (`evidence-keyword-coverage-v3`); history shows resume + JD used |
-| **Interviews** | Question packs + practice sessions; optional TTS / speech-to-text; practice feedback (coaching, not hiring scores) |
-| **Learning** | ATS gaps → YouTube videos (API) or search-page URLs only |
-| **Jobs** | Evidence-based recommendations; optional Adzuna sync |
+| **ATS** | Deterministic keyword coverage (`evidence-keyword-coverage-v4`); history shows resume + JD used |
+| **Interviews** | Question packs + practice sessions; optional Fish Audio / browser TTS + STT; practice feedback (coaching, not hiring scores) |
+| **Learning** | ATS gaps → YouTube (API or search URLs) + allowlisted educational search links (`ats-mixed-learning-v1`) |
+| **Jobs** | Evidence-based recommendations (`evidence-keyword-match-v1`); optional Adzuna sync; saved/pipeline tracking |
+| **Resume improve** | Evidence-checked rewrite suggestions via sequential crew |
 | **Account wipe** | Confirm with `DELETE MY ACCOUNT` |
 
 ### Not included (by design)
@@ -124,11 +125,7 @@ backend\.venv\Scripts\python.exe -m pip install -e "backend/.[pdf-extras]"
 npm run dev
 ```
 
-For asynchronous resume extraction and interview evaluation, run Redis and set
-`CELERY_ENABLED=true` plus `VITE_BACKGROUND_JOBS=true` in `.env`, then start a
-separate worker with `npm run dev:worker`. The API returns `202` with an owned
-`job_id` and the frontend consumes authenticated SSE updates. If either flag is
-off, the existing synchronous flow remains active.
+All product work runs **synchronously inside the API request** (timeouts, RPM limits, and deterministic fallbacks). There is no separate Celery/worker process.
 
 | Service | URL |
 |---------|-----|
@@ -145,6 +142,7 @@ npm run dev:backend
 ### Sanity checks
 
 ```bash
+curl -s http://127.0.0.1:8000/api/v1/health/live
 curl -s http://127.0.0.1:8000/api/v1/health
 curl -s http://127.0.0.1:3000/api/backend/health
 npm run check:env
@@ -192,7 +190,7 @@ ATS, learning generation, interview prep evidence, and job-match evidence requir
 
 ### ATS score
 
-- Algorithm: **`evidence-keyword-coverage-v3`** (`backend/app/features/ats/ats_score.py`)  
+- Algorithm: **`evidence-keyword-coverage-v4`** (`backend/app/features/ats/ats_score.py`)  
 - Exact resume line as evidence when matched; `null` when missing  
 - Optional LLM “improvement brief” from missing terms only (never invents experience)  
 - History endpoints attach **which resume + JD** were used  
@@ -200,12 +198,17 @@ ATS, learning generation, interview prep evidence, and job-match evidence requir
 ### Interviews
 
 - Questions: Groq structured output, or **local templates** if the provider fails  
-- Session UI can speak questions and capture speech to text in Chromium browsers  
+- Optional Fish Audio TTS (server) + browser speech synthesis / recognition  
 - Practice feedback + session report (Groq or deterministic heuristics) — **coaching only**, not a hiring decision  
+
+### Learning & jobs
+
+- Learning: ATS gaps → YouTube API or search URLs + allowlisted article searches (`ats-mixed-learning-v1`)  
+- Jobs: score catalog against confirmed resume evidence (`evidence-keyword-match-v1`); optional Adzuna sync  
 
 ### Agents
 
-Prefer `LLM_PROVIDER` (default **groq**), then the other configured provider. Status: `GET /api/v1/agents/status`. Full agent table, prompts, and crews: [docs/DOCUMENTATION.md](./docs/DOCUMENTATION.md).
+Prefer `LLM_PROVIDER` (default **groq**), then the other configured provider. Status: `GET /api/v1/agents/status`. Full agent table, prompts, crews, and end-to-end how-it-works: [docs/DOCUMENTATION.md](./docs/DOCUMENTATION.md).
 
 ---
 
@@ -219,8 +222,8 @@ One root `.env` (template: [`.env.example`](./.env.example)). Only `VITE_*` keys
 | Auth | `AUTH_SECRET`, `JWT_TTL_SECONDS` |
 | Firestore | `FIREBASE_PROJECT_ID`, `FIREBASE_CREDENTIALS_PATH`, `FIREBASE_DATABASE_ID` |
 | Storage | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_STORAGE_BUCKET`, `DOCUMENT_BUCKET`, `AVATAR_BUCKET` |
-| LLM | `LLM_PROVIDER`, `GROQ_*`, `NVIDIA_*` |
-| Optional | `YOUTUBE_API_KEY`, `ADZUNA_*`, `OMNIROUTE_*` (sidecar, off by default) |
+| LLM | `LLM_PROVIDER`, `GROQ_*`, `NVIDIA_*`, `LLM_RPM_LIMIT` |
+| Optional | `YOUTUBE_API_KEY`, `ADZUNA_*`, `FISH_AUDIO_*`, `OMNIROUTE_*` (sidecar, off by default) |
 
 ---
 
@@ -230,18 +233,19 @@ Browser base in local dev: **`/api/backend`** → FastAPI **`/api/v1`**.
 
 | Area | Endpoints (prefix `/api/v1`) |
 |------|------------------------------|
-| Auth | `POST /auth/sign-up`, `/sign-in`, `/session`, `/firebase`, `/sign-out` |
-| Health | `GET /health`, `/health/database`, `/agents/status` |
+| Auth | `POST /auth/sign-up`, `/sign-in`, `/session`, `/firebase`, `/sign-out`, `/update-password` |
+| Health | `GET /health/live`, `/health`, `/health/ready`, `/health/database`, `/agents/status` |
 | Me | `GET /me/bootstrap`, `/me/activity` |
 | Profile | `/profile`, avatar, preferences, child resources, from-resume |
 | Resumes / JDs | `/resumes`, versions, confirm; `/job-descriptions` |
 | ATS | `/ats-analyses`, evidence; `/ats/score` |
-| Interview | `/interview-preparation`, `/interviews` (+ start / responses / complete) |
+| Improvement | `/resume-improvements*`, suggestions, apply, exports |
+| Interview | `/interview-preparation`, `/interviews` (+ start / responses / complete / tts) |
 | Learning | `/learning-paths`, `/learning-paths/generate` |
 | Jobs | `/jobs`, recommendations, saved jobs, optional external sync |
 | Files | `GET /files/{bucket}/{path}` (JWT; path under `{user_id}/`) |
 
-Full map: [docs/api-reference.md](./docs/api-reference.md).
+Full map: [docs/api-reference.md](./docs/api-reference.md) · deep dive: [docs/DOCUMENTATION.md](./docs/DOCUMENTATION.md).
 
 ---
 
@@ -249,9 +253,9 @@ Full map: [docs/api-reference.md](./docs/api-reference.md).
 
 **Single source of truth:** [docs/DOCUMENTATION.md](./docs/DOCUMENTATION.md)
 
-Covers aim, problem statement, tech stack, every application file purpose, agents, models/frameworks/libraries, project flow, data model, API map, operations, and Mermaid diagrams (architecture, flow, auth/db, Firebase, ATS, mock interview, job recommendation, learning path).
+Covers aim, problem statement, tech stack, **how every subsystem works**, agents, data model, full API map, code map, frontend architecture, operations, Mermaid diagrams, and known contracts.
 
-Older paths under `docs/` redirect to that file.
+Satellite docs under `docs/` (architecture, API, data model, frontend, flows, operations, features/*) summarize and link back to that file.
 
 ---
 

@@ -173,9 +173,10 @@ class SupabaseStorageObject:
         return f"{self.settings.resolved_supabase_url}/storage/v1/object/{self.storage_bucket}/{quote(key, safe='/')}"
 
     def _request(self, method: str, url: str, **kwargs) -> httpx.Response:
+        server_key = self.settings.supabase_server_key
         headers = {
-            "apikey": self.settings.supabase_service_role_key,
-            "Authorization": f"Bearer {self.settings.supabase_service_role_key}",
+            "apikey": server_key,
+            "Authorization": f"Bearer {server_key}",
             **(kwargs.pop("headers", {}) or {}),
         }
         response = httpx.request(method, url, headers=headers, timeout=30, **kwargs)

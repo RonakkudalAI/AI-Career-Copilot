@@ -8,7 +8,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, File, Form, Header, UploadFile
-from fastapi.responses import Response as PlainResponse
+from fastapi.responses import JSONResponse, Response as PlainResponse
 
 from app.agents.registry import agents_status
 from app.api.routers.auth import router as auth_router
@@ -185,10 +185,13 @@ def health(settings: Settings = Depends(get_settings)) -> dict[str, Any]:
     }
 
 
-@router.get("/health/ready")
-def health_ready(settings: Settings = Depends(get_settings)) -> dict[str, Any]:
-    """Compatibility readiness probe using the bounded dependency health check."""
-    return health(settings)
+@router.get("/health/ready", response_model=None)
+def health_ready(settings: Settings = Depends(get_settings)) -> dict[str, Any] | JSONResponse:
+    """Readiness probe that fails closed when required dependencies are degraded."""
+    payload = health(settings)
+    if payload.get("status") != "ok":
+        return JSONResponse(status_code=503, content=payload)
+    return payload
 
 
 @router.get("/agents/status")
