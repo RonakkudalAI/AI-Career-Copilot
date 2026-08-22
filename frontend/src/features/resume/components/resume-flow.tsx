@@ -14,6 +14,7 @@ import { jdLabel, resumeLabel } from "@/features/resume/analysis-labels";
 import { isValidCareerFile } from "@/shared/utils";
 import { BookLoader } from "@/shared/ui/book-loader";
 import { Badge, Button, Card, Input, PageHeader, Progress, Textarea } from "@/shared/ui/primitives";
+import { RagCareerAssistant } from "./rag-career-assistant";
 
 type StructuredContent = {
   schema_version?: string;
@@ -1553,8 +1554,13 @@ export function AtsReport() {
         {priorityActions.length > 0 ? <div className="stack" style={{ gap: 6 }}><strong>Priority actions</strong><ul style={{ margin: 0, paddingLeft: 18 }}>{priorityActions.map((item) => <li key={item}>{item}</li>)}</ul></div> : null}
         {sectionGuidance.length > 0 ? <div className="stack" style={{ gap: 6 }}><strong>Section guidance</strong><ul style={{ margin: 0, paddingLeft: 18 }}>{sectionGuidance.map((item) => <li key={item}>{item}</li>)}</ul></div> : null}
         {doNotClaim.length > 0 ? <div className="stack" style={{ gap: 6 }}><strong>Evidence safeguards</strong><ul style={{ margin: 0, paddingLeft: 18 }}>{doNotClaim.map((item) => <li key={item}>{item}</li>)}</ul></div> : null}
-
       </Card>
+      <div style={{ marginTop: 24 }}>
+        <RagCareerAssistant
+          resumeText={analysis.parsed_inputs?.resume?.plain_text || ""}
+          jobDescriptionText={analysis.parsed_inputs?.job_description?.plain_text || ""}
+        />
+      </div>
     </div>
   );
 }
