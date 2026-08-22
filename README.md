@@ -295,3 +295,5 @@ cd frontend && npm run test && npm run typecheck
 4. **Degrade gracefully** — missing LLM/YouTube/Adzuna reduces features, not the whole app.
 
 Full technical detail: [docs/DOCUMENTATION.md](./docs/DOCUMENTATION.md).
+#   A I - C a r e e r - C o p i l o t  
+ 
