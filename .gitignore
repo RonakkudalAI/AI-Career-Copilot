@@ -49,8 +49,12 @@ backend/career_copilot_api.egg-info/
 /secrets/
 firebase-service-account*.json
 
-# Logs / OS
+# Logs / OS / Large Media
 *.log
+*.mp4
+*.avi
+*.mov
+*.mkv
 .DS_Store
 Thumbs.db
 
