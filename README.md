@@ -5,296 +5,142 @@
 
 # Career Copilot
 
-**Private career workspace for candidates** — evidence-grounded resume analysis, ATS scoring, interview practice, learning paths, and job matching.
+**Private AI Career Workspace for Candidates** — 2-Stage Hybrid RAG Assistant, LangChain & LangGraph Orchestration, Deterministic ATS Scoring, Voice Mock Interviews, Learning Paths, and Job Matching.
 
-[Features](#features) · [Getting started](#getting-started) · [Architecture](#architecture) · [Configuration](#configuration) · [API](#api) · [Docs](#documentation) · [Testing](#testing)
+[Features](#features) · [Getting Started](#getting-started) · [Architecture](#architecture) · [RAG & Agent Graph](#rag--agent-graph-subsystem) · [Database Schema](#database-schema) · [API Reference](#api-reference) · [Testing](#testing)
 
 ![Version](https://img.shields.io/badge/version-1.0.0-0f3b82?style=flat-square)
 ![Node](https://img.shields.io/badge/Node.js-20%2B-3c873a?style=flat-square)
 ![Python](https://img.shields.io/badge/Python-3.11–3.13-3776ab?style=flat-square)
-![Stack](https://img.shields.io/badge/Vite%20%2B%20FastAPI%20%2B%20Firestore-111827?style=flat-square)
+![Stack](https://img.shields.io/badge/Vite%20%2B%20FastAPI%20%2B%20Supabase%20%2B%20Firestore-111827?style=flat-square)
+![RAG](https://img.shields.io/badge/RAG-LangChain%20%2B%20LangGraph-6366f1?style=flat-square)
 
 </div>
 
 ---
 
-## What is this?
+## 🚀 Overview
 
-Career Copilot is a monorepo web app where a candidate can:
+**Career Copilot** is a production-grade monorepo web platform designed to solve candidate career workflows without AI hallucinations or unverified claims.
 
-1. Build a profile and upload a resume (PDF/DOCX)  
-2. Confirm extracted sections (nothing unreviewed drives scoring)  
-3. Score the resume against a confirmed job description with **exact keyword evidence**  
-4. Practice mock interviews (optional browser voice Q&A)  
-5. Generate YouTube learning paths from ATS gaps  
-6. Browse job recommendations grounded in confirmed resume text  
+### Key Capabilities:
+1. **2-Stage Hybrid RAG Assistant** (`rag-semantic-retrieval-v1`): Vectorizes confirmed resumes and job descriptions using **LangChain** text chunking and **Cosine Similarity** matching to deliver grounded, evidence-backed career advice.
+2. **LangGraph Agentic Orchestration**: Models multi-agent resume refinement (`GAP_ANALYST` $\rightarrow$ `RESUME_IMPROVER` $\rightarrow$ `EVIDENCE_VALIDATOR`) as a stateful graph with conditional feedback edges.
+3. **Deterministic ATS Engine** (`evidence-keyword-coverage-v4`): Calculates 100% reproducible keyword match scores and isolates exact resume line quotes.
+4. **Voice Mock Interview Simulator** (`evidence-report-v2`): Real-time speech-to-text (STT) and text-to-speech (TTS) interview practice with STAR method rubrics and webcam gaze tracking.
+5. **Personalized Learning Paths** (`ats-mixed-learning-v1`): Converts ATS skill gaps into anti-hallucinated YouTube learning roadmaps.
+6. **Evidence-Grounded Job Matching** (`evidence-keyword-match-v1`): Live job discovery synced with Adzuna API and rendered on an interactive Three.js 3D Globe.
 
-> [!IMPORTANT]
-> **Do not invent the candidate’s career.**  
-> Only text the user types, uploads, **confirms**, or explicitly accepts is used.  
-> LLM / YouTube / service keys stay on the server. The browser never talks to Firestore directly.
+---
+
+## 🛠️ Technology Stack
 
 | Layer | Technology |
-|-------|------------|
-| Frontend | Vite, React 19, TypeScript, Tailwind CSS 4, React Router 7 |
-| Backend | FastAPI, Pydantic v2, Uvicorn |
-| Data | Cloud Firestore (Admin SDK) |
-| Files | Supabase Storage (private; streamed via authenticated API) |
-| LLMs | Groq preferred (`LLM_PROVIDER=groq`), NVIDIA fallback; deterministic fallbacks |
-| Crews | Official `crewai` when installed; otherwise built-in sequential orchestrators |
+|---|---|
+| **Frontend UI** | Vite 8, React 19, TypeScript, Tailwind CSS 4, React Router 7, Framer Motion, Three.js / Cobe 3D Globe |
+| **Backend API** | FastAPI, Python 3.12, Uvicorn ASGI Server, Pydantic v2 |
+| **RAG & Agent Graph** | LangChain v0.3, LangGraph v0.2 (`StateGraph` DAG), SimpleVectorStore (Cosine Matrix) |
+| **Database & Auth** | Firebase Cloud Firestore (NoSQL), Supabase PostgreSQL (29 Tables), PyJWT (HS256) |
+| **File Storage** | Private Supabase Storage Buckets (`resumes`, `candidate-avatars`) streamed via authenticated proxy |
+| **LLM Providers** | Groq (`llama-3.3-70b-versatile`) as primary, NVIDIA DeepSeek as fallback |
 
 ---
 
-## Features
+## 🌟 Core Subsystems
 
-| Area | What you get |
-|------|----------------|
-| **Auth** | Email/password (scrypt) + app JWT; optional Google via Firebase ID-token exchange |
-| **Profile** | Structured fields, avatar, completion checklist (0–100), fill-from-resume preview → apply |
-| **Resume / JD** | Upload or paste → review → **confirm** |
-| **ATS** | Deterministic keyword coverage (`evidence-keyword-coverage-v4`); history shows resume + JD used |
-| **Interviews** | Question packs + practice sessions; optional Fish Audio / browser TTS + STT; practice feedback (coaching, not hiring scores) |
-| **Learning** | ATS gaps → YouTube (API or search URLs) + allowlisted educational search links (`ats-mixed-learning-v1`) |
-| **Jobs** | Evidence-based recommendations (`evidence-keyword-match-v1`); optional Adzuna sync; saved/pipeline tracking |
-| **Resume improve** | Evidence-checked rewrite suggestions via sequential crew |
-| **Account wipe** | Confirm with `DELETE MY ACCOUNT` |
+### 1. 2-Stage Hybrid RAG Assistant (`rag_assistant`)
+```text
+  User Query ──► Vector Search ──► Retrieved Chunks ──► LLM Synthesis ──► Grounded Response
+                     │                      │
+       [Confirmed Resume Chunks]   [Confirmed JD Chunks]
+```
+- **Chunking Engine**: Overlapping text chunking via `RecursiveCharacterTextSplitter`.
+- **Vector Search**: Cosine similarity retrieval over term-frequency vector matrices.
+- **Evidence Tags**: Every response cites exact retrieved source passages with relevance scores.
 
-### Not included (by design)
-
-- Invented skills, employers, metrics, or YouTube video IDs  
-- AI **hiring** decisions or “you will get the job” prediction scores (practice coaching feedback may still exist)  
-- Product-path embedding / cosine-similarity ATS  
-- Direct browser access to Firestore or storage service keys  
+### 2. LangGraph Stateful Agent Graph (`agent_graph`)
+- **State TypedDict**: Tracks state across execution nodes.
+- **Node 1 (`GAP_ANALYST`)**: Extracts missing job keywords.
+- **Node 2 (`RESUME_IMPROVER`)**: Drafts bullet point rewrites.
+- **Node 3 (`EVIDENCE_VALIDATOR`)**: Verifies suggestions against source text.
+- **Conditional Loop Edge**: Automatically routes back to Node 2 if unverified claims are detected.
 
 ---
 
-## Getting started
+## 🗄️ Database Schema
+
+Career Copilot supports **29 SQL Tables** in Supabase PostgreSQL:
+
+```text
+├── Auth & Profiles (users, profiles, candidate_preferences, notification_preferences, privacy_preferences)
+├── Portfolio Sections (candidate_skills, candidate_experiences, candidate_projects, candidate_education, candidate_certifications, candidate_languages, candidate_links)
+├── Resumes & Jobs (resumes, resume_versions, job_descriptions)
+├── ATS & Improvement (ats_analyses, ats_evidence, resume_improvement_runs, resume_suggestions)
+├── Mock Interviews (interview_sessions, interview_questions, interview_responses, interview_reports)
+└── Learning & Activity (learning_paths, learning_items, learning_resources, jobs, saved_jobs, activity_events)
+```
+
+---
+
+## ⚡ Getting Started
 
 ### Prerequisites
+- **Node.js** 20+
+- **Python** 3.11 – 3.13 (Python 3.12 recommended)
+- **Supabase** project (URL and API keys)
+- **Firebase** project (Firestore credentials JSON)
 
-- Node.js **20+**
-- Python **3.11–3.13** (repo pin: 3.12)
-- Firebase project with **Firestore** + service-account JSON  
-- Supabase project with a **private Storage** bucket  
-
-### 1. Configure environment
-
+### 1. Clone & Configure Environment
 ```bash
-git clone <repo-url> career-copilot
+git clone https://github.com/RonakkudalAI/career-copilot.git
 cd career-copilot
-cp .env.example .env   # Windows: copy .env.example .env
 ```
 
-Set at least:
-
-| Variable | Role |
-|----------|------|
-| `AUTH_SECRET` | JWT signing secret |
-| `FIREBASE_PROJECT_ID` | Firestore project |
-| `FIREBASE_CREDENTIALS_PATH` | Service-account JSON path |
-| `FIREBASE_DATABASE_ID` | e.g. `(default)` or a named DB |
-| `SUPABASE_URL` | Supabase project URL |
-| `SUPABASE_SERVICE_ROLE_KEY` | Server-only service role |
-| `SUPABASE_STORAGE_BUCKET` | Private bucket name |
-| `VITE_FIREBASE_*` | Web client config (Google sign-in) |
-
-Optional: `GROQ_*`, `NVIDIA_*`, `YOUTUBE_API_KEY`, `ADZUNA_*`, `LLM_PROVIDER` (default `groq`).
-
-```bash
-python -c "import secrets; print(secrets.token_urlsafe(48))"
+Copy `.env.example` to `.env` and fill in your keys:
+```env
+PUBLIC_API_BASE_URL=http://127.0.0.1:8000
+AUTH_SECRET=your-jwt-secret-key
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your-supabase-service-role-key
+SUPABASE_STORAGE_BUCKET=candidate-documents
+LLM_PROVIDER=groq
+GROQ_API_KEY=gsk_your_groq_api_key
 ```
 
-### 2. Install
-
+### 2. Install Dependencies
 ```bash
 npm run setup
 ```
 
-Creates the backend venv, installs the API package, installs frontend deps, and checks Firestore.
-
-Optional:
-
-```bash
-backend\.venv\Scripts\python.exe -m pip install -e "backend/.[crewai]"
-backend\.venv\Scripts\python.exe -m pip install -e "backend/.[pdf-extras]"
-```
-
-### 3. Run
-
+### 3. Run Local Dev Servers
 ```bash
 npm run dev
 ```
 
-All product work runs **synchronously inside the API request** (timeouts, RPM limits, and deterministic fallbacks). There is no separate Celery/worker process.
+- **Frontend App**: [http://127.0.0.1:3000](http://127.0.0.1:3000)
+- **Backend API**: [http://127.0.0.1:8000](http://127.0.0.1:8000)
+- **Interactive Swagger Docs**: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
 
-| Service | URL |
-|---------|-----|
-| App | http://127.0.0.1:3000 |
-| API | http://127.0.0.1:8000 |
-| OpenAPI (dev) | http://127.0.0.1:8000/docs |
+---
 
+## 🧪 Testing & Verification
+
+Run backend unit tests (223/223 tests):
 ```bash
-# halves
-npm run dev:frontend
-npm run dev:backend
+npm run test:backend
 ```
 
-### Sanity checks
-
+Run frontend TypeScript check:
 ```bash
-curl -s http://127.0.0.1:8000/api/v1/health/live
-curl -s http://127.0.0.1:8000/api/v1/health
-curl -s http://127.0.0.1:3000/api/backend/health
+npm run typecheck
+```
+
+Run environment verification:
+```bash
 npm run check:env
 ```
 
 ---
 
-## Architecture
-
-```text
-Browser (Vite + React)
-  Authorization: Bearer <JWT>
-        │
-        ├─ /api/backend/*  ──Vite proxy──►  FastAPI /api/v1/*
-        └─ /api/files/*    ──Vite proxy──►  FastAPI /api/v1/files/*
-                │
-                ▼
-           FastAPI (ownership enforced)
-                ├─ Firestore      (rows)
-                ├─ Supabase Storage (files under {user_id}/…)
-                └─ Groq / NVIDIA / YouTube / Adzuna  (server .env)
-```
-
-| Path | Responsibility |
-|------|----------------|
-| `frontend/src/` | UI features: auth, dashboard, resume, interview, learning, jobs, settings |
-| `backend/app/main.py` | FastAPI app, CORS, request IDs |
-| `backend/app/api/` | HTTP routes and schemas |
-| `backend/app/database/` | Firestore + storage adapters, ownership helpers |
-| `backend/app/agents/` | Provider clients, prompts, preferred-provider routing |
-| `backend/app/features/` | Domain logic (auth, parsing, ATS, interview, …) |
-| `docs/DOCUMENTATION.md` | Unified technical documentation |
-
-> [!NOTE]
-> Leave `VITE_API_BASE_URL` unset for local dev so the app uses the same-origin `/api/backend` proxy. Set it only for static hosting that cannot proxy.
-
----
-
-## How the product path works
-
-### Confirm gate
-
-Uploaded resumes and JDs are extracted, shown for review, then **confirmed**.  
-ATS, learning generation, interview prep evidence, and job-match evidence require **confirmed** sources.
-
-### ATS score
-
-- Algorithm: **`evidence-keyword-coverage-v4`** (`backend/app/features/ats/ats_score.py`)  
-- Exact resume line as evidence when matched; `null` when missing  
-- Optional LLM “improvement brief” from missing terms only (never invents experience)  
-- History endpoints attach **which resume + JD** were used  
-
-### Interviews
-
-- Questions: Groq structured output, or **local templates** if the provider fails  
-- Optional Fish Audio TTS (server) + browser speech synthesis / recognition  
-- Practice feedback + session report (Groq or deterministic heuristics) — **coaching only**, not a hiring decision  
-
-### Learning & jobs
-
-- Learning: ATS gaps → YouTube API or search URLs + allowlisted article searches (`ats-mixed-learning-v1`)  
-- Jobs: score catalog against confirmed resume evidence (`evidence-keyword-match-v1`); optional Adzuna sync  
-
-### Agents
-
-Prefer `LLM_PROVIDER` (default **groq**), then the other configured provider. Status: `GET /api/v1/agents/status`. Full agent table, prompts, crews, and end-to-end how-it-works: [docs/DOCUMENTATION.md](./docs/DOCUMENTATION.md).
-
----
-
-## Configuration
-
-One root `.env` (template: [`.env.example`](./.env.example)). Only `VITE_*` keys are exposed to the browser.
-
-| Group | Examples |
-|-------|----------|
-| App / CORS | `APP_ENV`, `API_V1_PREFIX`, `PUBLIC_API_BASE_URL`, `FRONTEND_ORIGINS` |
-| Auth | `AUTH_SECRET`, `JWT_TTL_SECONDS` |
-| Firestore | `FIREBASE_PROJECT_ID`, `FIREBASE_CREDENTIALS_PATH`, `FIREBASE_DATABASE_ID` |
-| Storage | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_STORAGE_BUCKET`, `DOCUMENT_BUCKET`, `AVATAR_BUCKET` |
-| LLM | `LLM_PROVIDER`, `GROQ_*`, `NVIDIA_*`, `LLM_RPM_LIMIT` |
-| Optional | `YOUTUBE_API_KEY`, `ADZUNA_*`, `FISH_AUDIO_*`, `OMNIROUTE_*` (sidecar, off by default) |
-
----
-
-## API
-
-Browser base in local dev: **`/api/backend`** → FastAPI **`/api/v1`**.
-
-| Area | Endpoints (prefix `/api/v1`) |
-|------|------------------------------|
-| Auth | `POST /auth/sign-up`, `/sign-in`, `/session`, `/firebase`, `/sign-out`, `/update-password` |
-| Health | `GET /health/live`, `/health`, `/health/ready`, `/health/database`, `/agents/status` |
-| Me | `GET /me/bootstrap`, `/me/activity` |
-| Profile | `/profile`, avatar, preferences, child resources, from-resume |
-| Resumes / JDs | `/resumes`, versions, confirm; `/job-descriptions` |
-| ATS | `/ats-analyses`, evidence; `/ats/score` |
-| Improvement | `/resume-improvements*`, suggestions, apply, exports |
-| Interview | `/interview-preparation`, `/interviews` (+ start / responses / complete / tts) |
-| Learning | `/learning-paths`, `/learning-paths/generate` |
-| Jobs | `/jobs`, recommendations, saved jobs, optional external sync |
-| Files | `GET /files/{bucket}/{path}` (JWT; path under `{user_id}/`) |
-
-Full map: [docs/api-reference.md](./docs/api-reference.md) · deep dive: [docs/DOCUMENTATION.md](./docs/DOCUMENTATION.md).
-
----
-
-## Documentation
-
-**Single source of truth:** [docs/DOCUMENTATION.md](./docs/DOCUMENTATION.md)
-
-Covers aim, problem statement, tech stack, **how every subsystem works**, agents, data model, full API map, code map, frontend architecture, operations, Mermaid diagrams, and known contracts.
-
-Satellite docs under `docs/` (architecture, API, data model, frontend, flows, operations, deployment, features/*) summarize and link back to that file. Production deployment instructions are in [docs/deployment.md](./docs/deployment.md).
-
----
-
-## Testing
-
-```bash
-npm run test:backend
-cd frontend && npm run test && npm run typecheck
-```
-
-| Check | Command |
-|-------|---------|
-| Env keys present | `npm run check:env` |
-| Secret scan | `npm run check:secrets` |
-| Firestore probe | `backend\.venv\Scripts\python.exe scripts/diagnostics/check-firestore.py` |
-| Offline stack audit | `backend\.venv\Scripts\python.exe scripts/diagnostics/_audit_once.py` |
-| API smoke (server up) | `backend\.venv\Scripts\python.exe scripts/diagnostics/e2e-smoke.py` |
-
----
-
-## Project scripts
-
-| Script | Purpose |
-|--------|---------|
-| `npm run setup` | Install everything |
-| `npm run dev` | Preflight + frontend + backend |
-| `npm run check:frontend` | Lint, types, tests, production build |
-| `npm run test:backend` | Pytest |
-
----
-
-## Design principles
-
-1. **Evidence over invention** — confirmed text is the source of truth.  
-2. **Server-enforced ownership** — every row and file path is scoped to the signed-in user.  
-3. **Deterministic product ATS** — LLMs enrich; they do not own the score.  
-4. **Degrade gracefully** — missing LLM/YouTube/Adzuna reduces features, not the whole app.
-
-Full technical detail: [docs/DOCUMENTATION.md](./docs/DOCUMENTATION.md).
-#   A I - C a r e e r - C o p i l o t  
- #   A I - C a r e e r - C o p i l o t  
- 
+## 📄 License
+Distributed under the MIT License. See `LICENSE` for details.
