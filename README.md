@@ -296,4 +296,5 @@ cd frontend && npm run test && npm run typecheck
 
 Full technical detail: [docs/DOCUMENTATION.md](./docs/DOCUMENTATION.md).
 #   A I - C a r e e r - C o p i l o t  
+ #   A I - C a r e e r - C o p i l o t  
  
