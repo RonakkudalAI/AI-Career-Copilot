@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: career-copilot-backend
+    env: python
+    region: singapore
+    plan: free
+    rootDir: backend
+    buildCommand: "pip install --upgrade pip && pip install -e ."
+    startCommand: "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+    healthCheckPath: /api/v1/health/live
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: API_V1_PREFIX
+        value: /api/v1
+      - key: LOG_LEVEL
+        value: INFO
+      - key: LLM_PROVIDER
+        value: groq
+      - key: GROQ_MODEL
+        value: llama-3.3-70b-versatile
+      - key: NVIDIA_MODEL
+        value: deepseek-ai/deepseek-v4-flash
