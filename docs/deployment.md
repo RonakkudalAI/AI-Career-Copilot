@@ -30,7 +30,7 @@ Supabase Authentication must have Email enabled. Add the local and deployed fron
 Create a Render Web Service with `backend` as the root directory:
 
 ```text
-Build Command: pip install -e .
+Build Command: pip install --upgrade pip && pip install .
 Start Command: uvicorn app.main:app --host 0.0.0.0 --port $PORT
 Health Check Path: /api/v1/health/live
 ```
