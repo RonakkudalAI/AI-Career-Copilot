@@ -3,6 +3,8 @@ export type Job = {
   title: string;
   company: string;
   location?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
   work_mode?: string | null;
   description?: string | null;
   requirements?: string[];
