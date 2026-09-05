@@ -97,8 +97,11 @@ class Settings(BaseSettings):
     @field_validator("frontend_origins", mode="before")
     @classmethod
     def parse_origins(cls, value: object) -> object:
+        if not value:
+            return ["*"]
         if isinstance(value, str):
-            return [item.strip() for item in value.split(",") if item.strip()]
+            items = [item.strip() for item in value.split(",") if item.strip()]
+            return items or ["*"]
         return value
     @field_validator("nvidia_base_url", "groq_base_url", "omniroute_base_url")
     @classmethod
@@ -113,12 +116,16 @@ class Settings(BaseSettings):
     @classmethod
     def validate_origins(cls, value: list[str]) -> list[str]:
         if not value:
-            raise ValueError("must contain at least one frontend origin")
+            return ["*"]
+        valid_origins = []
         for origin in value:
+            if origin == "*":
+                valid_origins.append("*")
+                continue
             parsed = urlparse(origin)
-            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-                raise ValueError("contains an invalid frontend origin")
-        return value
+            if parsed.scheme in {"http", "https"} and parsed.netloc:
+                valid_origins.append(origin)
+        return valid_origins or ["*"]
     @model_validator(mode="after")
     def validate_provider_pair(self) -> "Settings":
         if self.nvidia_api_key and not self.nvidia_model:
