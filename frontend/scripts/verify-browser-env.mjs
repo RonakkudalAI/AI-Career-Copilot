@@ -10,6 +10,16 @@ if (existsSync(rootLoadEnv)) {
   loadRootEnv();
 }
 
+const DEFAULT_SUPABASE_URL = "https://zvjjknnxcljydmapqwyv.supabase.co";
+const DEFAULT_SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp2amprbm54Y2xqeWRtYXBxd3l2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc0MTQ3ODYsImV4cCI6MjEwMjk5MDc4Nn0.x26V7QUFbkqlL7OEQo_UX2LjxBS-_TOh2upW6psPKeo";
+
+if (!String(process.env.VITE_SUPABASE_URL || "").trim()) {
+  process.env.VITE_SUPABASE_URL = DEFAULT_SUPABASE_URL;
+}
+if (!String(process.env.VITE_SUPABASE_PUBLISHABLE_KEY || "").trim()) {
+  process.env.VITE_SUPABASE_PUBLISHABLE_KEY = DEFAULT_SUPABASE_KEY;
+}
+
 const required = ["VITE_SUPABASE_URL", "VITE_SUPABASE_PUBLISHABLE_KEY"];
 const missing = required.filter((name) => !String(process.env[name] || "").trim());
 
