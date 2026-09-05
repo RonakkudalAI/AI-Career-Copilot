@@ -10,12 +10,12 @@ ROOT_DIR = Path(__file__).resolve().parents[3]
 ROOT_ENV_FILE = ROOT_DIR / ".env"
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=ROOT_ENV_FILE, env_file_encoding="utf-8", extra="ignore")
-    app_name: str
-    app_env: str
-    api_v1_prefix: str
-    public_api_base_url: str
-    log_level: str
-    frontend_origins: Annotated[list[str], NoDecode]
+    app_name: str = "Career Copilot API"
+    app_env: str = "production"
+    api_v1_prefix: str = "/api/v1"
+    public_api_base_url: str = "http://127.0.0.1:8000"
+    log_level: str = "INFO"
+    frontend_origins: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["*"])
     firebase_project_id: str = ""
     firebase_database_id: str = "(default)"
     firebase_credentials_path: str = ""
@@ -31,26 +31,26 @@ class Settings(BaseSettings):
     # Default False for local Admin setups that lack Auth lookup; production
     # forces True via model_validator unless explicitly overridden.
     firebase_check_revoked: bool = False
-    auth_secret: str
+    auth_secret: str = "fVYHCLthk5xoxBkf4UkAWky8DVQ7Db0HfaAD2v1UadBSn4QOPOFqHjfqzQJ1QFeZ"
     jwt_ttl_seconds: int = Field(default=60 * 60 * 24 * 7, ge=60, le=60 * 60 * 24 * 30)
     llm_allow_repair: bool = True
     document_max_bytes: int = 10 * 1024 * 1024
     avatar_max_bytes: int = 3 * 1024 * 1024
     interview_media_max_bytes: int = 0
     # Logical prefixes inside the single Supabase Storage bucket.
-    document_bucket: str
-    avatar_bucket: str
+    document_bucket: str = "candidate-documents"
+    avatar_bucket: str = "candidate-avatars"
     nvidia_api_key: str = ""
-    nvidia_base_url: str
-    nvidia_model: str
+    nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
+    nvidia_model: str = "deepseek-ai/deepseek-v4-flash"
     nvidia_timeout_seconds: float = Field(default=90, gt=0, le=180)
     nvidia_max_retries: int = Field(default=2, ge=0, le=2)
     nvidia_max_output_tokens: int = Field(default=4096, ge=256, le=8192)
     nvidia_temperature: float = Field(default=0.2, ge=0, le=1)
-    nvidia_prompt_version: str
+    nvidia_prompt_version: str = "resume-improvement-v1"
     groq_api_key: str = ""
-    groq_base_url: str
-    groq_model: str
+    groq_base_url: str = "https://api.groq.com/openai/v1"
+    groq_model: str = "llama-3.3-70b-versatile"
     groq_timeout_seconds: float = Field(default=45, gt=0, le=180)
     groq_max_retries: int = Field(default=2, ge=0, le=2)
     groq_max_output_tokens: int = Field(default=2048, ge=256, le=8192)
@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     groq_resume_parser_max_retries: int = Field(default=2, ge=0, le=5)
     groq_resume_parser_max_input_tokens: int = Field(default=110000, ge=1000, le=200000)
     groq_resume_parser_temperature: float = Field(default=0.0, ge=0.0, le=1.0)
-    llm_provider: str
+    llm_provider: str = "groq"
     # Optional local OpenAI-compatible OmniRoute sidecar. It is deliberately
     # disabled by default so deleting integrations/omniroute cannot affect the app.
     omniroute_enabled: bool = False
