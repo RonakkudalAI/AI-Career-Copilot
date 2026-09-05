@@ -12,7 +12,7 @@
 
 'use client';
 
-import React, { useMemo, type ComponentProps } from 'react';
+import { useMemo, type ComponentProps } from 'react';
 import { type VariantProps, cva } from 'class-variance-authority';
 import { type LocalAudioTrack, type RemoteAudioTrack } from 'livekit-client';
 import { type AgentState, type TrackReferenceOrPlaceholder } from '@livekit/components-react';

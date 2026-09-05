@@ -1,4 +1,5 @@
-import { spawn, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { createConnection } from "node:net";
 import { resolve } from "node:path";
 import { ensureBackendVenv } from "../shared/backend-venv.mjs";
 import { loadRootEnv } from "../shared/load-env.mjs";
@@ -16,11 +17,68 @@ const configuredFrontendPort = frontendPort(process.env);
 const frontendEnvironment = { ...process.env };
 const viteBinary = resolve(frontendDirectory, "node_modules", "vite", "bin", "vite.js");
 
+function isPortOpen(port, host = "127.0.0.1") {
+  return new Promise((resolve) => {
+    const socket = createConnection({ port: Number(port), host });
+    const finish = (open) => {
+      socket.destroy();
+      resolve(open);
+    };
+    socket.setTimeout(250, () => finish(false));
+    socket.once("connect", () => finish(true));
+    socket.once("error", () => finish(false));
+  });
+}
+
+function listeningPid(port) {
+  if (process.platform !== "win32") return null;
+  try {
+    const output = execFileSync("netstat", ["-ano", "-p", "tcp"], { encoding: "utf8" });
+    const portPattern = new RegExp(`\\:${Number(port)}\\s+.*\\bLISTENING\\b\\s+\\d+\\s*$`);
+    const line = output.split(/\r?\n/).find((entry) => portPattern.test(entry));
+    const match = line?.match(/\s(\d+)\s*$/);
+    return match ? Number(match[1]) : null;
+  } catch {
+    return null;
+  }
+}
+
+function processCommandLine(pid) {
+  if (!pid || process.platform !== "win32") return "";
+  try {
+    return execFileSync(
+      "powershell.exe",
+      ["-NoProfile", "-Command", `(Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}').CommandLine`],
+      { encoding: "utf8" },
+    ).trim();
+  } catch {
+    return "";
+  }
+}
+
+async function prepareFrontend() {
+  if (!(await isPortOpen(configuredFrontendPort))) return false;
+  const pid = listeningPid(configuredFrontendPort);
+  const commandLine = processCommandLine(pid);
+  const isProjectVite = /vite(?:\\|\/|\.js)|node_modules[\\/]vite/i.test(commandLine);
+  if (pid && isProjectVite) {
+    console.log(`[dev] Restarting existing Vite process ${pid} with fresh dependency optimization.`);
+    spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore" });
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline && (await isPortOpen(configuredFrontendPort))) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    return false;
+  }
+  console.log(`[dev] Frontend port ${configuredFrontendPort} is owned by another process; reusing it.`);
+  return true;
+}
+
 const commands = [
   {
     name: "backend",
     command: backendPython,
-    args: ["-m", "uvicorn", "app.main:app", "--reload", "--reload-dir", "backend", "--access-log", "--port", backendPort(process.env), "--app-dir", "backend"],
+    args: ["-m", "uvicorn", "app.main:app", "--reload", "--reload-dir", "backend", "--access-log", "--log-level", "info", "--port", backendPort(process.env), "--app-dir", "backend"],
     cwd: process.cwd(),
     env: process.env,
   },
@@ -33,6 +91,7 @@ const commands = [
       frontendHost,
       "--port",
       configuredFrontendPort,
+      "--force",
     ],
     cwd: frontendDirectory,
     env: frontendEnvironment,
@@ -126,9 +185,10 @@ async function waitForBackend() {
 }
 
 try {
+  const existingFrontend = await prepareFrontend();
   start(commands[0]);
   await waitForBackend();
-  start(commands[1]);
+  if (!existingFrontend) start(commands[1]);
 } catch (error) {
   console.error(`[dev] ${error instanceof Error ? error.message : String(error)}`);
   stop(1);

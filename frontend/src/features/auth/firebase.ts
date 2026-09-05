@@ -14,9 +14,11 @@ import {
   updateProfile,
   signInWithPopup,
   signInWithRedirect,
+  type ActionCodeSettings,
   type Auth,
   type User,
 } from "firebase/auth";
+import { authCallbackUrl } from "@/features/auth/public-origin";
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY?.trim(),
@@ -104,11 +106,18 @@ export async function signInWithEmailPassword(email: string, password: string) {
   return userResult(result.user);
 }
 
+function verificationActionCode(): ActionCodeSettings {
+  return {
+    url: authCallbackUrl("/onboarding"),
+    handleCodeInApp: false,
+  };
+}
+
 export async function signUpWithEmailPassword(email: string, password: string, fullName: string) {
   const result = await createUserWithEmailAndPassword(firebaseAuth(), email.trim(), password);
   const name = fullName.trim();
   if (name) await updateProfile(result.user, { displayName: name });
-  await sendEmailVerification(result.user);
+  await sendEmailVerification(result.user, verificationActionCode());
   return result.user;
 }
 
@@ -117,7 +126,7 @@ export async function resendEmailVerification(expectedEmail: string) {
   if (!user || user.email?.trim().toLowerCase() !== expectedEmail.trim().toLowerCase()) {
     throw new Error("Start signing in with this email address before requesting another verification email.");
   }
-  await sendEmailVerification(user);
+  await sendEmailVerification(user, verificationActionCode());
 }
 
 export async function signOutFromFirebase() {

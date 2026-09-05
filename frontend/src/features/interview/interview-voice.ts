@@ -24,6 +24,63 @@ export type SpeechResultListLike = {
   [index: number]: SpeechResultLike | undefined;
 };
 
+/** Common English fillers / hedges — mirrors backend evaluator list for live UX. */
+export const FILLER_PHRASES = [
+  "um",
+  "uh",
+  "uhm",
+  "er",
+  "ah",
+  "like",
+  "you know",
+  "i mean",
+  "sort of",
+  "kind of",
+  "basically",
+  "actually",
+  "literally",
+  "right",
+  "so yeah",
+  "and stuff",
+] as const;
+
+function alternativeTranscripts(row: SpeechResultLike): string[] {
+  const length = typeof row.length === "number" && row.length > 0 ? row.length : 1;
+  const found: string[] = [];
+  for (let i = 0; i < length; i += 1) {
+    const text = String(row[i]?.transcript || "").trim();
+    if (text) found.push(text);
+  }
+  if (!found.length) {
+    const fallback = String(row[0]?.transcript || "").trim();
+    if (fallback) found.push(fallback);
+  }
+  return found;
+}
+
+function fillerHits(text: string): number {
+  const lower = (text || "").toLowerCase();
+  let count = 0;
+  for (const phrase of FILLER_PHRASES) {
+    const pattern = new RegExp(`\\b${phrase.replace(/\s+/g, "\\s+")}\\b`, "gi");
+    const hits = lower.match(pattern);
+    if (hits?.length) count += hits.length;
+  }
+  return count;
+}
+
+/** Prefer the recognition alternative that kept fillers / more of the utterance. */
+export function pickFillerRichAlternative(alternatives: Array<string | undefined | null>): string {
+  const cleaned = alternatives.map((item) => String(item || "").trim()).filter(Boolean);
+  if (!cleaned.length) return "";
+  if (cleaned.length === 1) return cleaned[0];
+  return [...cleaned].sort((a, b) => {
+    const fillerDelta = fillerHits(b) - fillerHits(a);
+    if (fillerDelta !== 0) return fillerDelta;
+    return b.length - a.length;
+  })[0];
+}
+
 /** Extract final + interim text from a SpeechRecognition result list. */
 export function extractSpeechTranscript(
   results: SpeechResultListLike | ArrayLike<SpeechResultLike | undefined> | null | undefined,
@@ -39,8 +96,7 @@ export function extractSpeechTranscript(
   for (let i = start; i < list.length; i += 1) {
     const row = list[i];
     if (!row) continue;
-    const alt = row[0];
-    const text = String(alt?.transcript || "").trim();
+    const text = pickFillerRichAlternative(alternativeTranscripts(row));
     if (!text) continue;
     if (row.isFinal) finals.push(text);
     else interim = text;
@@ -113,6 +169,25 @@ export function nextActiveIndex(current: number, total: number): number | null {
  * Compact interviewer line for spoken debrief between questions.
  * Uses only measured evaluation fields — does not invent content.
  */
+export function spokenInterviewerReply(evaluation: {
+  spoken_reply?: string | null;
+  interviewer_feedback?: string | null;
+  verdict?: string | null;
+  score?: number | null;
+  strengths?: string[] | null;
+  improvements?: string[] | null;
+  better_approach?: string | null;
+  filler_notes?: string | null;
+} | null): string {
+  const spoken = String(evaluation?.spoken_reply || "").trim();
+  if (spoken) return spoken.slice(0, 340);
+  const feedback = String(evaluation?.interviewer_feedback || "").trim();
+  if (feedback && !/\b\d+\s*\/\s*100\b/.test(feedback) && !/\bscore\b/i.test(feedback)) {
+    return feedback.slice(0, 340);
+  }
+  return "Thanks, I've noted that. Let's continue.";
+}
+
 export function buildShortInterviewerLine(evaluation: {
   verdict?: string | null;
   score?: number | null;
@@ -205,39 +280,19 @@ export function phaseAfterFeedbackSpoken(autoContinue: boolean): InterviewTurnPh
   return autoContinue ? "between" : "awaiting_proceed";
 }
 
-/** Longer silence so natural pauses mid-answer do not auto-submit too early. */
-export const DEFAULT_ANSWER_SILENCE_MS = 5500;
+/** Silence before auto-submit. Long enough to finish a thought without feeling stuck. */
+export const DEFAULT_ANSWER_SILENCE_MS = 2400;
 /** Wait after interviewer audio fully ends before opening SpeechRecognition. */
-export const DEFAULT_LISTEN_AFTER_TTS_MS = 700;
-/** Brief beat after short feedback before auto-advance (feels less abrupt). */
-export const DEFAULT_AUTO_ADVANCE_AFTER_FEEDBACK_MS = 900;
+export const DEFAULT_LISTEN_AFTER_TTS_MS = 250;
+/** Brief beat after an answer before the next question. */
+export const DEFAULT_AUTO_ADVANCE_AFTER_FEEDBACK_MS = 150;
 /** How long we listen for "proceed" before showing a soft prompt again. */
 export const DEFAULT_PROCEED_LISTEN_MS = 12000;
 /**
  * Max time to wait for interviewer audio to finish before listening.
- * Must be long enough for full questions + Fish Audio network; never cut mid-sentence.
+ * Must be long enough for full questions + Groq Orpheus network; never cut mid-sentence.
  */
 export const DEFAULT_TTS_MAX_WAIT_MS = 120_000;
-
-/** Common English fillers / hedges — mirrors backend evaluator list for live UX. */
-export const FILLER_PHRASES = [
-  "um",
-  "uh",
-  "uhm",
-  "er",
-  "ah",
-  "like",
-  "you know",
-  "i mean",
-  "sort of",
-  "kind of",
-  "basically",
-  "actually",
-  "literally",
-  "right",
-  "so yeah",
-  "and stuff",
-] as const;
 
 export type LiveSpeakingMetrics = {
   word_count: number;
@@ -351,7 +406,7 @@ export function scheduleListenAfterQuestionSpoken(
     delayMs?: number;
     maxWaitMs?: number;
     isCancelled?: () => boolean;
-    /** Optional external busy check (Fish Audio HTMLAudioElement, etc.). */
+    /** Optional external busy check (server TTS HTMLAudioElement, etc.). */
     isBusy?: () => boolean;
   },
 ): number {

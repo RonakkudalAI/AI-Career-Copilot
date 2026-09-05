@@ -29,6 +29,55 @@ type DemoState = {
 
 const DEMO_USER_ID = "demo-user";
 
+/** Public identity cards for Community. Matches existing e2e/backend fixtures; no invented people. */
+const DEMO_PUBLIC_PROFILE_CARD_FIELDS = [
+  "username",
+  "full_name",
+  "avatar_url",
+  "headline",
+  "location",
+  "current_role",
+  "career_level",
+  "career_goal",
+] as const;
+
+const DEMO_PUBLIC_PROFILES: DemoRecord[] = [
+  {
+    username: "ada-lovelace",
+    full_name: "Ada Lovelace",
+    current_role: "AI engineer",
+    career_level: "Experienced",
+  },
+  {
+    username: "grace-hopper",
+    full_name: "Grace Hopper",
+    current_role: "Compiler engineer",
+  },
+];
+
+function demoPublicProfileCards(needle: string, limit: number): DemoRecord[] {
+  let normalized = needle.trim().toLowerCase().replace(/\s+/g, " ");
+  if (normalized.startsWith("@")) normalized = normalized.slice(1).trim();
+  if (normalized.length < 2) return [];
+  const ranked = [...DEMO_PUBLIC_PROFILES].sort((a, b) => {
+    const byName = String(a.full_name || "").toLowerCase().localeCompare(String(b.full_name || "").toLowerCase());
+    if (byName) return byName;
+    return String(a.username || "").toLowerCase().localeCompare(String(b.username || "").toLowerCase());
+  });
+  const matches: DemoRecord[] = [];
+  for (const row of ranked) {
+    const username = String(row.username || "").trim();
+    if (!username) continue;
+    const haystack = DEMO_PUBLIC_PROFILE_CARD_FIELDS.map((key) => String(row[key] || "")).join(" ").toLowerCase();
+    if (!haystack.includes(normalized)) continue;
+    matches.push(
+      Object.fromEntries(DEMO_PUBLIC_PROFILE_CARD_FIELDS.map((key) => [key, row[key] ?? null])) as DemoRecord,
+    );
+    if (matches.length >= limit) break;
+  }
+  return matches;
+}
+
 function now() {
   return new Date().toISOString();
 }
@@ -39,6 +88,74 @@ function id(prefix: string) {
 
 function daysAgo(days: number) {
   return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+}
+
+function demoMergeRanges(ranges: unknown): number[][] {
+  const cleaned: number[][] = [];
+  if (!Array.isArray(ranges)) return cleaned;
+  for (const pair of ranges) {
+    if (!Array.isArray(pair) || pair.length < 2) continue;
+    const start = Math.max(0, Number(pair[0]) || 0);
+    const end = Math.max(0, Number(pair[1]) || 0);
+    if (end <= start) continue;
+    cleaned.push([start, end]);
+  }
+  cleaned.sort((a, b) => a[0] - b[0]);
+  const merged: number[][] = [];
+  for (const [start, end] of cleaned) {
+    const last = merged[merged.length - 1];
+    if (!last || start > last[1] + 0.35) merged.push([start, end]);
+    else last[1] = Math.max(last[1], end);
+  }
+  return merged;
+}
+
+function demoResourcePercent(resource: DemoRecord): number {
+  if (String(resource.watch_status || "") === "completed") return 100;
+  const stored = Number(resource.watch_percent);
+  if (Number.isFinite(stored) && stored > 0) return Math.max(0, Math.min(100, Math.round(stored)));
+  if (resource.opened_at) return 50;
+  return 0;
+}
+
+function demoItemPercent(item: DemoRecord): number {
+  const resources = Array.isArray(item.learning_resources) ? (item.learning_resources as DemoRecord[]) : [];
+  if (resources.length) {
+    return Math.round(resources.reduce((sum, row) => sum + demoResourcePercent(row), 0) / resources.length);
+  }
+  if (item.status === "completed") return 100;
+  if (item.status === "in_progress") return 50;
+  return 0;
+}
+
+function demoRollupPath(path: DemoRecord) {
+  const items = Array.isArray(path.items) ? (path.items as DemoRecord[]) : [];
+  const percents = items.map((item) => demoItemPercent(item));
+  const progress = percents.length ? Math.round(percents.reduce((sum, value) => sum + value, 0) / percents.length) : 0;
+  const resources = items.flatMap((item) =>
+    Array.isArray(item.learning_resources) ? (item.learning_resources as DemoRecord[]) : [],
+  );
+  const last = [...resources].sort((a, b) =>
+    String(b.last_watched_at || "").localeCompare(String(a.last_watched_at || "")),
+  )[0];
+  path.progress_percentage = progress;
+  path.status = progress === 100 && items.length ? "completed" : "active";
+  path.item_count = items.length;
+  path.watch_summary = {
+    resource_count: resources.length,
+    completed_resources: resources.filter((row) => demoResourcePercent(row) >= 90).length,
+    watched_percent: progress,
+    last_watched_at: last?.last_watched_at || null,
+    last_resource_id: last?.id || null,
+    last_resource_title: last?.title || null,
+    last_item_id:
+      items.find((item) =>
+        (Array.isArray(item.learning_resources) ? (item.learning_resources as DemoRecord[]) : []).some(
+          (row) => row.id === last?.id,
+        ),
+      )?.id || null,
+  };
+  return path;
 }
 
 /** Seed completed mock sessions with an upward score trend for dashboard charts. */
@@ -194,47 +311,94 @@ function initialState(): DemoState {
     links: [],
     resumes: [],
     resumeVersions: [],
-    jobDescriptions: [],
-    analyses: [],
-    evidence: [],
+    jobDescriptions: [
+      {
+        id: "demo-jd-1",
+        user_id: DEMO_USER_ID,
+        title: "Backend Engineer",
+        company: "Northstar Labs",
+        role_title: "Backend Engineer",
+        extraction_status: "confirmed",
+        created_at: created,
+      },
+    ],
+    analyses: [
+      {
+        id: "demo-ats-1",
+        user_id: DEMO_USER_ID,
+        status: "completed",
+        overall_score: 64,
+        resume_version_id: null,
+        job_description_id: "demo-jd-1",
+        created_at: created,
+        completed_at: created,
+        score_breakdown: {
+          matched_terms: ["TypeScript", "Python"],
+          missing_terms: ["Docker"],
+          partial_terms: [],
+          total_terms: 3,
+        },
+        summary: {
+          matched: 2,
+          missing: 1,
+          total: 3,
+          missing_terms: ["Docker"],
+        },
+      },
+    ],
+    evidence: [
+      {
+        id: "demo-evidence-1",
+        analysis_id: "demo-ats-1",
+        requirement_text: "Docker",
+        match_status: "not_found",
+        explanation: "Not found in the demo resume.",
+      },
+    ],
     interviews: seeded.interviews,
     questions: [],
     responses: [],
     reports: seeded.reports,
     savedJobs: [],
     jobs: [
-      { id: "demo-job-1", title: "Software Engineer", company: "Northstar Labs", location: "Bengaluru", work_mode: "hybrid", description: "Build dependable product experiences with a small engineering team.", is_active: true, latitude: 12.9716, longitude: 77.5946 },
-      { id: "demo-job-2", title: "Backend Engineer", company: "Atlas Systems", location: "Hyderabad", work_mode: "remote", description: "Design APIs and data workflows for a growing platform.", is_active: true, latitude: 17.385, longitude: 78.4867 },
+      { id: "demo-job-1", title: "Software Engineer", company: "Northstar Labs", location: "Bengaluru", work_mode: "hybrid", description: "Build dependable product experiences with a small engineering team.", is_active: true },
+      { id: "demo-job-2", title: "Backend Engineer", company: "Atlas Systems", location: "Hyderabad", work_mode: "remote", description: "Design APIs and data workflows for a growing platform.", is_active: true },
     ],
     learningPaths: [
       {
         id: "demo-path-1",
         user_id: DEMO_USER_ID,
-        title: "Backend interview readiness",
-        description: "A short practice path for API design and interview communication, grounded in sample skill gaps.",
-        source_type: "candidate_selected",
+        title: "Skill gap path · Demo ATS",
+        description: "Study plan from requirements not fully evidenced in the demo ATS analysis.",
+        source_type: "ats_analysis",
+        source_id: "demo-ats-1",
         status: "active",
-        progress_percentage: 25,
+        progress_percentage: 0,
         item_count: 1,
         created_at: created,
         items: [
           {
             id: "demo-item-1",
-            title: "Explain an API design decision",
-            objective: "Practice structuring a clear API design explanation with trade-offs and a concrete example.",
+            title: "Learn Docker with guided practice",
+            objective: "Study Docker using free video lessons and articles, then practise a small container workflow.",
             status: "pending",
             estimated_minutes: 45,
             difficulty: "foundational",
             learning_resources: [
               {
                 id: "demo-resource-1",
-                title: "REST API design fundamentals",
+                title: "Docker Tutorial for Beginners — Demo",
                 resource_type: "youtube_video",
                 provider: "freeCodeCamp.org",
-                url: "https://www.youtube.com/watch?v=Q-BpqyOT3a8",
-                reason_recommended: "Free lesson for practicing clear API design explanations (demo sample).",
+                url: "https://www.youtube.com/watch?v=fqMOX6JJhGo",
+                reason_recommended: "Demo video lesson for an ATS Docker gap (not live API).",
+                watch_status: "not_started",
+                watch_percent: 0,
+                position_seconds: 0,
+                watched_seconds: 0,
+                watched_ranges: [],
                 metadata: {
-                  video_id: "Q-BpqyOT3a8",
+                  video_id: "fqMOX6JJhGo",
                   channel_title: "freeCodeCamp.org",
                   source: "demo",
                   video_id_policy: "demo_known_public_video",
@@ -242,12 +406,14 @@ function initialState(): DemoState {
               },
               {
                 id: "demo-resource-1b",
-                title: "Blogs & articles: REST API design",
+                title: "Blogs & articles: Docker",
                 resource_type: "article_search",
                 provider: "Google · educational sites",
-                url: "https://www.google.com/search?q=REST+API+design+guide+OR+article+%28site%3Afreecodecamp.org+OR+site%3Adev.to+OR+site%3Adeveloper.mozilla.org%29",
+                url: "https://www.google.com/search?q=Docker+tutorial+guide+OR+article+%28site%3Afreecodecamp.org+OR+site%3Adev.to+OR+site%3Adocs.docker.com%29",
                 reason_recommended:
-                  "Free blogs and articles for the sample skill gap (demo). Specific post URLs are never invented.",
+                  "Free blogs and articles for the ATS Docker gap (demo). Specific post URLs are never invented.",
+                watch_status: "not_started",
+                watch_percent: 0,
                 metadata: {
                   source: "demo",
                   url_policy: "allowlisted_search_only_no_invented_articles",
@@ -256,6 +422,14 @@ function initialState(): DemoState {
             ],
           },
         ],
+        source_snapshot: {
+          analysis_id: "demo-ats-1",
+          overall_score: 64,
+          role_title: "Software Engineer",
+          resume_title: "Demo resume",
+          missing_count: 1,
+          partial_count: 0,
+        },
       },
     ],
   };
@@ -580,8 +754,23 @@ export async function demoApiRequest<T>(path: string, init: RequestInit = {}): P
   const parts = parsePath(path);
   const body = jsonBody(init);
 
-  if (path === "/me/bootstrap") return bootstrap() as T;
+  if (parts[0] === "me" && parts[1] === "bootstrap") return bootstrap() as T;
   if (path === "/profile" && method === "GET") return profileResponse() as T;
+  if (parts[0] === "profile" && parts[1] === "username" && parts[2] === "availability" && method === "GET") {
+    const raw = String(new URLSearchParams(path.split("?")[1] || "").get("username") || "")
+      .trim()
+      .toLowerCase()
+      .replace(/^@/, "");
+    const own = String(state.profile.username || "").trim().toLowerCase();
+    const taken = Boolean(raw) && raw !== own && DEMO_PUBLIC_PROFILES.some(
+      (row) => String(row.username || "").toLowerCase() === raw,
+    );
+    return {
+      username: raw,
+      available: Boolean(raw) && raw.length >= 3 && !taken,
+      reason: !raw || raw.length < 3 ? "Use at least 3 characters." : taken ? "Username is already taken." : null,
+    } as T;
+  }
   if (path === "/profile" && method === "PATCH") {
     state.profile = { ...state.profile, ...body };
     return state.profile as T;
@@ -654,7 +843,7 @@ export async function demoApiRequest<T>(path: string, init: RequestInit = {}): P
         certifications: [],
         languages: [],
         links: state.links.map((row) => ({ ...row, selected: true })),
-        meta: { method: "demo", warnings: [] },
+        meta: { method: "demo", warnings: ["Technical extraction warning that must stay hidden."] },
       },
       counts: { skills: state.skills.length, experiences: state.experiences.length },
       resume: {
@@ -670,12 +859,13 @@ export async function demoApiRequest<T>(path: string, init: RequestInit = {}): P
   if (path === "/profile/from-resume/preview-upload" && method === "POST") {
     const form = init.body instanceof FormData ? init.body : null;
     const file = form?.get("file") as File | null;
+    const requestedTitle = String(form?.get("title") || "").trim();
     const resumeId = id("demo-resume");
     const versionId = id("demo-version");
     const resume = {
       id: resumeId,
       user_id: DEMO_USER_ID,
-      title: file?.name ? `${file.name} (profile)` : "Profile resume",
+      title: requestedTitle.slice(0, 200) || (file?.name ? `${file.name} (profile)` : "Profile resume"),
       is_active: state.resumes.length === 0,
       created_at: now(),
     };
@@ -724,7 +914,7 @@ export async function demoApiRequest<T>(path: string, init: RequestInit = {}): P
         certifications: [],
         languages: [],
         links: [],
-        meta: { method: "demo", warnings: [] },
+        meta: { method: "demo", warnings: ["Technical extraction warning that must stay hidden."] },
       },
       counts: { skills: 2, experiences: 1 },
       resume: {
@@ -755,9 +945,10 @@ export async function demoApiRequest<T>(path: string, init: RequestInit = {}): P
   if (parts[0] === "resumes" && parts.length === 1 && method === "POST") {
     const form = init.body instanceof FormData ? init.body : null;
     const file = form?.get("file") as File | null;
+    const requestedTitle = String(form?.get("title") || "").trim();
     const resumeId = id("demo-resume");
     const versionId = id("demo-version");
-    const resume = { id: resumeId, user_id: DEMO_USER_ID, title: file?.name ? `${file.name} demo` : "Demo resume", is_active: state.resumes.length === 0, created_at: now() };
+    const resume = { id: resumeId, user_id: DEMO_USER_ID, title: requestedTitle.slice(0, 200) || (file?.name ? `${file.name} demo` : "Demo resume"), is_active: state.resumes.length === 0, created_at: now() };
     const version = { id: versionId, resume_id: resumeId, user_id: DEMO_USER_ID, version_number: 1, source_type: "uploaded", original_filename: file?.name || "demo-resume.pdf", mime_type: file?.type || "application/pdf", extraction_status: "review_required", created_at: now(), structured_content: { sections: { summary: ["Software engineer with experience building web products."], skills: ["TypeScript", "Python"], experience: ["Software Engineer  -  Demo Company"] } } };
     state.resumes.unshift(resume);
     state.resumeVersions.unshift(version);
@@ -772,6 +963,14 @@ export async function demoApiRequest<T>(path: string, init: RequestInit = {}): P
       .slice()
       .sort((a, b) => Number(b.version_number || 0) - Number(a.version_number || 0));
     return { ...resume, versions } as T;
+  }
+  if (parts[0] === "resumes" && parts.length === 2 && method === "PATCH") {
+    const resume = state.resumes.find((item) => item.id === parts[1]);
+    const title = String(body.title || "").trim();
+    if (!resume) throw new Error("Resume not found.");
+    if (!title) throw new Error("Resume name is required.");
+    resume.title = title.slice(0, 200);
+    return resume as T;
   }
   if (parts[0] === "resumes" && parts.length === 2 && method === "DELETE") {
     state.resumes = state.resumes.filter((resume) => resume.id !== parts[1]);
@@ -832,8 +1031,8 @@ export async function demoApiRequest<T>(path: string, init: RequestInit = {}): P
       return record as T;
     }
   }
-  if (path === "/jobs/external/sync" && method === "POST") {
-    return { synced: 0, created: 0, updated: 0, message: "Demo mode — external job sync is simulated." } as T;
+    if (path === "/jobs/external/sync" && method === "POST") {
+      return { synced: state.jobs.length, created: 0, updated: state.jobs.length, provider: "freehire", message: "Demo mode — FreeHire refresh is simulated." } as T;
   }
   if (parts[0] === "job-descriptions" && parts[1] === "upload" && method === "POST") {
     const form = init.body instanceof FormData ? init.body : null;
@@ -932,6 +1131,78 @@ export async function demoApiRequest<T>(path: string, init: RequestInit = {}): P
   }
 
   if (path === "/interviews" && method === "GET") return state.interviews as T;
+  if (path === "/interviews/commit" && method === "POST") {
+    const sessionBody = ((body as DemoRecord).session || {}) as DemoRecord;
+    const session: DemoRecord = {
+      ...sessionBody,
+      id: id("demo-interview"),
+      user_id: DEMO_USER_ID,
+      status: "completed",
+      mode: sessionBody.mode || "mixed",
+      created_at: now(),
+      completed_at: now(),
+    };
+    state.interviews.unshift(session);
+    const questionsIn = Array.isArray((body as DemoRecord).questions)
+      ? ((body as DemoRecord).questions as DemoRecord[])
+      : [];
+    const mappedQuestions = questionsIn.map((question, index) => ({
+      id: id("demo-question"),
+      session_id: session.id,
+      position: Number(question.position || index + 1),
+      question: question.question,
+      question_type: question.question_type || session.mode || "mixed",
+      source_context: question.source_context || { provider: "live_bank" },
+    }));
+    state.questions.push(...mappedQuestions);
+    const responsesIn = Array.isArray((body as DemoRecord).responses)
+      ? ((body as DemoRecord).responses as DemoRecord[])
+      : [];
+    for (const row of responsesIn) {
+      const question = mappedQuestions.find((item) => Number(item.position) === Number(row.position));
+      if (!question) continue;
+      state.responses.push({
+        id: id("demo-response"),
+        session_id: session.id,
+        question_id: question.id,
+        typed_response: row.typed_response,
+        transcript: row.transcript,
+        duration_seconds: row.duration_seconds,
+        speech_metrics: row.speech_metrics,
+        gaze_metrics: row.gaze_metrics,
+        evaluation: {
+          verdict: "solid",
+          score: 72,
+          spoken_reply: "Thanks, that was clear. Let's move on.",
+          interviewer_feedback: "Demo evaluation stored after the live round.",
+          strengths: ["You answered the question"],
+          improvements: ["Add a measurable result"],
+        },
+        created_at: now(),
+      });
+    }
+    const sessionResponses = state.responses.filter((item) => item.session_id === session.id);
+    const reportBody = buildDemoReport(session, sessionResponses);
+    const report = {
+      id: id("demo-report"),
+      session_id: session.id,
+      user_id: DEMO_USER_ID,
+      overall_score: reportBody.overall_score,
+      communication_score: reportBody.communication_score,
+      structure_score: reportBody.structure_score,
+      content_score: reportBody.content_score,
+      summary: reportBody.overall_summary,
+      report: reportBody,
+      provider: "demo",
+    };
+    state.reports.push(report);
+    return {
+      session,
+      report,
+      questions: mappedQuestions,
+      message: "Session saved. Review your detailed debrief report.",
+    } as T;
+  }
   if (path === "/interviews" && method === "POST") {
     const session = { ...body, id: id("demo-interview"), user_id: DEMO_USER_ID, status: "draft", created_at: now() };
     state.interviews.unshift(session);
@@ -957,11 +1228,23 @@ export async function demoApiRequest<T>(path: string, init: RequestInit = {}): P
     const wordCount = answer.split(/\s+/).filter(Boolean).length;
     const duration = Number((body as DemoRecord)?.duration_seconds || 0);
     const wpm = duration >= 1 && wordCount > 0 ? Math.round((wordCount / duration) * 60 * 10) / 10 : null;
+    const currentQuestion = state.questions.find((q) => q.id === (body as DemoRecord)?.question_id);
+    const alreadyFollowed =
+      String((currentQuestion as DemoRecord | undefined)?.question_type || "") === "follow_up" ||
+      String(((currentQuestion as DemoRecord | undefined)?.source_context as DemoRecord | undefined)?.kind || "") ===
+        "follow_up";
+    const shouldFollow = !alreadyFollowed && answer.length < 80;
+    const followQuestion = "What specifically did you do, and what changed because of it?";
     const evaluation = {
       verdict: answer.length > 80 ? "solid" : "partial",
       score: Math.min(92, 40 + Math.floor(answer.length / 4) - fillers * 3),
       interviewer_feedback:
         "Demo interviewer: cover situation, action, and result more clearly. Reduce fillers if you used them.",
+      spoken_reply: shouldFollow
+        ? "I'm with you on the setup. Stay with that example for a second."
+        : "Thanks, that was clear. Let's move on.",
+      should_follow_up: shouldFollow,
+      follow_up_question: shouldFollow ? followQuestion : null,
       strengths: answer.length > 40 ? ["Enough detail to discuss"] : ["You responded"],
       improvements: ["Add a measurable result", fillers ? "Cut filler words" : "Keep pauses intentional"],
       better_approach: "Open with context, own the action, close with impact.",
@@ -997,7 +1280,34 @@ export async function demoApiRequest<T>(path: string, init: RequestInit = {}): P
       created_at: now(),
     };
     state.responses.push(response);
-    return { response, evaluation, question: state.questions.find((q) => q.id === (body as DemoRecord)?.question_id) } as T;
+    let follow_up: DemoRecord | null = null;
+    if (shouldFollow && currentQuestion) {
+      const currentPos = Number((currentQuestion as DemoRecord).position || 0);
+      for (const item of state.questions) {
+        if (item.session_id === parts[1] && Number(item.position || 0) > currentPos) {
+          item.position = Number(item.position || 0) + 1;
+        }
+      }
+      follow_up = {
+        id: id("demo-question"),
+        session_id: parts[1],
+        position: currentPos + 1,
+        question: followQuestion,
+        question_type: "follow_up",
+        source_context: { kind: "follow_up", provider: "demo", parent_question_id: currentQuestion.id },
+      };
+      state.questions.push(follow_up);
+    }
+    const sessionQuestions = state.questions
+      .filter((item) => item.session_id === parts[1])
+      .sort((a, b) => Number(a.position || 0) - Number(b.position || 0));
+    return {
+      response,
+      evaluation,
+      follow_up,
+      questions: sessionQuestions,
+      question: currentQuestion,
+    } as T;
   }
   if (parts[0] === "interviews" && parts[2] === "complete" && method === "POST") {
     const session = state.interviews.find((item) => item.id === parts[1]);
@@ -1149,7 +1459,11 @@ export async function demoApiRequest<T>(path: string, init: RequestInit = {}): P
       }));
     return { resume_version_id: null, algorithm_version: "demo", recommendations } as T;
   }
-  if (parts[0] === "jobs" && parts.length === 2 && method === "GET") return state.jobs.find((job) => job.id === parts[1]) as T;
+  if (parts[0] === "jobs" && parts.length === 2 && method === "GET") {
+    const job = state.jobs.find((item) => item.id === parts[1]);
+    if (!job) throw new Error("The requested record was not found.");
+    return job as T;
+  }
   if (path === "/saved-jobs" && method === "GET") {
     // Return full pipeline (saved / applied / rejected / …), matching backend list_saved_jobs.
     return state.savedJobs.map((saved) => ({
@@ -1205,32 +1519,51 @@ export async function demoApiRequest<T>(path: string, init: RequestInit = {}): P
   }
   if (path === "/learning-paths" && method === "GET") {
     return state.learningPaths.map((row) => {
-      const items = Array.isArray(row.items) ? (row.items as DemoRecord[]) : [];
+      const rolled = demoRollupPath({ ...row });
+      const items = Array.isArray(rolled.items) ? (rolled.items as DemoRecord[]) : [];
       return {
-        ...row,
-        item_count: typeof row.item_count === "number" ? row.item_count : items.length,
+        ...rolled,
+        item_count: items.length,
         // List payload keeps lightweight item summaries (matches backend list_learning).
         items: items.map((item) => ({
           id: item.id,
           title: item.title,
           status: item.status || "pending",
           position: item.position,
+          watch_percent: demoItemPercent(item),
         })),
       };
     }) as T;
   }
   if (path === "/learning-paths/generate" && method === "POST") {
+    const completed = state.analyses.filter((row) => row.status === "completed");
+    const requestedId = String((body as DemoRecord)?.source_analysis_id || "");
+    const analysis = requestedId
+      ? completed.find((row) => String(row.id) === requestedId)
+      : completed[0];
+    if (!analysis) {
+      throw new Error("Complete an ATS analysis before generating a learning path.");
+    }
     const pathId = id("demo-path");
     const itemId = id("demo-item");
     const resourceId = id("demo-resource");
     const articleResourceId = id("demo-article");
-    const path = {
+    const path = demoRollupPath({
       id: pathId,
       user_id: DEMO_USER_ID,
       title: "Skill gap path · Demo ATS gaps",
       description:
         "Demo path grounded in illustrative ATS gaps with free video lessons and blogs/articles (no invented skills).",
       source_type: "ats_analysis",
+      source_id: String(analysis.id),
+      source_snapshot: {
+        analysis_id: String(analysis.id),
+        overall_score: analysis.overall_score,
+        role_title: "Software Engineer",
+        resume_title: "Demo resume",
+        missing_count: 1,
+        partial_count: 0,
+      },
       status: "active",
       progress_percentage: 0,
       item_count: 1,
@@ -1252,6 +1585,11 @@ export async function demoApiRequest<T>(path: string, init: RequestInit = {}): P
               provider: "freeCodeCamp.org",
               url: "https://www.youtube.com/watch?v=fqMOX6JJhGo",
               reason_recommended: "Demo video lesson for an illustrative ATS gap (not live API).",
+              watch_status: "not_started",
+              watch_percent: 0,
+              position_seconds: 0,
+              watched_seconds: 0,
+              watched_ranges: [],
               metadata: {
                 video_id: "fqMOX6JJhGo",
                 channel_title: "freeCodeCamp.org",
@@ -1267,6 +1605,8 @@ export async function demoApiRequest<T>(path: string, init: RequestInit = {}): P
               url: "https://www.google.com/search?q=Docker+tutorial+guide+OR+article+%28site%3Afreecodecamp.org+OR+site%3Adev.to+OR+site%3Adocs.docker.com%29",
               reason_recommended:
                 "Demo reading search for blogs and docs on Docker. Specific article URLs are never invented.",
+              watch_status: "not_started",
+              watch_percent: 0,
               metadata: {
                 source: "demo",
                 url_policy: "allowlisted_search_only_no_invented_articles",
@@ -1279,6 +1619,8 @@ export async function demoApiRequest<T>(path: string, init: RequestInit = {}): P
               provider: "Docker Docs",
               url: "https://docs.docker.com/search/?q=Docker",
               reason_recommended: "Official documentation search for the sample Docker gap (demo).",
+              watch_status: "not_started",
+              watch_percent: 0,
               metadata: {
                 source: "demo",
                 url_policy: "allowlisted_search_only_no_invented_articles",
@@ -1288,7 +1630,7 @@ export async function demoApiRequest<T>(path: string, init: RequestInit = {}): P
         },
       ],
       algorithm_version: "ats-mixed-learning-v1",
-    };
+    });
     state.learningPaths.unshift(path);
     return path as T;
   }
@@ -1297,7 +1639,7 @@ export async function demoApiRequest<T>(path: string, init: RequestInit = {}): P
     if (!path) {
       throw new Error("The requested record was not found.");
     }
-    return path as T;
+    return demoRollupPath(path) as T;
   }
   if (parts[0] === "learning-paths" && parts.length === 2 && method === "DELETE") {
     const before = state.learningPaths.length;
@@ -1318,15 +1660,107 @@ export async function demoApiRequest<T>(path: string, init: RequestInit = {}): P
       throw new Error("The learning item was not found.");
     }
     item.status = body.status || item.status;
-    const done = items.filter((row) => row.status === "completed").length;
-    path.progress_percentage = items.length ? Math.round((done / items.length) * 100) : 0;
-    path.item_count = items.length;
-    path.status = path.progress_percentage === 100 && items.length ? "completed" : "active";
-    return { ...item, progress_percentage: path.progress_percentage } as T;
+    if (item.status === "completed") {
+      const resources = Array.isArray(item.learning_resources) ? (item.learning_resources as DemoRecord[]) : [];
+      for (const resource of resources) {
+        resource.watch_status = "completed";
+        resource.watch_percent = 100;
+        resource.completed_at = now();
+      }
+    }
+    demoRollupPath(path);
+    return { ...item, progress_percentage: path.progress_percentage, watch_summary: path.watch_summary } as T;
+  }
+  if (parts[0] === "learning-paths" && parts[2] === "resources" && method === "PATCH") {
+    const path = state.learningPaths.find((item) => item.id === parts[1]);
+    if (!path) {
+      throw new Error("The learning path was not found.");
+    }
+    const items = Array.isArray(path.items) ? (path.items as DemoRecord[]) : [];
+    let resource: DemoRecord | undefined;
+    let parent: DemoRecord | undefined;
+    for (const item of items) {
+      const resources = Array.isArray(item.learning_resources) ? (item.learning_resources as DemoRecord[]) : [];
+      const found = resources.find((row) => row.id === parts[3]);
+      if (found) {
+        resource = found;
+        parent = item;
+        break;
+      }
+    }
+    if (!resource || !parent) {
+      throw new Error("The learning resource was not found.");
+    }
+    const stamp = now();
+    const incoming = Array.isArray(body.watched_ranges) ? body.watched_ranges : [];
+    resource.watched_ranges = demoMergeRanges([...(Array.isArray(resource.watched_ranges) ? resource.watched_ranges : []), ...incoming]);
+    const watched = (resource.watched_ranges as number[][]).reduce((sum, pair) => sum + (pair[1] - pair[0]), 0);
+    resource.watched_seconds = Math.round(watched * 100) / 100;
+    if (body.position_seconds != null) resource.position_seconds = Number(body.position_seconds) || 0;
+    if (body.duration_seconds != null) resource.duration_seconds = Number(body.duration_seconds) || null;
+    if (body.opened) resource.opened_at = resource.opened_at || stamp;
+    const duration = Number(resource.duration_seconds || 0);
+    let percent = duration > 0 ? Math.max(0, Math.min(100, Math.round((Number(resource.watched_seconds) / duration) * 100))) : Number(resource.watch_percent || 0);
+    if (resource.opened_at && percent < 50 && String(resource.resource_type || "").includes("article")) percent = 50;
+    if (body.status === "completed" || percent >= 90) {
+      resource.watch_status = "completed";
+      resource.watch_percent = 100;
+      resource.completed_at = resource.completed_at || stamp;
+    } else if (body.status === "not_started") {
+      resource.watch_status = "not_started";
+      resource.watch_percent = 0;
+      resource.watched_ranges = [];
+      resource.watched_seconds = 0;
+      resource.position_seconds = 0;
+      resource.opened_at = null;
+      resource.completed_at = null;
+    } else {
+      resource.watch_status = percent > 0 || resource.opened_at ? "in_progress" : "not_started";
+      resource.watch_percent = percent;
+    }
+    resource.last_watched_at = stamp;
+    const itemPercent = demoItemPercent(parent);
+    parent.watch_percent = itemPercent;
+    parent.status = itemPercent >= 90 ? "completed" : itemPercent > 0 ? "in_progress" : "pending";
+    demoRollupPath(path);
+    return {
+      ...resource,
+      item_status: parent.status,
+      item_watch_percent: itemPercent,
+      progress_percentage: path.progress_percentage,
+      watch_summary: path.watch_summary,
+    } as T;
   }
   if (parts[0] === "account" && method === "DELETE") {
     state = initialState();
     return undefined as T;
+  }
+  if (parts[0] === "public" && parts[1] === "profiles" && parts[2] === "search" && method === "GET") {
+    const params = new URLSearchParams(path.includes("?") ? path.slice(path.indexOf("?") + 1) : "");
+    const needle = (params.get("q") || "").trim().replace(/\s+/g, " ").toLowerCase();
+    const parsedLimit = Number(params.get("limit") || 20);
+    const limit = Math.min(50, Math.max(1, Number.isFinite(parsedLimit) ? parsedLimit : 20));
+    return demoPublicProfileCards(needle, limit) as T;
+  }
+  if (parts[0] === "public" && parts[1] === "profiles" && parts[2] && method === "GET") {
+    const username = decodeURIComponent(parts[2]).trim().toLowerCase();
+    const row = DEMO_PUBLIC_PROFILES.find((item) => String(item.username || "").toLowerCase() === username);
+    if (!row) throw new Error("Profile not found.");
+    const profile = Object.fromEntries(
+      DEMO_PUBLIC_PROFILE_CARD_FIELDS.map((key) => [key, row[key] ?? null]),
+    ) as DemoRecord;
+    return {
+      profile: { ...profile, id: `demo-public-${username}` },
+      sections: {
+        skills: [],
+        experiences: [],
+        education: [],
+        projects: [],
+        certifications: [],
+        languages: [],
+        links: [],
+      },
+    } as T;
   }
 
   // Fail closed: unknown demo routes must not return {} (callers treat that as success).

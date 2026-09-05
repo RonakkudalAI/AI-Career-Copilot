@@ -21,7 +21,7 @@ VITE_SUPABASE_PUBLISHABLE_KEY=<Supabase publishable key>
 
 `VITE_API_BASE_URL` must be the backend origin only; do not append `/api/v1`. The frontend adds the API prefix. After changing any `VITE_*` value, create a new Vercel deployment because Vite embeds these values at build time.
 
-Firebase Authentication must have Email/Password and Google enabled. Authorized domains must include the exact frontend hostname, `localhost`, and `127.0.0.1` when those local hosts are used. Do not include protocols or ports in Firebase authorized domains.
+Firebase Authentication must have Email/Password and Google enabled. Authorized domains must include `careercopilotai.vercel.app`, `localhost`, and `127.0.0.1`. Do not include protocols or ports in Firebase authorized domains.
 
 Supabase Authentication must have Email enabled. Add the local and deployed frontend callback origins to Supabase Authentication URL Configuration. The current email flow signs in with Supabase, exchanges the Supabase access token at `POST /api/v1/auth/supabase`, and then uses the existing Career Copilot API session. The Supabase OAuth Server settings shown in the dashboard are not required for this email/password flow.
 
@@ -30,7 +30,7 @@ Supabase Authentication must have Email enabled. Add the local and deployed fron
 Create a Render Web Service with `backend` as the root directory:
 
 ```text
-Build Command: pip install --upgrade pip && pip install .
+Build Command: pip install -e .
 Start Command: uvicorn app.main:app --host 0.0.0.0 --port $PORT
 Health Check Path: /api/v1/health/live
 ```
@@ -41,7 +41,7 @@ Required backend configuration includes:
 APP_ENV=production
 API_V1_PREFIX=/api/v1
 PUBLIC_API_BASE_URL=<Render backend origin>
-FRONTEND_ORIGINS=<Vercel frontend origin>
+FRONTEND_ORIGINS=https://careercopilotai.vercel.app
 FIREBASE_PROJECT_ID=career-copilot05
 FIREBASE_DATABASE_ID=(default)
 FIREBASE_CREDENTIALS_PATH=/etc/secrets/firebase-admin.json

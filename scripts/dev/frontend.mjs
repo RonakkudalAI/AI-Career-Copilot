@@ -19,7 +19,7 @@ const environment = { ...process.env };
 
 const child = spawn(
   process.execPath,
-  [viteBinary, "--host", process.env.FRONTEND_HOST || "127.0.0.1", "--port", process.env.FRONTEND_PORT || process.env.PORT || "3000"],
+  [viteBinary, "--host", process.env.FRONTEND_HOST || "127.0.0.1", "--port", process.env.FRONTEND_PORT || process.env.PORT || "3000", "--force"],
   {
     cwd: frontendDirectory,
     env: environment,

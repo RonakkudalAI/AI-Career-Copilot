@@ -10,7 +10,7 @@ const backendPython = ensureBackendVenv();
 const port = backendPort(process.env);
 const child = spawn(
   backendPython,
-  ["-m", "uvicorn", "app.main:app", "--reload", "--reload-dir", "backend", "--access-log", "--port", port, "--app-dir", "backend"],
+  ["-m", "uvicorn", "app.main:app", "--reload", "--reload-dir", "backend", "--access-log", "--log-level", "info", "--port", port, "--app-dir", "backend"],
   { cwd: process.cwd(), stdio: "inherit", env: process.env },
 );
 

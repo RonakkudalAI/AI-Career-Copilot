@@ -4,7 +4,7 @@ import process from "node:process";
 
 const root = process.cwd();
 const scannerPath = join(root, "scripts", "diagnostics", "check-secrets.mjs");
-const ignored = new Set([".git", ".next", ".data", ".audit-baseline", "dist", "build", "integrations", "node_modules", "coverage", "playwright-report", "test-results", ".venv", ".temp", ".pytest_cache", "__pycache__"]);
+const ignored = new Set([".git", ".next", ".data", "dist", "build", "integrations", "node_modules", "coverage", "playwright-report", "test-results", ".venv", ".temp", ".pytest_cache", "__pycache__"]);
 const textExtensions = new Set([".ts", ".tsx", ".js", ".mjs", ".json", ".md", ".py", ".toml", ".sql", ".yml", ".yaml", ".env", ".example", ".txt"]);
 const rules = [
   ["NVIDIA API key", /nvapi-[A-Za-z0-9_-]+/g],
@@ -15,7 +15,7 @@ const rules = [
 const findings = [];
 async function walk(directory) {
   for (const entry of await readdir(directory, { withFileTypes: true })) {
-    if (ignored.has(entry.name) || entry.name.startsWith(".env")) continue;
+    if (ignored.has(entry.name) || entry.name.startsWith(".env") || entry.name.startsWith("pytest-cache-files-")) continue;
     const path = join(directory, entry.name);
     if (path === scannerPath) continue;
     if (entry.isDirectory()) { await walk(path); continue; }

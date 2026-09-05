@@ -36,7 +36,7 @@ Completed ATS → gap extract → plan search queries → materialize YouTube AP
 
 ### Jobs
 
-Optional Adzuna sync into `jobs` → generate recommendations from confirmed resume evidence → save / pipeline statuses.
+FreeHire sync into `jobs` → generate recommendations from confirmed resume evidence → save / pipeline statuses.
 
 ### Resume improvement
 

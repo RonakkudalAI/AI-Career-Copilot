@@ -1,14 +1,11 @@
-import { Moon, Sun, Monitor } from "lucide-react";
+import { Moon, Sun } from "lucide-react";
 import { useTheme } from "@/shared/theme";
+import { AnimatedIcon } from "@/components/ui/animated-icon";
 
 export function ThemeToggle({ compact = false }: { compact?: boolean }) {
   const { theme, resolvedTheme, cycleTheme } = useTheme();
-  const label = theme === "system"
-    ? `Theme: system (${resolvedTheme}). Switch to light mode.`
-    : theme === "light"
-      ? "Theme: light. Switch to dark mode."
-      : "Theme: dark. Switch to system mode.";
-  const Icon = theme === "system" ? Monitor : theme === "light" ? Sun : Moon;
+  const label = theme === "light" ? "Theme: light. Switch to dark mode." : "Theme: dark. Switch to light mode.";
+  const Icon = resolvedTheme === "light" ? Sun : Moon;
   return (
     <button
       type="button"
@@ -17,8 +14,8 @@ export function ThemeToggle({ compact = false }: { compact?: boolean }) {
       aria-label={label}
       title={label}
     >
-      <Icon size={17} aria-hidden />
-      {!compact && <span>{theme === "system" ? "System" : theme === "light" ? "Light" : "Dark"}</span>}
+      <AnimatedIcon icon={Icon} size={17} aria-hidden />
+      {!compact && <span>{theme === "light" ? "Light" : "Dark"}</span>}
     </button>
   );
 }

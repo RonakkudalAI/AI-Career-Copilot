@@ -1,6 +1,6 @@
 import { createClient as createAuthClient } from "@/features/auth/api/client";
 import { demoApiRequest, isDemoSession } from "@/features/auth/demo-session";
-import { resolveApiBase } from "@/shared/config";
+import { ACCESS_TOKEN_STORAGE_KEY, resolveApiBase } from "@/shared/config";
 
 export type ApiErrorBody = { error?: { code?: string; message?: string; request_id?: string } };
 const inFlightGets = new Map<string, Promise<unknown>>();
@@ -24,17 +24,24 @@ function networkUnreachableMessage(base: string): string {
 
 export async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (isDemoSession()) return demoApiRequest<T>(path, init);
-  const authClient = createAuthClient();
-  const {
-    data: { session },
-  } = await authClient.auth.getSession();
-  if (!session) throw new Error("Your session has expired. Sign in again.");
+  // The backend accepts the application token returned by the auth exchange.
+  // Prefer it over the provider session token so Supabase/Firebase refresh
+  // state cannot make an otherwise valid app session look unauthorized.
+  let accessToken = window.localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY) || "";
+  if (!accessToken) {
+    const authClient = createAuthClient();
+    const {
+      data: { session },
+    } = await authClient.auth.getSession();
+    accessToken = session?.access_token || "";
+  }
+  if (!accessToken) throw new Error("Your session has expired. Sign in again.");
   const method = (init.method || "GET").toUpperCase();
   const hasAbortSignal = Boolean(init.signal);
   // Never share in-flight GETs that carry AbortSignal: React Strict Mode (and
   // route unmount) aborts the first caller's signal, and a second caller that
   // reuses that promise would get AbortError rewritten as "API unreachable".
-  const requestKey = `${method}:${path}:${session.access_token}`;
+  const requestKey = `${method}:${path}:${accessToken}`;
   if (method === "GET" && !hasAbortSignal) {
     const existing = inFlightGets.get(requestKey);
     if (existing) return existing as Promise<T>;
@@ -47,8 +54,10 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
         ...init,
         credentials: "include",
         headers: {
-          Authorization: `Bearer ${session.access_token}`,
-          ...(init.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
+          Authorization: `Bearer ${accessToken}`,
+          ...(init.body != null && !(init.body instanceof FormData)
+            ? { "Content-Type": "application/json" }
+            : {}),
           ...init.headers,
         },
       });
@@ -63,9 +72,10 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
       const body = (await response.json().catch(() => ({}))) as ApiErrorBody;
       if (response.status === 401) {
         window.localStorage.removeItem("career_copilot_access_token");
-        document.cookie = "career_copilot_session=; Path=/; Max-Age=0; SameSite=Lax";
         window.dispatchEvent(new CustomEvent("career-copilot:auth-expired"));
-        throw new Error(body.error?.message || "Your session has expired. Sign in again.");
+        const error = new Error(body.error?.message || "Your session has expired. Sign in again.") as Error & { status?: number };
+        error.status = response.status;
+        throw error;
       }
       if (response.status === 503) {
         throw new Error(

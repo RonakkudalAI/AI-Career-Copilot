@@ -22,7 +22,7 @@ POST /interviews
 |-------|----------|
 | Questions | Groq structured JSON; templates if fail/unconfigured |
 | Preparation | Evidence packs from confirmed resume + JD |
-| TTS | Optional Fish Audio (`POST /interviews/tts`); browser speechSynthesis fallback |
+| TTS | Groq Orpheus, then NVIDIA Magpie, then Fish Audio (`POST /interviews/tts`); browser speechSynthesis last |
 | STT | Browser Web Speech API |
 | Gaze | Client metrics; server normalizes without inventing samples |
 | Evaluation | Score, strengths, improvements, fillers, pace (coaching) |

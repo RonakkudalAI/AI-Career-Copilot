@@ -10,15 +10,21 @@
     "dev:backend": "node scripts/dev/backend.mjs",
     "firebase:check": "node scripts/dev/preflight.mjs --strict",
     "lint": "node scripts/run-frontend.mjs lint",
+    "tsc": "node scripts/run-frontend.mjs typecheck",
     "typecheck": "node scripts/run-frontend.mjs typecheck",
+    "typecheck:app": "node scripts/run-frontend.mjs typecheck:app",
+    "typecheck:test": "node scripts/run-frontend.mjs typecheck:test",
+    "build": "node scripts/run-frontend.mjs build",
     "build:frontend": "node scripts/run-frontend.mjs build",
+    "test": "node scripts/run-frontend.mjs test",
     "check:frontend": "node scripts/run-frontend.mjs check:frontend",
+    "validate:landing": "node scripts/run-frontend.mjs validate:landing",
     "check:env": "node scripts/diagnostics/verify-environment.mjs",
     "check:secrets": "node scripts/diagnostics/check-secrets.mjs",
-    "check:boundaries": "node scripts/verify-boundaries.mjs",
-    "omniroute:install": "node scripts/integrations/omniroute.mjs install",
-    "omniroute:dev": "node scripts/integrations/omniroute.mjs dev",
-    "omniroute:check": "node scripts/integrations/omniroute.mjs check",
-    "test:backend": "backend\\.venv\\Scripts\\python.exe -m pytest backend\\tests"
+    "check:boundaries": "node scripts/verify-boundaries.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.0",
+    "typescript": "^5.9.3"
   }
 }

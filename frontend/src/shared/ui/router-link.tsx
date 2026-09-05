@@ -8,10 +8,10 @@ type Props = Omit<AnchorHTMLAttributes<HTMLAnchorElement>, "href"> & {
 };
 
 export function Link({ href, children, replace, className, ...rest }: Props) {
-  const external = /^https?:\/\//i.test(href);
+  const external = /^(https?:)?\/\//i.test(href);
   if (external) {
     return (
-      <a href={href} className={className} {...rest}>
+      <a href={href} className={className} rel="noopener noreferrer" {...rest}>
         {children}
       </a>
     );

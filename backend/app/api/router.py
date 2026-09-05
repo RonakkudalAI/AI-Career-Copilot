@@ -1625,10 +1625,16 @@ async def _upload_resume_version(
         .count
         or 0
     )
+    storage_path = path
     try:
         client.storage.from_(settings.document_bucket).upload(
             path, content, {"content-type": mime, "upsert": "false"}
         )
+    except Exception as storage_exc:
+        logger.warning("resume_storage_upload_bypassed path=%s exc=%s", path, type(storage_exc).__name__)
+        storage_path = None
+
+    try:
         text, structured = await _extract_resume_content(
             content, file.filename or "document", mime, settings
         )
@@ -1639,7 +1645,7 @@ async def _upload_resume_version(
             "version_number": count + 1,
             "source_type": "uploaded",
             "original_filename": safe_filename(file.filename or "document"),
-            "storage_path": path,
+            "storage_path": storage_path,
             "mime_type": mime,
             "size_bytes": len(content),
             "sha256": sha256_bytes(content),
@@ -1651,16 +1657,18 @@ async def _upload_resume_version(
         }
         return client.table("resume_versions").insert(record).execute().data[0]
     except ApiError:
-        try:
-            client.storage.from_(settings.document_bucket).remove([path])
-        except Exception:
-            pass
+        if storage_path:
+            try:
+                client.storage.from_(settings.document_bucket).remove([path])
+            except Exception:
+                pass
         raise
     except Exception as exc:
-        try:
-            client.storage.from_(settings.document_bucket).remove([path])
-        except Exception:
-            pass
+        if storage_path:
+            try:
+                client.storage.from_(settings.document_bucket).remove([path])
+            except Exception:
+                pass
         raise ApiError(500, "resume_upload_failed", "The resume could not be stored.") from exc
 
 

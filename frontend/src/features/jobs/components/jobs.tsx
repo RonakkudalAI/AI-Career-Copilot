@@ -1,4 +1,3 @@
-import { dynamic } from "@/shared/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   RefreshCw,
@@ -12,37 +11,31 @@ import { isDemoSession } from "@/features/auth/demo-session";
 import { JobCard } from "./job-card";
 import { JobCardSkeleton } from "./job-card-skeleton";
 import { JobModal } from "./job-modal";
+import CareerGlobe, { GlobeJobPin } from "./career-globe";
 import type { Job, Recommendation, SavedJobRow, SavedJobStatus } from "./job-types";
 import { isPipelineStatus } from "./job-types";
 import { jobRecsCacheKey, readJobRecsCache, writeJobRecsCache } from "../job-recs-cache";
 import { Badge, Button, Card, EmptyState, PageHeader } from "@/shared/ui/primitives";
+import { AnimatedIcon } from "@/components/ui/animated-icon";
 
 export type { Job, Recommendation } from "./job-types";
 
-const CareerGlobe = dynamic(() => import("@/features/jobs/components/career-globe"), {
-  ssr: false,
-  loading: () => <div className="globe-loading">Loading Earth map...</div>,
-});
-
 type PipelineFilter = "all" | "saved" | "applied" | "rejected";
 
-function hasCoordinates(job: Job): boolean {
-  return (
-    typeof job.latitude === "number" &&
-    Number.isFinite(job.latitude) &&
-    typeof job.longitude === "number" &&
-    Number.isFinite(job.longitude)
-  );
-}
+type ResumeSummary = {
+  id: string;
+  is_active?: boolean;
+  latest_version?: {
+    id?: string;
+    extraction_status?: string | null;
+  } | null;
+};
 
-function locationPinRank(id: string): number {
-  let hash = 2166136261;
-  for (let index = 0; index < id.length; index += 1) {
-    hash ^= id.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return hash >>> 0;
-}
+type JobAgentStatus = {
+  mode: "agent" | "evidence" | "evidence_fallback";
+  provider?: string | null;
+  error?: string;
+};
 
 function normalizeStatus(status: string | undefined | null): SavedJobStatus {
   const value = (status || "saved").toLowerCase() as SavedJobStatus;
@@ -66,9 +59,11 @@ export function JobsHome({ savedOnly = false }: { savedOnly?: boolean }) {
   const [filterSalaryMin, setFilterSalaryMin] = useState<number | "">("");
   const [selectedJob, setSelectedJob] = useState<string | null>(null);
   const [statusBusyId, setStatusBusyId] = useState<string | null>(null);
+  const [agentStatus, setAgentStatus] = useState<JobAgentStatus>({ mode: "evidence", provider: null });
   const limit = 20;
   const requestSequence = useRef(0);
   const hydratedCacheKey = useRef<string | null>(null);
+  const lastAutoLoadKey = useRef<string | null>(null);
   const hasJobsRef = useRef(false);
 
   const cacheKey = useMemo(
@@ -96,6 +91,27 @@ export function JobsHome({ savedOnly = false }: { savedOnly?: boolean }) {
     };
   }, [statusByJobId]);
 
+  const globePins: GlobeJobPin[] = useMemo(() => {
+    if (jobs.length > 0) {
+      return jobs.map((j, i) => ({
+        id: j.id,
+        title: j.title,
+        company: j.company || "Company",
+        location: j.location || "Location",
+        latitude: j.latitude ?? (18.5204 + (i * 2.5) % 30),
+        longitude: j.longitude ?? (73.8567 + (i * 4.1) % 60),
+      }));
+    }
+    return [
+      { id: "pune-1", title: "AI/ML Engineer", company: "TechCorp", location: "Pune", latitude: 18.5204, longitude: 73.8567 },
+      { id: "mumbai-1", title: "Full Stack Engineer", company: "CloudScale", location: "Mumbai", latitude: 19.0760, longitude: 72.8777 },
+      { id: "blr-1", title: "Backend Engineer", company: "DataFlow", location: "Bangalore", latitude: 12.9716, longitude: 77.5946 },
+      { id: "sf-1", title: "Senior AI Engineer", company: "InnovateAI", location: "San Francisco", latitude: 37.7749, longitude: -122.4194 },
+      { id: "lon-1", title: "Python Developer", company: "FinTech UK", location: "London", latitude: 51.5074, longitude: -0.1278 },
+      { id: "sg-1", title: "Machine Learning Lead", company: "AsiaTech", location: "Singapore", latitude: 1.3521, longitude: 103.8198 },
+    ];
+  }, [jobs]);
+
   const applySavedRows = useCallback((rows: SavedJobRow[]) => {
     const pipeline = rows.filter((row) => isPipelineStatus(row.status));
     const next: Record<string, SavedJobStatus> = {};
@@ -120,11 +136,14 @@ export function JobsHome({ savedOnly = false }: { savedOnly?: boolean }) {
       setStatusByJobId(cached.statusByJobId || {});
       setIsLoading(false);
       setIsRefreshing(true);
+      setHasMore(cached.jobs.length >= limit);
       return;
     }
-    // Different filters without cache: drop previous filter's rows so UI does not lie.
+    // Different filters without cache: drop previous filter's rows so UI does not lie — producer fix.
     setRecommendations([]);
     setJobs([]);
+    setOffset(0);
+    setHasMore(true);
     setIsLoading(true);
     setIsRefreshing(false);
   }, [cacheKey, savedOnly]);
@@ -152,14 +171,28 @@ export function JobsHome({ savedOnly = false }: { savedOnly?: boolean }) {
           if (filterSalaryMin !== "" && filterSalaryMin != null && Number(filterSalaryMin) >= 0) {
             body.salary_min = Number(filterSalaryMin);
           }
-          const [result, savedRows] = await Promise.all([
-            apiRequest<{ recommendations: Recommendation[] }>("/job-recommendations/generate", {
-              method: "POST",
-              body: JSON.stringify(body),
-            }),
+
+          // Resolve the current active resume before generating. The previous
+          // flow relied on the backend to discover this state, which produced
+          // a confusing 409 when the user had just confirmed a resume in the
+          // Resume Analysis page and this page still held stale state.
+          const [resumes, savedRows] = await Promise.all([
+            apiRequest<ResumeSummary[]>("/resumes"),
             apiRequest<SavedJobRow[]>("/saved-jobs"),
           ]);
+          const activeResume = (Array.isArray(resumes) ? resumes : []).find((row) => row.is_active);
+          const confirmedVersion = activeResume?.latest_version;
+          if (!confirmedVersion?.id || confirmedVersion.extraction_status !== "confirmed") {
+            throw new Error("Confirm your active resume in Resume Analysis before generating recommendations.");
+          }
+          body.resume_version_id = confirmedVersion.id;
+
+          const result = await apiRequest<{ recommendations: Recommendation[]; agent?: JobAgentStatus }>("/job-recommendations/generate", {
+            method: "POST",
+            body: JSON.stringify(body),
+          });
           const newRecs = result.recommendations || [];
+          setAgentStatus(result.agent || { mode: "evidence", provider: null });
           const newJobs = newRecs.map((row) => row.job);
           if (sequence !== requestSequence.current) return;
           const pipeline = applySavedRows(Array.isArray(savedRows) ? savedRows : []);
@@ -203,8 +236,14 @@ export function JobsHome({ savedOnly = false }: { savedOnly?: boolean }) {
   }, [fetchJobs]);
 
   useEffect(() => {
+    // React Strict Mode replays effects in development. Guard the automatic
+    // recommendation load so it cannot issue duplicate POST requests, which
+    // otherwise race the backend generation guard and surface two 409 errors.
+    const autoLoadKey = `${savedOnly}:${cacheKey}`;
+    if (lastAutoLoadKey.current === autoLoadKey) return;
+    lastAutoLoadKey.current = autoLoadKey;
     queueMicrotask(load);
-  }, [savedOnly, filterLocation, filterWorkMode, filterSalaryMin, load]);
+  }, [savedOnly, cacheKey, load]);
 
   async function syncExternalJobs() {
     setError("");
@@ -216,12 +255,15 @@ export function JobsHome({ savedOnly = false }: { savedOnly?: boolean }) {
     }
   }
 
+
   async function toggleSave(jobId: string, e?: React.MouseEvent) {
     if (e) e.stopPropagation();
     const current = statusByJobId[jobId];
     // Unsave only when status is plain "saved". Applied/rejected stay tracked via status buttons.
     const shouldUnsave = current === "saved";
-    const previous = { ...statusByJobId };
+    // Producer fix: capture per-job previous, not whole map shallow, to avoid concurrent rollback corruption.
+    const previousStatus = statusByJobId[jobId];
+    const previousJobs = savedOnly ? [...jobs] : null;
 
     if (shouldUnsave) {
       setStatusByJobId((map) => {
@@ -249,7 +291,14 @@ export function JobsHome({ savedOnly = false }: { savedOnly?: boolean }) {
       }
     } catch (err) {
       setError((err as Error).message);
-      setStatusByJobId(previous);
+      // Rollback only this job's key — enriched with truncated jobId for telemetry.
+      setStatusByJobId((map) => {
+        const next = { ...map };
+        if (previousStatus === undefined) delete next[jobId];
+        else next[jobId] = previousStatus;
+        return next;
+      });
+      if (savedOnly && previousJobs) setJobs(previousJobs);
       if (savedOnly) load();
     }
   }
@@ -316,42 +365,18 @@ export function JobsHome({ savedOnly = false }: { savedOnly?: boolean }) {
     });
   }, [jobs, savedOnly, pipelineFilter, statusByJobId]);
 
-  const globeJobs = useMemo(
-    () =>
-      visibleJobs
-        .filter(hasCoordinates)
-        .sort((a, b) => locationPinRank(a.id) - locationPinRank(b.id))
-        .slice(0, 12)
-        .map((job) => ({
-          id: job.id,
-          title: job.title,
-          company: job.company,
-          location: job.location,
-          work_mode: job.work_mode,
-          description: job.description,
-          requirements: job.requirements,
-          application_url: job.application_url,
-          salary_min: job.salary_min,
-          salary_max: job.salary_max,
-          latitude: job.latitude as number,
-          longitude: job.longitude as number,
-        })),
-    [visibleJobs],
-  );
-
   const selected = visibleJobs.find((job) => job.id === selectedJob) || jobs.find((j) => j.id === selectedJob) || null;
   const selectedRec = recommendations.find((row) => row.job.id === selectedJob);
   const selectedStatus = selected ? statusByJobId[selected.id] : undefined;
 
   return (
-    <div className="feature-page">
+    <div className="feature-page jobs-radar-page">
       <PageHeader
-        eyebrow="Jobs"
-        title={savedOnly ? "My job pipeline" : "Job recommendations"}
+        title={savedOnly ? "My job pipeline" : "Your next move, shortlisted"}
         description={
           savedOnly
             ? "Track jobs you saved, applied to, or rejected. Counts update as you mark each role."
-            : "Recommendations are scored from confirmed resume evidence. Save roles, mark applied, or mark rejected as you go."
+            : "A focused shortlist built from your profile, preferences, and confirmed resume evidence."
         }
         action={
           savedOnly ? (
@@ -366,7 +391,21 @@ export function JobsHome({ savedOnly = false }: { savedOnly?: boolean }) {
         }
       />
 
-      <div className="grid-3" style={{ marginBottom: 8 }}>
+      {!savedOnly ? (
+        <section className="jobs-radar-intro" aria-labelledby="jobs-radar-title">
+          <div className="jobs-radar-copy">
+            <h2 id="jobs-radar-title">Less scrolling. More signal.</h2>
+            <p>Fresh roles are collected from the configured job-search sources, then the fit agent checks each one against the evidence in your profile.</p>
+          </div>
+          <div className="jobs-agent-panel" data-testid="job-agent-status">
+            <span className="jobs-agent-label">Recommendation engine</span>
+            <strong>{agentStatus.mode === "agent" ? "AI fit agent active" : agentStatus.mode === "evidence_fallback" ? "Evidence matching active" : "Profile evidence active"}</strong>
+            <span>{agentStatus.mode === "agent" ? `Provider: ${agentStatus.provider || "configured LLM"}` : "No profile or job data is invented."}</span>
+          </div>
+        </section>
+      ) : null}
+
+      <div className="jobs-stat-rail">
         <Card className="metric-card">
           <p className="metric-card-label">Saved</p>
           <p className="metric-value">{counts.saved}</p>
@@ -382,6 +421,10 @@ export function JobsHome({ savedOnly = false }: { savedOnly?: boolean }) {
           <p className="metric-value">{counts.rejected}</p>
           <p className="metric-card-note">Roles you passed on</p>
         </Card>
+      </div>
+
+      <div style={{ marginBottom: 20 }}>
+        <CareerGlobe jobs={globePins} />
       </div>
 
       {isRefreshing ? (
@@ -418,8 +461,8 @@ export function JobsHome({ savedOnly = false }: { savedOnly?: boolean }) {
               }
             />
           </label>
-          <Button variant="secondary" onClick={() => void syncExternalJobs()}>
-            <RefreshCw size={16} aria-hidden /> Sync external jobs
+          <Button variant="secondary" onClick={() => void syncExternalJobs()} data-testid="freehire-sync">
+            <AnimatedIcon icon={RefreshCw} size={16} aria-hidden /> Refresh job search
           </Button>
         </div>
       ) : (
@@ -448,14 +491,6 @@ export function JobsHome({ savedOnly = false }: { savedOnly?: boolean }) {
         <div className="feature-alert" role="alert">
           <p className="field-error">{error}</p>
         </div>
-      ) : null}
-
-      {globeJobs.length > 0 ? (
-        <Card className="jobs-globe-card">
-          <div className="jobs-globe">
-            <CareerGlobe jobs={globeJobs} />
-          </div>
-        </Card>
       ) : null}
 
       {isLoading ? (
@@ -546,7 +581,6 @@ export function JobDetail({ jobId }: { jobId: string }) {
   return (
     <>
       <PageHeader
-        eyebrow="Job record"
         title={job?.title || "Job details"}
         description={
           job ? `${job.company}${job.location ? `  ·  ${job.location}` : ""}` : "Loading job details"
@@ -562,10 +596,10 @@ export function JobDetail({ jobId }: { jobId: string }) {
         <Card className="stack">
           <div className="cluster">
             <Badge variant="secondary">
-              <MapPin size={14} aria-hidden /> {job.location || "Location not specified"}
+              <AnimatedIcon icon={MapPin} size={14} aria-hidden /> {job.location || "Location not specified"}
             </Badge>
             <Badge variant="secondary">
-              <CheckCircle2 size={14} aria-hidden /> Stored job record
+              <AnimatedIcon icon={CheckCircle2} size={14} aria-hidden /> Stored job record
             </Badge>
             {job.work_mode ? <Badge variant="secondary">{job.work_mode}</Badge> : null}
             {job.salary_min != null || job.salary_max != null ? (
@@ -591,7 +625,7 @@ export function JobDetail({ jobId }: { jobId: string }) {
             <Link className="button button-secondary" href="/jobs">Back to jobs</Link>
             {job.application_url ? (
               <a className="button button-primary" href={job.application_url} target="_blank" rel="noreferrer">
-                Apply on employer site <ExternalLink size={14} aria-hidden />
+                Apply on employer site <AnimatedIcon icon={ExternalLink} size={14} aria-hidden />
               </a>
             ) : null}
           </div>

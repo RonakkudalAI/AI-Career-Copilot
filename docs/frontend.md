@@ -41,7 +41,7 @@ Demo mode: non-production cookie `career_copilot_demo` routes all calls through 
 | `shared/theme.tsx` | light/dark/system |
 | `features/jobs/job-recs-cache.ts` | sessionStorage SWR for job feed |
 | `features/interview/interview-voice.ts` | STT helpers |
-| `features/interview/interview-tts.ts` | Fish Audio + browser TTS |
+| `features/interview/interview-tts.ts` | Groq Orpheus, NVIDIA Magpie, Fish, then browser TTS |
 | `features/interview/interview-gaze.ts` | camera gaze metrics |
 
 ## Production hosting note

@@ -2,19 +2,33 @@
 import { Link } from "@/shared/ui/router-link";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { useEffect, useState } from "react";
-import { BriefcaseBusiness, CheckCircle2, FileText, RotateCcw, ShieldCheck } from "lucide-react";
+import {
+  AlertTriangle,
+  BriefcaseBusiness,
+  CheckCircle2,
+  CloudUpload,
+  Eye,
+  FileText,
+  FolderOpen,
+  History,
+  RotateCcw,
+  ShieldCheck,
+  Trash2,
+  X,
+} from "lucide-react";
+import { AnimatedIcon } from "@/components/ui/animated-icon";
+import { RagCareerAssistant } from "./rag-career-assistant";
 
 
 
 
-
+import "../resume.css";
 
 import { apiRequest } from "@/shared/api/client";
 import { jdLabel, resumeLabel } from "@/features/resume/analysis-labels";
 import { isValidCareerFile } from "@/shared/utils";
 import { BookLoader } from "@/shared/ui/book-loader";
-import { Badge, Button, Card, Input, PageHeader, Progress, Textarea } from "@/shared/ui/primitives";
-import { RagCareerAssistant } from "./rag-career-assistant";
+import { Button, Input, Textarea } from "@/shared/ui/primitives";
 
 type StructuredContent = {
   schema_version?: string;
@@ -66,7 +80,7 @@ type Analysis = {
     section_summary?: Record<string, string[]>;
     keyword_coverage_score?: number;
     structured_parameter_scores?: Record<string, number> | null;
-    domain_gate?: { decision?: "ALLOW" | "REJECT"; reason?: string } | null;
+    domain_gate?: { decision?: "ALLOW" | "REJECT" | "UNVERIFIED"; reason?: string } | null;
   };
   summary?: {
     method?: string;
@@ -89,7 +103,9 @@ type Analysis = {
     inference_provider?: string;
     structured_composite_score?: number | null;
     structured_parameter_scores?: Record<string, number> | null;
-    domain_gate?: { decision?: "ALLOW" | "REJECT"; reason?: string } | null;
+    domain_gate?: { decision?: "ALLOW" | "REJECT" | "UNVERIFIED"; reason?: string } | null;
+    report_status?: "generated" | "unavailable" | "invalid_llm_output" | string;
+    report_generation_id?: string | null;
   };
   created_at: string;
   resume_version_id?: string;
@@ -175,6 +191,54 @@ function formatDate(value?: string | null) {
   return date.toLocaleString();
 }
 
+function scoreBand(score: number | null): "high" | "mid" | "low" | "none" {
+  if (score == null) return "none";
+  const value = Number(score);
+  if (!Number.isFinite(value)) return "none";
+  if (value >= 80) return "high";
+  if (value >= 55) return "mid";
+  return "low";
+}
+
+function scoreTileLabel(band: ReturnType<typeof scoreBand>) {
+  if (band === "high") return "strong";
+  if (band === "mid") return "partial";
+  if (band === "low") return "gaps";
+  return "no score";
+}
+
+function coverageVerdict(score: number | null) {
+  if (score == null) return "No score was recorded for this run.";
+  const value = Math.round(Number(score));
+  if (value >= 80) return "Strong coverage of this job description.";
+  if (value >= 55) return "A solid base with clear gaps to close.";
+  return "Coverage is thin — treat this report as your rewrite brief.";
+}
+
+function statusStamp(status: string): { tone: "done" | "wait" | "failed"; label: string } {
+  if (status === "completed") return { tone: "done", label: "Completed" };
+  if (status === "failed") return { tone: "failed", label: "Failed" };
+  return { tone: "wait", label: status || "Pending" };
+}
+
+function ErrorBanner({ children }: { children: React.ReactNode }) {
+  return (
+    <p role="alert" className="ra-error">
+      <AnimatedIcon icon={AlertTriangle} size={17} aria-hidden="true" />
+      <span>{children}</span>
+    </p>
+  );
+}
+
+function StatusNote({ children }: { children: React.ReactNode }) {
+  return (
+    <p role="status" className="ra-status">
+      <AnimatedIcon icon={CheckCircle2} size={16} aria-hidden="true" />
+      <span>{children}</span>
+    </p>
+  );
+}
+
 function parsedSections(input?: ParsedInput | null) {
   return Object.entries(input?.structured_content?.sections || {}).filter(
     ([, values]) => values.some((value) => value.trim()),
@@ -184,40 +248,67 @@ function parsedSections(input?: ParsedInput | null) {
 function ParsedInputPanel({ title, input }: { title: string; input?: ParsedInput | null }) {
   if (!input) {
     return (
-      <Card className="stack">
-        <h2 style={{ margin: 0 }}>{title}</h2>
-        <p className="muted" style={{ margin: 0 }}>Parsed source is unavailable for this analysis.</p>
-      </Card>
+      <article className="ra-docpanel">
+        <div className="ra-docpanel-head">
+          <div className="ra-docpanel-id">
+            <span className="ra-intake-icon" aria-hidden="true">
+              <AnimatedIcon icon={FileText} size={18} strokeWidth={2.2} />
+            </span>
+            <div>
+              <h2>{title}</h2>
+            </div>
+          </div>
+        </div>
+        <p className="ra-block-empty">Parsed source is unavailable for this analysis.</p>
+      </article>
     );
   }
 
   const sections = parsedSections(input);
   return (
-    <Card className="stack">
-      <div className="row" style={{ alignItems: "flex-start" }}>
-        <div>
-          <h2 style={{ margin: 0 }}>{title}</h2>
-          <p className="muted" style={{ margin: "4px 0 0", fontSize: "var(--text-sm)" }}>
-            {input.filename || "Pasted text"} · {input.extraction_status || "parsed"}
-          </p>
+    <article className="ra-docpanel">
+      <div className="ra-docpanel-head">
+        <div className="ra-docpanel-id">
+          <span className="ra-intake-icon" aria-hidden="true">
+            <AnimatedIcon icon={FileText} size={18} strokeWidth={2.2} />
+          </span>
+          <div>
+            <p className="ra-docpanel-kicker">{title}</p>
+            <h2>{input.filename || "Pasted text"}</h2>
+          </div>
         </div>
-        <Badge variant="default">Source text</Badge>
+        <span className="ra-stamp" data-tone="stored">
+          {input.extraction_status || "parsed"}
+        </span>
       </div>
       {sections.length > 0 ? (
-        <div className="stack" style={{ gap: 10 }}>
+        <div className="ra-blocks">
           {sections.map(([section, values]) => (
-            <section key={section} className="parsed-section">
-              <h3>{section.replace(/_/g, " ")}</h3>
-              {values.map((value, index) => <p key={`${section}-${index}`}>{value}</p>)}
+            <section key={section} className="ra-block">
+              <div className="ra-block-head">
+                <h3>{section.replace(/_/g, " ")}</h3>
+                <span className="ra-block-count">{values.length}</span>
+              </div>
+              <div className="ra-entries">
+                {values.map((value, index) => (
+                  <p key={`${section}-${index}`} className="ra-entry">
+                    {value}
+                  </p>
+                ))}
+              </div>
             </section>
           ))}
         </div>
-      ) : null}
-      <details>
+      ) : (
+        <p className="ra-block-empty">No sections were classified for this document.</p>
+      )}
+      <details className="ra-guidance">
         <summary>Show complete parsed text</summary>
-        <pre className="parsed-source">{input.plain_text || "No parsed text was stored."}</pre>
+        <pre className="ra-entry ra-block-fallback" style={{ marginTop: 10 }}>
+          {input.plain_text || "No parsed text was stored."}
+        </pre>
       </details>
-    </Card>
+    </article>
   );
 }
 
@@ -243,43 +334,40 @@ export function AnalysisHistory() {
         : searchParams.get("tab") === "resumes"
           ? "resumes"
           : "ats";
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional: derives tab from URL params
     setTab(next);
   }, [searchParams]);
 
+  const segments: { key: HubTab; label: string; icon: React.ReactNode }[] = [
+    { key: "ats", label: "Runs", icon: <AnimatedIcon icon={History} size={16} aria-hidden="true" /> },
+    { key: "resumes", label: "Library", icon: <AnimatedIcon icon={FolderOpen} size={16} aria-hidden="true" /> },
+    { key: "upload", label: "New upload", icon: <AnimatedIcon icon={CloudUpload} size={16} aria-hidden="true" /> },
+  ];
+
   return (
-    <div className="feature-page">
-      <PageHeader
-        eyebrow="Resume analysis"
-        title="Resume analysis"
-        description="Manage resumes, review past ATS scores, or start a new analysis."
-      />
-      <nav className="settings-nav" aria-label="Resume analysis sections">
-        <button
-          type="button"
-          className={`button ${tab === "ats" ? "button-primary is-active" : "button-secondary"}`}
-          onClick={() => selectTab("ats")}
-          aria-current={tab === "ats" ? "page" : undefined}
-        >
-          ATS analyses
-        </button>
-        <button
-          type="button"
-          className={`button ${tab === "resumes" ? "button-primary is-active" : "button-secondary"}`}
-          onClick={() => selectTab("resumes")}
-          aria-current={tab === "resumes" ? "page" : undefined}
-        >
-          Resumes
-        </button>
-        <button
-          type="button"
-          className={`button ${tab === "upload" ? "button-primary is-active" : "button-secondary"}`}
-          onClick={() => selectTab("upload")}
-          aria-current={tab === "upload" ? "page" : undefined}
-        >
-          New upload
-        </button>
-      </nav>
+    <div className="ra-page">
+      <header className="ra-masthead">
+        <div>
+          <h1 className="ra-title">Resume analysis</h1>
+          <p className="ra-sub">
+            Confirm what was extracted, then audit keyword coverage against each job. Scores use only
+            lines your confirmed resume actually contains.
+          </p>
+        </div>
+        <nav className="ra-segnav" aria-label="Resume analysis sections">
+          {segments.map((segment) => (
+            <button
+              key={segment.key}
+              type="button"
+              className="ra-segnav-item"
+              onClick={() => selectTab(segment.key)}
+              aria-current={tab === segment.key ? "page" : undefined}
+            >
+              {segment.icon}
+              <span className="ra-seg-label">{segment.label}</span>
+            </button>
+          ))}
+        </nav>
+      </header>
       {tab === "ats" ? <AtsHistoryList /> : tab === "resumes" ? <ResumeLibrary /> : <NewAnalysis embedded />}
     </div>
   );
@@ -309,7 +397,6 @@ function ResumeLibrary() {
 
   useEffect(() => {
     let active = true;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- setState is inside promise callbacks, not synchronously
     loadResumes()
       .catch((reason: Error) => {
         if (active) {
@@ -410,35 +497,29 @@ function ResumeLibrary() {
 
   if (loading) {
     return (
-      <Card>
-        <p>Loading resumes…</p>
-      </Card>
+      <div className="ra-loading">
+        <p className="ra-summary-line">Opening your library…</p>
+      </div>
     );
   }
 
   return (
-    <div className="stack">
-      {error && (
-        <p role="alert" className="field-error">
-          {error}
-        </p>
-      )}
-      {message && (
-        <p role="status" style={{ margin: 0 }}>
-          {message}
-        </p>
-      )}
+    <section className="ra-section" aria-label="Stored resumes">
+      {error ? <ErrorBanner>{error}</ErrorBanner> : null}
+      {message ? <StatusNote>{message}</StatusNote> : null}
       {!resumes.length && !error ? (
-        <Card className="empty-state">
+        <div className="ra-empty">
+          <AnimatedIcon icon={FolderOpen} size={30} aria-hidden="true" />
           <h2>No resumes yet</h2>
-          <p>Upload a resume from New upload to see it here.</p>
+          <p>Upload a resume once and reuse it for every analysis. Saved files appear here.</p>
           <Link className="button button-primary" href="/resume-analysis?tab=upload">
             New upload
           </Link>
-        </Card>
+        </div>
       ) : null}
       {!resumes.length && error ? (
-        <Card className="empty-state">
+        <div className="ra-empty">
+          <AnimatedIcon icon={AlertTriangle} size={30} aria-hidden="true" />
           <h2>Could not load resumes</h2>
           <p>Confirm the backend is running and object storage is configured, then retry.</p>
           <Button
@@ -452,48 +533,64 @@ function ResumeLibrary() {
           >
             Retry
           </Button>
-        </Card>
+        </div>
       ) : null}
-      {resumes.map((resume) => (
-          <Card className="stack" key={resume.id}>
-            <div className="row">
-              <div>
-                <p className="eyebrow">{resume.is_active ? "Active resume" : "Stored resume"}</p>
-                <h2 style={{ marginBottom: 6 }}>{resume.title}</h2>
-                <p style={{ margin: 0 }}>
-                  {resume.latest_version?.original_filename || "File stored"}
-                  {resume.latest_version?.version_number != null
-                    ? ` · v${resume.latest_version.version_number}`
-                    : ""}
-                  {" · "}
-                  {formatDate(resume.created_at)}
-                </p>
-                {resume.latest_version?.extraction_status && (
-                  <p className="muted" style={{ margin: "6px 0 0" }}>
-                    Status: {resume.latest_version.extraction_status}
+      {resumes.length ? (
+        <>
+          <div className="ra-section-head">
+            <p className="ra-summary-line">
+              <strong>{resumes.length}</strong> stored ·{" "}
+              <strong>{resumes.filter((row) => row.is_active).length}</strong> active
+            </p>
+          </div>
+          <div id="resume-library" className="ra-ledger">
+            {resumes.map((resume) => (
+              <article className="ra-doc" key={resume.id}>
+                <span className="ra-doctile" aria-hidden="true">
+                  <AnimatedIcon icon={FileText} size={22} strokeWidth={1.9} />
+                </span>
+                <div className="ra-doc-main">
+                  <p className="ra-run-pair">
+                    <span className="ra-src">{resume.title}</span>
                   </p>
-                )}
-              </div>
-              <Badge variant={resume.is_active ? "default" : "secondary"}>{resume.is_active ? "Active" : "Stored"}</Badge>
-            </div>
-            <div className="cluster">
-              <Button
-                variant="secondary"
-                disabled={previewLoading}
-                onClick={() => openPreview(resume.id)}
-              >
-                {previewLoading && previewLoadingId === resume.id ? "Loading PDF…" : "Preview"}
-              </Button>
-              <Button
-                variant="destructive"
-                disabled={deletingId === resume.id}
-                onClick={() => deleteResume(resume.id, resume.title)}
-              >
-                {deletingId === resume.id ? "Deleting…" : "Delete"}
-              </Button>
-            </div>
-          </Card>
-      ))}
+                  <p className="ra-doc-meta">
+                    {resume.latest_version?.original_filename || "File stored"}
+                    {resume.latest_version?.version_number != null
+                      ? ` · v${resume.latest_version.version_number}`
+                      : ""}
+                    {" · "}
+                    {formatDate(resume.created_at)}
+                    {resume.latest_version?.extraction_status
+                      ? ` · ${resume.latest_version.extraction_status}`
+                      : ""}
+                  </p>
+                </div>
+                <div className="ra-doc-side">
+                  <span className="ra-stamp" data-tone={resume.is_active ? "active" : "stored"}>
+                    {resume.is_active ? "Active" : "Stored"}
+                  </span>
+                  <Button
+                    variant="secondary"
+                    disabled={previewLoading}
+                    onClick={() => openPreview(resume.id)}
+                  >
+                    <AnimatedIcon icon={Eye} size={15} aria-hidden="true" />
+                    {previewLoading && previewLoadingId === resume.id ? "Loading…" : "Preview"}
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    disabled={deletingId === resume.id}
+                    onClick={() => deleteResume(resume.id, resume.title)}
+                  >
+                    <AnimatedIcon icon={Trash2} size={15} aria-hidden="true" />
+                    {deletingId === resume.id ? "Deleting…" : "Delete"}
+                  </Button>
+                </div>
+              </article>
+            ))}
+          </div>
+        </>
+      ) : null}
 
       {preview && pdfUrl ? (
         <div
@@ -510,16 +607,15 @@ function ResumeLibrary() {
           >
             <div className="modal-header">
               <div>
-                <p className="eyebrow" style={{ margin: 0 }}>
-                  Resume PDF
-                </p>
+                <p className="ra-docpanel-kicker">Resume PDF</p>
                 <h2>{preview.resume.title}</h2>
-                <p className="muted" style={{ margin: "4px 0 0", fontSize: "var(--text-sm)" }}>
+                <p className="ra-doc-meta">
                   {preview.version.original_filename || "Stored file"}
                   {preview.version.version_number != null ? ` · v${preview.version.version_number}` : ""}
                 </p>
               </div>
               <Button variant="secondary" onClick={closePreview}>
+                <AnimatedIcon icon={X} size={15} idle={false} aria-hidden="true" />
                 Close
               </Button>
             </div>
@@ -531,7 +627,7 @@ function ResumeLibrary() {
           </div>
         </div>
       ) : null}
-    </div>
+    </section>
   );
 }
 
@@ -540,7 +636,8 @@ function AtsHistoryList() {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(true);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
 
   async function loadAnalyses() {
     const rows = await apiRequest<Analysis[]>("/ats-analyses");
@@ -550,7 +647,6 @@ function AtsHistoryList() {
 
   useEffect(() => {
     let active = true;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- setState is inside promise callbacks, not synchronously
     loadAnalyses()
       .catch((reason: Error) => {
         if (active) {
@@ -566,27 +662,62 @@ function AtsHistoryList() {
     };
   }, []);
 
-  async function deleteAnalysis(analysisId: string) {
-    if (!window.confirm("Delete this ATS analysis? This cannot be undone.")) return;
-    setDeletingId(analysisId);
+  async function deleteAnalyses(ids: string[], askForConfirmation = true) {
+    const uniqueIds = [...new Set(ids)].filter((id) => !deletingIds.has(id));
+    if (!uniqueIds.length) return;
+    const confirmation = uniqueIds.length === 1
+      ? "Delete this ATS analysis? This cannot be undone."
+      : `Delete ${uniqueIds.length} ATS analyses? This cannot be undone.`;
+    if (askForConfirmation && !window.confirm(confirmation)) return;
+    const previousRows = analyses.filter((row) => uniqueIds.includes(row.id));
+    setDeletingIds((current) => new Set([...current, ...uniqueIds]));
     setError("");
     setMessage("");
+    setAnalyses((current) => current.filter((row) => !uniqueIds.includes(row.id)));
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      uniqueIds.forEach((id) => next.delete(id));
+      return next;
+    });
+    setMessage(uniqueIds.length === 1 ? "Analysis removed. Syncing deletion…" : `${uniqueIds.length} analyses removed. Syncing deletions…`);
     try {
-      await apiRequest(`/ats-analyses/${analysisId}`, { method: "DELETE" });
-      setAnalyses((current) => current.filter((row) => row.id !== analysisId));
-      setMessage("ATS analysis deleted.");
+      const results = await Promise.allSettled(
+        uniqueIds.map((analysisId) => apiRequest(`/ats-analyses/${analysisId}`, { method: "DELETE" })),
+      );
+      const failedRows = results.flatMap((result, index) =>
+        result.status === "rejected" ? [previousRows.find((row) => row.id === uniqueIds[index])] : [],
+      ).filter((row): row is Analysis => Boolean(row));
+      if (failedRows.length) {
+        setAnalyses((current) => {
+          const byId = new Map(current.map((row) => [row.id, row]));
+          failedRows.forEach((row) => byId.set(row.id, row));
+          return analyses.filter((row) => byId.has(row.id)).map((row) => byId.get(row.id) as Analysis);
+        });
+        setError(`${failedRows.length} deletion${failedRows.length === 1 ? "" : "s"} failed. Affected analyses were restored.`);
+      } else {
+        setMessage(uniqueIds.length === 1 ? "ATS analysis deleted." : `${uniqueIds.length} ATS analyses deleted.`);
+      }
     } catch (reason) {
-      setError((reason as Error).message);
+      setAnalyses((current) => {
+        const byId = new Map(current.map((row) => [row.id, row]));
+        previousRows.forEach((row) => byId.set(row.id, row));
+        return analyses.filter((row) => byId.has(row.id)).map((row) => byId.get(row.id) as Analysis);
+      });
+      setError((reason as Error).message || "Could not delete ATS analyses.");
     } finally {
-      setDeletingId(null);
+      setDeletingIds((current) => {
+        const next = new Set(current);
+        uniqueIds.forEach((id) => next.delete(id));
+        return next;
+      });
     }
   }
 
   if (loading) {
     return (
-      <Card>
-        <p>Loading ATS analyses…</p>
-      </Card>
+      <div className="ra-loading">
+        <p className="ra-summary-line">Loading past runs…</p>
+      </div>
     );
   }
 
@@ -594,42 +725,49 @@ function AtsHistoryList() {
   const otherCount = analyses.length - completedCount;
 
   return (
-    <div className="stack">
-      {error && (
-        <p role="alert" className="field-error">
-          {error}
-        </p>
-      )}
-      {message && (
-        <p role="status" style={{ margin: 0 }}>
-          {message}
-        </p>
-      )}
-      <div className="analysis-overview" aria-label="ATS analysis summary">
-        <div>
-          <span className="analysis-overview-value">{analyses.length}</span>
-          <span className="analysis-overview-label">Total analyses</span>
+    <section className="ra-section" aria-label="Past ATS runs">
+      {error ? <ErrorBanner>{error}</ErrorBanner> : null}
+      {message ? <StatusNote>{message}</StatusNote> : null}
+      {analyses.length ? (
+        <div className="ra-section-head">
+          <p className="ra-summary-line" aria-label="ATS analysis summary">
+            <strong>{analyses.length}</strong> runs · <strong>{completedCount}</strong> completed ·{" "}
+            <strong>{otherCount}</strong> need attention
+          </p>
+          <div className="ra-head-actions">
+            <label className="ra-selectall">
+              <input
+                type="checkbox"
+                checked={analyses.every((analysis) => selectedIds.has(analysis.id))}
+                onChange={(event) => setSelectedIds(event.target.checked ? new Set(analyses.map((analysis) => analysis.id)) : new Set())}
+                aria-label="Select all ATS analyses"
+              />
+              Select all
+            </label>
+            <Button
+              variant="destructive"
+              disabled={!selectedIds.size || [...selectedIds].some((id) => deletingIds.has(id))}
+              onClick={() => void deleteAnalyses([...selectedIds])}
+            >
+              <AnimatedIcon icon={Trash2} size={15} aria-hidden="true" />
+              Delete selected{selectedIds.size ? ` (${selectedIds.size})` : ""}
+            </Button>
+          </div>
         </div>
-        <div>
-          <span className="analysis-overview-value">{completedCount}</span>
-          <span className="analysis-overview-label">Completed</span>
-        </div>
-        <div>
-          <span className="analysis-overview-value">{otherCount}</span>
-          <span className="analysis-overview-label">Needs attention</span>
-        </div>
-      </div>
+      ) : null}
       {!analyses.length && !error ? (
-        <Card className="empty-state">
+        <div className="ra-empty">
+          <AnimatedIcon icon={History} size={30} aria-hidden="true" />
           <h2>No ATS analyses yet</h2>
-          <p>Upload a resume and job description to create your first analysis.</p>
+          <p>Upload a resume and a job description to produce your first audited coverage report.</p>
           <Link className="button button-primary" href="/resume-analysis?tab=upload">
-            New upload
+            Start one now
           </Link>
-        </Card>
+        </div>
       ) : null}
       {!analyses.length && error ? (
-        <Card className="empty-state">
+        <div className="ra-empty">
+          <AnimatedIcon icon={AlertTriangle} size={30} aria-hidden="true" />
           <h2>Could not load analyses</h2>
           <p>Check that the backend is running and your session is still valid, then retry.</p>
           <Button
@@ -643,57 +781,70 @@ function AtsHistoryList() {
           >
             Retry
           </Button>
-        </Card>
+        </div>
       ) : null}
-      {analyses.map((analysis) => (
-        <Card className="stack" key={analysis.id}>
-          <div className="row">
-            <div>
-              <p className="eyebrow">Previous ATS run</p>
-              <h2 style={{ marginBottom: 6 }}>
-                {analysis.overall_score == null ? "No score" : `${Math.round(Number(analysis.overall_score))}%`}
-              </h2>
-              <p style={{ margin: 0 }}>{formatDate(analysis.created_at)}</p>
-            </div>
-            <Badge
-              variant={
-                analysis.status === "completed"
-                  ? "default"
-                  : analysis.status === "failed"
-                    ? "destructive"
-                    : "outline"
-              }
-            >
-              {analysis.status}
-            </Badge>
-          </div>
-          <div className="grid-2">
-            <div>
-              <strong>Resume used</strong>
-              <p style={{ margin: "6px 0 0" }}>{resumeLabel(analysis)}</p>
-            </div>
-            <div>
-              <strong>Job description used</strong>
-              <p style={{ margin: "6px 0 0" }}>{jdLabel(analysis)}</p>
-            </div>
-          </div>
-          <div className="cluster">
-            {analysis.status === "completed" && (
-              <Link className="button button-primary" href={`/resume-analysis/report/${analysis.id}`}>
-                Open report
-              </Link>
-            )}
-            <Button
-              variant="destructive"
-              disabled={deletingId === analysis.id}
-              onClick={() => deleteAnalysis(analysis.id)}
-            >
-              {deletingId === analysis.id ? "Deleting…" : "Delete"}
-            </Button>
-          </div>
-        </Card>
-      ))}
-    </div>
+      {analyses.length ? (
+        <div className="ra-ledger">
+          {analyses.map((analysis) => {
+            const band = scoreBand(analysis.overall_score);
+            const stamp = statusStamp(analysis.status);
+            return (
+              <article className="ra-run" key={analysis.id}>
+                <span
+                  className="ra-scoretile"
+                  data-band={band}
+                  aria-hidden="true"
+                >
+                  {analysis.overall_score == null ? "—" : `${Math.round(Number(analysis.overall_score))}%`}
+                  <small>{scoreTileLabel(band)}</small>
+                </span>
+                <div className="ra-run-main">
+                  <p className="ra-run-pair">
+                    <span className="ra-src">{resumeLabel(analysis)}</span>
+                    <span className="ra-src-arrow" aria-hidden="true">
+                      →
+                    </span>
+                    <span className="ra-src">{jdLabel(analysis)}</span>
+                  </p>
+                  <p className="ra-run-time">{formatDate(analysis.created_at)}</p>
+                </div>
+                <div className="ra-run-side">
+                  <span className="ra-stamp" data-tone={stamp.tone}>
+                    {stamp.label}
+                  </span>
+                  {analysis.status === "completed" ? (
+                    <Link className="button button-secondary" href={`/resume-analysis/report/${analysis.id}`}>
+                      Report
+                    </Link>
+                  ) : null}
+                  <label className="ra-selectall">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(analysis.id)}
+                      onChange={(event) => setSelectedIds((current) => {
+                        const next = new Set(current);
+                        if (event.target.checked) next.add(analysis.id);
+                        else next.delete(analysis.id);
+                        return next;
+                      })}
+                      aria-label={`Select ATS analysis from ${formatDate(analysis.created_at)}`}
+                    />
+                    Select
+                  </label>
+                  <Button
+                    variant="destructive"
+                    disabled={deletingIds.has(analysis.id)}
+                    onClick={() => void deleteAnalyses([analysis.id])}
+                  >
+                    {deletingIds.has(analysis.id) ? "Syncing…" : "Delete"}
+                  </Button>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      ) : null}
+    </section>
   );
 }
 
@@ -711,12 +862,12 @@ function SectionEntries({
   onEdit?: (index: number, value: string) => void;
 }) {
   if (!lines?.length) {
-    return <p style={{ margin: "6px 0 0" }}>No content extracted for this section.</p>;
+    return <p className="ra-block-empty">No content extracted for this section.</p>;
   }
   return (
-    <div className="extraction-entries">
+    <div className="ra-entries">
       {lines.map((entry, index) => (
-        <div key={`${index}-${entry.slice(0, 24)}`} className="extraction-entry">
+        <div key={`${index}-${entry.slice(0, 24)}`} className="ra-entry">
           {editable ? (
             <Textarea
               aria-label={`Edit ${section.replaceAll("_", " ")} entry ${index + 1}`}
@@ -752,31 +903,39 @@ function ExtractionPanel({
   const contentCount = entries.reduce((total, [, lines]) => total + lines.length, 0);
   const isResume = title.toLowerCase().startsWith("resume");
   return (
-    <Card className="extraction-card">
-      <div className="extraction-card-header">
-        <div className="extraction-card-title">
-          <span className="extraction-icon" aria-hidden="true">
-            {isResume ? <FileText size={18} strokeWidth={2.2} /> : <BriefcaseBusiness size={18} strokeWidth={2.2} />}
+    <article className="ra-docpanel">
+      <div className="ra-docpanel-head">
+        <div className="ra-docpanel-id">
+          <span className="ra-intake-icon" aria-hidden="true">
+            {isResume ? <AnimatedIcon icon={FileText} size={18} strokeWidth={2.2} /> : <AnimatedIcon icon={BriefcaseBusiness} size={18} strokeWidth={2.2} />}
           </span>
           <div>
-            <p className="extraction-kicker">{isResume ? "Parsed resume" : "Parsed job description"}</p>
+            <p className="ra-docpanel-kicker">{isResume ? "Parsed resume" : "Parsed job description"}</p>
             <h2>{title.replace(/^Resume · |^Job description · /, "")}</h2>
           </div>
         </div>
-        <Badge variant={status === "confirmed" ? "default" : "outline"}>{status}</Badge>
+        <span className="ra-stamp" data-tone={status === "confirmed" ? "done" : "wait"}>
+          {status}
+        </span>
       </div>
-      <div className="extraction-card-meta">
+      <p className="ra-docpanel-meta">
         <span>{entries.length ? `${entries.length} sections` : "Raw text"}</span>
         <span aria-hidden="true">·</span>
         <span>{contentCount ? `${contentCount} entries` : "Needs review"}</span>
-      </div>
+        {editable ? (
+          <>
+            <span aria-hidden="true">·</span>
+            <span>Editable</span>
+          </>
+        ) : null}
+      </p>
       {entries.length ? (
-        <div className="extraction-sections">
+        <div className="ra-blocks">
           {entries.map(([section, lines]) => (
-            <section className="extraction-section" key={section}>
-              <div className="extraction-section-heading">
+            <section className="ra-block" key={section}>
+              <div className="ra-block-head">
                 <h3>{section.replaceAll("_", " ")}</h3>
-                <span>{lines.length}</span>
+                <span className="ra-block-count">{lines.length}</span>
               </div>
               <SectionEntries
                 section={section}
@@ -788,14 +947,14 @@ function ExtractionPanel({
           ))}
         </div>
       ) : fallbackText ? (
-        <p className="extraction-fallback">
+        <pre className="ra-block-empty ra-block-fallback">
           {fallbackText.slice(0, 2500)}
           {fallbackText.length > 2500 ? "…" : ""}
-        </p>
+        </pre>
       ) : (
-        <p className="extraction-empty">No extracted content available yet.</p>
+        <p className="ra-block-empty">No extracted content available yet.</p>
       )}
-    </Card>
+    </article>
   );
 }
 
@@ -1014,34 +1173,52 @@ export function NewAnalysis({ embedded = false }: { embedded?: boolean }) {
   const resumeSections = editedResumeSections;
   const jobSections = job?.structured_content?.sections || {};
 
+  const steps = [
+    { index: 1, label: "Source files" },
+    { index: 2, label: "Review extractions" },
+    { index: 3, label: "Report" },
+  ];
+  const currentStepIndex = step === "upload" ? 1 : 2;
+
   return (
-    <>
+    <div className="ra-page">
       {!embedded && (
-        <PageHeader
-          eyebrow="New analysis"
-          title="Resume and JD analysis"
-          description="Use a resume already on your profile or upload a new one, add a job description, then review extractions before analysis."
-          action={
-            <Link className="button button-secondary" href="/resume-analysis">
-              ATS analyses
+        <header className="ra-masthead">
+          <div>
+            <h1 className="ra-title">Resume and JD analysis</h1>
+            <p className="ra-sub">
+              Reuse a stored resume or upload a new one, add the job description, then confirm the
+              extraction before anything is scored.
+            </p>
+          </div>
+          <nav className="ra-segnav" aria-label="Back to overview">
+            <Link className="ra-segnav-item" href="/resume-analysis">
+              <AnimatedIcon icon={History} size={16} aria-hidden="true" />
+              <span className="ra-seg-label">Overview</span>
             </Link>
-          }
-        />
+          </nav>
+        </header>
       )}
 
-      <div className="cluster" style={{ marginBottom: 16 }}>
-        <Badge variant={step === "upload" ? "secondary" : "default"}>1. Select files</Badge>
-        <Badge variant={step === "review" ? "secondary" : "outline"}>2. Review extractions</Badge>
-        <Badge variant="outline">3. Analysis</Badge>
-      </div>
+      <nav className="ra-steps" aria-label="Analysis progress">
+        {steps.map((item, index) => (
+          <span
+            key={item.index}
+            className={`ra-step ${item.index < currentStepIndex ? "is-done" : ""} ${item.index === currentStepIndex ? "is-current" : ""}`}
+            aria-current={item.index === currentStepIndex ? "step" : undefined}
+          >
+            {index > 0 ? <span className="ra-step-line" aria-hidden="true" /> : null}
+            <span className="ra-step-dot" aria-hidden="true">
+              {item.index < currentStepIndex ? <AnimatedIcon icon={CheckCircle2} size={14} /> : item.index}
+            </span>
+            <span className="ra-step-label">{item.label}</span>
+          </span>
+        ))}
+      </nav>
 
-      {error && (
-        <p role="alert" className="field-error">
-          {error}
-        </p>
-      )}
+      {error ? <ErrorBanner>{error}</ErrorBanner> : null}
       {busy ? (
-        <Card className="stack">
+        <div className="ra-loading">
           <BookLoader
             title={
               step === "review"
@@ -1057,33 +1234,33 @@ export function NewAnalysis({ embedded = false }: { embedded?: boolean }) {
                 : "Flipping through your resume so scoring feels snappy when ready…")
             }
           />
-        </Card>
+        </div>
       ) : message ? (
-        <Card>
-          <p role="status" style={{ margin: 0 }}>
-            {message}
-          </p>
-        </Card>
+        <StatusNote>{message}</StatusNote>
       ) : null}
 
       {step === "upload" && !busy && (
-        <div className="stack">
-          <div className="grid-2">
-            <Card className="stack">
-              <h2 style={{ margin: 0 }}>1. Resume</h2>
-              <p style={{ margin: 0 }}>
-                Reuse a resume saved from profile completion or a previous upload. No need to upload the same file again.
-              </p>
+        <section className="ra-section" aria-label="Choose source files">
+          <div className="ra-intake">
+            <article className="ra-intake-card">
+              <div className="ra-intake-head">
+                <span className="ra-intake-icon" aria-hidden="true">
+                  <AnimatedIcon icon={FileText} size={19} strokeWidth={2.1} />
+                </span>
+                <div>
+                  <h2>Resume</h2>
+                  <p>Reuse one saved from profile completion, or bring a new PDF/DOCX (max 10 MB).</p>
+                </div>
+              </div>
               {loadingResumes ? (
-                <p className="muted" style={{ margin: 0 }}>
-                  Loading saved resumes…
-                </p>
+                <p className="ra-hint">Loading saved resumes…</p>
               ) : (
                 <>
-                  <div className="cluster">
+                  <div className="ra-mode" role="group" aria-label="Resume source">
                     <button
                       type="button"
-                      className={`button ${resumeSource === "stored" ? "button-primary" : "button-secondary"}`}
+                      className="ra-mode-btn"
+                      aria-pressed={resumeSource === "stored"}
                       disabled={!storedResumes.some((row) => row.latest_version?.id)}
                       onClick={() => setResumeSource("stored")}
                     >
@@ -1091,148 +1268,163 @@ export function NewAnalysis({ embedded = false }: { embedded?: boolean }) {
                     </button>
                     <button
                       type="button"
-                      className={`button ${resumeSource === "upload" ? "button-primary" : "button-secondary"}`}
+                      className="ra-mode-btn"
+                      aria-pressed={resumeSource === "upload"}
                       onClick={() => setResumeSource("upload")}
                     >
                       Upload new
                     </button>
                   </div>
-                  {resumeSource === "stored" ? (
-                    storedResumes.some((row) => row.latest_version?.id) ? (
-                      <label className="field-label">
-                        Choose saved resume
-                        <select
-                          className="field"
-                          value={selectedResumeId}
-                          onChange={(event) => setSelectedResumeId(event.target.value)}
-                        >
-                          {storedResumes
-                            .filter((row) => row.latest_version?.id)
-                            .map((row) => (
-                              <option key={row.id} value={row.id}>
-                                {row.title}
-                                {row.is_active ? " (active)" : ""}
-                                {row.latest_version?.original_filename
-                                  ? ` · ${row.latest_version.original_filename}`
-                                  : ""}
-                                {row.latest_version?.extraction_status
-                                  ? ` · ${row.latest_version.extraction_status}`
-                                  : ""}
-                              </option>
-                            ))}
-                        </select>
-                      </label>
+                  <div className="ra-intake-body">
+                    {resumeSource === "stored" ? (
+                      storedResumes.some((row) => row.latest_version?.id) ? (
+                        <label className="field-label">
+                          Choose saved resume
+                          <select
+                            className="field"
+                            value={selectedResumeId}
+                            onChange={(event) => setSelectedResumeId(event.target.value)}
+                          >
+                            {storedResumes
+                              .filter((row) => row.latest_version?.id)
+                              .map((row) => (
+                                <option key={row.id} value={row.id}>
+                                  {row.title}
+                                  {row.is_active ? " (active)" : ""}
+                                  {row.latest_version?.original_filename
+                                    ? ` · ${row.latest_version.original_filename}`
+                                    : ""}
+                                  {row.latest_version?.extraction_status
+                                    ? ` · ${row.latest_version.extraction_status}`
+                                    : ""}
+                                </option>
+                              ))}
+                          </select>
+                        </label>
+                      ) : (
+                        <p className="ra-hint">
+                          No saved resumes yet. Switch to “Upload new” to add your first file.
+                        </p>
+                      )
                     ) : (
-                      <p className="muted" style={{ margin: 0 }}>
-                        No saved resumes yet. Upload one here or from Complete profile.
-                      </p>
-                    )
-                  ) : (
-                    <>
-                      <label className="field-label">
-                        Resume file (PDF or DOCX, max 10 MB)
-                        <span className="file-picker">
-                          <span className="file-picker-ui" aria-hidden="true">Choose file</span>
-                          <span className="file-picker-name" aria-hidden="true">No file selected</span>
+                      <>
+                        <span className="ra-filepick">
+                          <span className="ra-filepick-btn" aria-hidden="true">
+                            Choose file
+                          </span>
+                          <span className="ra-filepick-name" aria-hidden="true">
+                            {file ? file.name : "PDF or DOCX"}
+                          </span>
                           <Input
-                            className="file-picker-input"
                             type="file"
                             aria-label="Choose resume file"
                             accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                             onChange={(event: any) => setFile(event.target.files?.[0] || null)}
                           />
                         </span>
-                      </label>
-                      {file && (
-                        <p style={{ margin: 0 }} className="muted">
-                          Selected: {file.name}
-                        </p>
-                      )}
-                    </>
-                  )}
+                        {file ? <p className="ra-hint">Selected: {file.name}</p> : null}
+                      </>
+                    )}
+                  </div>
                 </>
               )}
-            </Card>
+            </article>
 
-            <Card className="stack">
-              <h2 style={{ margin: 0 }}>2. Job description</h2>
-              <p style={{ margin: 0 }}>Paste text, or choose PDF/DOCX. Saved when you click Proceed.</p>
-              <div className="cluster">
+            <article className="ra-intake-card">
+              <div className="ra-intake-head">
+                <span className="ra-intake-icon" aria-hidden="true">
+                  <AnimatedIcon icon={BriefcaseBusiness} size={19} strokeWidth={2.1} />
+                </span>
+                <div>
+                  <h2>Job description</h2>
+                  <p>Paste the posting text, or upload it as a PDF/DOCX. Saved when you proceed.</p>
+                </div>
+              </div>
+              <div className="ra-mode" role="group" aria-label="Job description format">
                 <button
                   type="button"
-                  className={`button ${jdMode === "text" ? "button-primary" : "button-secondary"}`}
+                  className="ra-mode-btn"
+                  aria-pressed={jdMode === "text"}
                   onClick={() => setJdMode("text")}
                 >
                   Paste text
                 </button>
                 <button
                   type="button"
-                  className={`button ${jdMode === "file" ? "button-primary" : "button-secondary"}`}
+                  className="ra-mode-btn"
+                  aria-pressed={jdMode === "file"}
                   onClick={() => setJdMode("file")}
                 >
-                  Upload PDF/DOCX
+                  Upload file
                 </button>
               </div>
-              {jdMode === "text" ? (
-                <label className="field-label">
-                  Paste text
-                  <Textarea
-                    value={jd}
-                    onChange={(event: any) => setJd(event.target.value)}
-                    placeholder="Paste the job description…"
-                  />
-                </label>
-              ) : (
-                <label className="field-label">
-                  JD file
-                  <span className="file-picker">
-                    <span className="file-picker-ui" aria-hidden="true">Choose file</span>
-                    <span className="file-picker-name" aria-hidden="true">No file selected</span>
-                    <Input
-                      className="file-picker-input"
-                      type="file"
-                      aria-label="Choose job description file"
-                      accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                      onChange={(event: any) => setJdFile(event.target.files?.[0] || null)}
+              <div className="ra-intake-body">
+                {jdMode === "text" ? (
+                  <label className="field-label">
+                    Job description text
+                    <Textarea
+                      value={jd}
+                      onChange={(event: any) => setJd(event.target.value)}
+                      placeholder="Paste the job description…"
                     />
-                  </span>
-                </label>
-              )}
-              {jdMode === "file" && jdFile && (
-                <p style={{ margin: 0 }} className="muted">
-                  Selected: {jdFile.name}
-                </p>
-              )}
-            </Card>
+                  </label>
+                ) : (
+                  <>
+                    <span className="ra-filepick">
+                      <span className="ra-filepick-btn" aria-hidden="true">
+                        Choose file
+                      </span>
+                      <span className="ra-filepick-name" aria-hidden="true">
+                        {jdFile ? jdFile.name : "PDF or DOCX"}
+                      </span>
+                      <Input
+                        type="file"
+                        aria-label="Choose job description file"
+                        accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        onChange={(event: any) => setJdFile(event.target.files?.[0] || null)}
+                      />
+                    </span>
+                    {jdFile ? <p className="ra-hint">Selected: {jdFile.name}</p> : null}
+                  </>
+                )}
+              </div>
+            </article>
           </div>
 
-          <Card className="stack">
-            <p style={{ margin: 0 }}>
+          <div className="ra-ready">
+            <ul className="ra-ready-list">
+              <li className={`ra-ready-item ${resumeReady ? "is-ok" : "is-wait"}`}>
+                <AnimatedIcon icon={CheckCircle2} size={14} aria-hidden="true" />
+                Resume {resumeReady ? "ready" : "needed"}
+              </li>
+              <li className={`ra-ready-item ${jdReady ? "is-ok" : "is-wait"}`}>
+                <AnimatedIcon icon={CheckCircle2} size={14} aria-hidden="true" />
+                Job description {jdReady ? "ready" : "needed"}
+              </li>
+            </ul>
+            <p className="ra-ready-copy">
               {canProceed
                 ? resumeSource === "stored"
-                  ? "Ready. Proceed will use your saved resume, save the job description, then show extractions."
-                  : "Ready. Proceed will save the resume and job description, then show extractions."
-                : resumeSource === "stored"
-                  ? "Choose a saved resume and a job description (text or file) to continue."
-                  : "Select a resume file and a job description (text or file) to continue."}
+                  ? "Proceed will use your saved resume, save the job description, then show both extractions for confirmation."
+                  : "Proceed will save both documents, extract their contents, then show them for confirmation."
+                : "Add both sources to continue. Scoring waits until you confirm the extracted text."}
             </p>
             <Button disabled={!canProceed || busy || loadingResumes} onClick={proceed}>
-              {busy ? "Saving…" : "Proceed"}
+              Proceed to review
             </Button>
-          </Card>
-        </div>
+          </div>
+        </section>
       )}
 
       {step === "review" && resumeVersion && job && !busy && (
-        <div className="review-workspace">
-          <div className="review-hero">
+        <section className="ra-review" aria-label="Review extracted content">
+          <div className="ra-section-head">
             <div>
-              <div className="review-title-row">
-                <span className="review-step-marker">02</span>
-                <p className="eyebrow">Review before scoring</p>
-              </div>
-              <h2>Confirm your analysis inputs</h2>
-              <p>Check that the extracted content matches the files you supplied. Your ATS score will use only the confirmed data shown here.</p>
+              <h2 className="ra-section-title">Check the extracted content</h2>
+              <p className="ra-sub" style={{ marginTop: 6 }}>
+                Your score will use only the confirmed text shown here. Fix anything the parser got
+                wrong directly in the resume panel.
+              </p>
             </div>
             <Button
               variant="secondary"
@@ -1241,17 +1433,29 @@ export function NewAnalysis({ embedded = false }: { embedded?: boolean }) {
                 setReviewed(false);
               }}
             >
-              <RotateCcw size={16} aria-hidden="true" />
+              <AnimatedIcon icon={RotateCcw} size={15} aria-hidden="true" />
               Change files
             </Button>
           </div>
 
-          <div className="review-trust-strip">
-            <div><ShieldCheck size={18} aria-hidden="true" /><span><strong>Evidence-first scoring</strong><small>No unsupported experience is added.</small></span></div>
-            <div><CheckCircle2 size={18} aria-hidden="true" /><span><strong>Two inputs ready</strong><small>Resume and job description are saved.</small></span></div>
+          <div className="ra-chips">
+            <span className="ra-chip">
+              <AnimatedIcon icon={ShieldCheck} size={18} aria-hidden="true" />
+              <span>
+                <strong>Evidence-first scoring</strong>
+                <small>No unsupported experience is added.</small>
+              </span>
+            </span>
+            <span className="ra-chip">
+              <AnimatedIcon icon={CheckCircle2} size={18} aria-hidden="true" />
+              <span>
+                <strong>Two inputs ready</strong>
+                <small>Resume and job description are saved.</small>
+              </span>
+            </span>
           </div>
 
-          <div className="review-document-grid">
+          <div className="ra-docs">
             <ExtractionPanel
               title={`Resume · ${resume?.title || "Uploaded resume"}`}
               status={resumeVersion.extraction_status}
@@ -1274,44 +1478,48 @@ export function NewAnalysis({ embedded = false }: { embedded?: boolean }) {
             />
           </div>
 
-          <div className="review-confirm-bar">
-            <label className="review-confirm-check">
+          <div className="ra-confirm">
+            <label className="ra-confirm-check">
               <input
                 type="checkbox"
                 checked={reviewed}
                 onChange={(event: any) => setReviewed(event.target.checked)}
-              />{" "}
+              />
               <span>
                 <strong>I reviewed both documents</strong>
                 <small>I confirm this extracted content can be used for ATS keyword coverage.</small>
               </span>
             </label>
             <Button disabled={busy || !reviewed} onClick={runAnalysis}>
-              {busy ? "Calculating…" : "Confirm inputs and calculate ATS score"}
+              {busy ? "Calculating…" : "Confirm and calculate ATS score"}
             </Button>
           </div>
-        </div>
+        </section>
       )}
-    </>
+    </div>
   );
 }
 
 export function ExtractionReview() {
   return (
-    <>
-      <PageHeader
-        eyebrow="Candidate review"
-        title="Review extracted content"
-        description="Upload a resume and job description, then confirm extraction before scoring."
-      />
-      <Card className="empty-state">
-        <h2>Use New upload</h2>
-        <p>Extraction review happens on the new upload flow after files are stored.</p>
+    <div className="ra-page">
+      <header className="ra-masthead">
+        <div>
+          <h1 className="ra-title">Review extracted content</h1>
+          <p className="ra-sub">
+            Upload a resume and job description, then confirm the extraction before scoring.
+          </p>
+        </div>
+      </header>
+      <div className="ra-empty">
+        <AnimatedIcon icon={CloudUpload} size={30} aria-hidden="true" />
+        <h2>Use new upload</h2>
+        <p>Extraction review happens inside the upload flow once your files are stored.</p>
         <Link className="button button-primary" href="/resume-analysis?tab=upload">
           Go to new upload
         </Link>
-      </Card>
-    </>
+      </div>
+    </div>
   );
 }
 
@@ -1335,31 +1543,33 @@ export function AtsReport() {
 
   if (error) {
     return (
-      <>
-        <PageHeader eyebrow="ATS analysis" title="Report unavailable" description="This analysis report could not be loaded." />
-        <Card>
-          <p role="alert" className="field-error">
-            {error}
-          </p>
-        </Card>
-      </>
+      <div className="ra-page">
+        <header className="ra-masthead">
+          <div>
+            <h1 className="ra-title">Report unavailable</h1>
+            <p className="ra-sub">This analysis report could not be loaded.</p>
+          </div>
+          <nav className="ra-segnav" aria-label="Back to overview">
+            <Link className="ra-segnav-item" href="/resume-analysis">
+              <AnimatedIcon icon={History} size={16} aria-hidden="true" />
+              <span className="ra-seg-label">Overview</span>
+            </Link>
+          </nav>
+        </header>
+        <ErrorBanner>{error}</ErrorBanner>
+      </div>
     );
   }
   if (!analysis) {
     return (
-      <>
-        <PageHeader
-          eyebrow="ATS analysis"
-          title="Loading evidence report"
-          description="Opening your analysis report…"
-        />
-        <Card>
+      <div className="ra-page">
+        <div className="ra-loading">
           <BookLoader
             title="Opening your report"
             message="Gathering scores and keyword evidence…"
           />
-        </Card>
-      </>
+        </div>
+      </div>
     );
   }
 
@@ -1382,185 +1592,339 @@ export function AtsReport() {
   const criticalMissing = uniqueTerms(analysis.summary?.critical_missing || missingTerms);
   const preferredMissing = uniqueTerms(analysis.summary?.preferred_missing || []);
   const partialTerms = uniqueTerms(analysis.summary?.partial_terms || analysis.score_breakdown?.partial_terms || partial.map((item) => item.requirement_text));
+  const domainGate = analysis.summary?.domain_gate || analysis.score_breakdown?.domain_gate;
+  const overallReportStatus = analysis.summary?.report_status || (
+    analysis.summary?.inference_provider === "deterministic"
+      ? "unavailable"
+      : overallInference
+        ? "generated"
+        : "unavailable"
+  );
+  const evidenceCounts = {
+    found: evidence.filter((item) => item.match_status === "strong_match").length,
+    partial: evidence.filter((item) => item.match_status === "partial_match").length,
+    missing: evidence.filter((item) => item.match_status === "not_found").length,
+  };
+  const evidenceTotal = evidenceCounts.found + evidenceCounts.partial + evidenceCounts.missing;
+  const distWidths = {
+    found: evidenceTotal ? (evidenceCounts.found / evidenceTotal) * 100 : 0,
+    partial: evidenceTotal ? (evidenceCounts.partial / evidenceTotal) * 100 : 0,
+    missing: evidenceTotal ? (evidenceCounts.missing / evidenceTotal) * 100 : 0,
+  };
+
+  const evidenceGroups: {
+    key: string;
+    title: string;
+    statuses: AtsEvidence["match_status"][];
+  }[] = [
+    { key: "found", title: "Found — exact line quoted", statuses: ["strong_match"] },
+    { key: "partial", title: "Partial evidence", statuses: ["partial_match"] },
+    { key: "missing", title: "Missing from resume", statuses: ["not_found"] },
+    { key: "other", title: "Needs manual verification", statuses: ["unverified", "not_applicable"] },
+  ];
+
   return (
-    <div className="stack">
-      <PageHeader
-        eyebrow="ATS keyword coverage"
-        title={
-          analysis.overall_score == null
-            ? "No score"
-            : `${Math.round(Number(analysis.overall_score))}%`
-        }
-        description="Simple keyword coverage: each hit quotes an exact line from your confirmed resume. Nothing is invented."
-        action={
-          <div className="cluster">
+    <div className="ra-page">
+      <section className="ra-hero" aria-label="ATS coverage result">
+        <div
+          className="ra-gauge"
+          style={{ "--pct": String(Math.max(0, Math.min(100, Math.round(Number(analysis.overall_score) || 0)))) } as React.CSSProperties}
+          role="img"
+          aria-label={
+            analysis.overall_score == null
+              ? "No ATS coverage score recorded"
+              : `ATS keyword coverage ${Math.round(Number(analysis.overall_score))}%`
+          }
+        >
+          <span className="ra-gauge-inner">
+            <span className="ra-gauge-num">
+              {analysis.overall_score == null ? "—" : Math.round(Number(analysis.overall_score))}
+              {analysis.overall_score != null ? "%" : ""}
+            </span>
+            <span className="ra-gauge-cap">coverage</span>
+          </span>
+        </div>
+        <div className="ra-hero-copy">
+          <p className="ra-hero-kicker">Audit sheet · {formatDate(analysis.created_at)}</p>
+          <h1 className="ra-verdict">{coverageVerdict(analysis.overall_score)}</h1>
+          <p className="ra-hero-note">
+            Each hit quotes an exact line from your confirmed resume; missing terms quote nothing
+            because nothing supported them.
+          </p>
+          <span className="ra-notechip">
+            <AnimatedIcon icon={ShieldCheck} size={13} aria-hidden="true" />
+            {analysis.summary?.disclaimer || "Keyword coverage is not a hiring prediction."}
+          </span>
+          <div className="ra-hero-actions">
             <Link className="button button-primary" href="/resume-analysis?tab=upload">
               New analysis
             </Link>
             <Link className="button button-secondary" href="/resume-analysis">
-              Resume library
+              Run log
             </Link>
           </div>
-        }
-      />
-      <Card className="stack">
-        <div className="grid-2">
-          <div>
-            <strong>Resume used</strong>
-            <p style={{ margin: "6px 0 0" }}>{resumeLabel(analysis)}</p>
+        </div>
+      </section>
+
+      {domainGate?.decision === "REJECT" ? (
+        <ErrorBanner>
+          <strong>Not eligible for this role. </strong>
+          {domainGate.reason || "The LLM domain gate found a clear mismatch between the resume and job description."}
+        </ErrorBanner>
+      ) : domainGate?.decision === "UNVERIFIED" ? (
+        <p role="status" className="ra-warn">
+          <AnimatedIcon icon={AlertTriangle} size={17} aria-hidden="true" />
+          <span>
+            <strong>Domain match not verified. </strong>
+            {domainGate.reason || "The LLM domain gate was unavailable. Treat this score as unverified for domain fit."}
+          </span>
+        </p>
+      ) : null}
+
+      <div className="ra-strip">
+        <div className="ra-meta">
+          <div className="ra-meta-row">
+            <span className="ra-meta-key">Resume used</span>
+            <p className="ra-meta-val">{resumeLabel(analysis)}</p>
           </div>
-          <div>
-            <strong>Job description used</strong>
-            <p style={{ margin: "6px 0 0" }}>{jdLabel(analysis)}</p>
+          <div className="ra-meta-row">
+            <span className="ra-meta-key">Job description used</span>
+            <p className="ra-meta-val">{jdLabel(analysis)}</p>
+          </div>
+          <div className="ra-meta-row">
+            <span className="ra-meta-key">Analyzed</span>
+            <p className="ra-meta-val">{formatDate(analysis.created_at)}</p>
           </div>
         </div>
-        <p style={{ margin: 0 }}>Analyzed {formatDate(analysis.created_at)}</p>
-      </Card>
-      <div className="grid-2">
-        <ParsedInputPanel title="Parsed resume" input={analysis.parsed_inputs?.resume} />
-        <ParsedInputPanel title="Parsed job description" input={analysis.parsed_inputs?.job_description} />
+        <div className="ra-dist-panel">
+          <p className="ra-summary-line">
+            <strong>{missingTerms.length}</strong> missing of <strong>{total || "—"}</strong> scored terms
+            {matchedCount != null ? ` · ${matchedCount} matched` : ""}
+          </p>
+          <div className="ra-dist" aria-hidden="true">
+            <span className="ra-dist-found" style={{ width: `${distWidths.found}%` }} />
+            <span className="ra-dist-partial" style={{ width: `${distWidths.partial}%` }} />
+            <span className="ra-dist-missing" style={{ width: `${distWidths.missing}%` }} />
+          </div>
+          <ul className="ra-dist-legend">
+            <li className="is-found">
+              <i aria-hidden="true" />
+              Found <b>{evidenceCounts.found}</b>
+            </li>
+            <li className="is-partial">
+              <i aria-hidden="true" />
+              Partial <b>{evidenceCounts.partial}</b>
+            </li>
+            <li className="is-missing">
+              <i aria-hidden="true" />
+              Missing <b>{evidenceCounts.missing}</b>
+            </li>
+          </ul>
+        </div>
       </div>
-      <Card className="stack panel-blue">
-        <Progress
-          value={analysis.overall_score == null ? 0 : Number(analysis.overall_score)}
-          label={analysis.overall_score == null ? "Score unavailable" : "JD keyword coverage"}
-        />
-        <p>
-          <strong>{missingTerms.length}</strong> missing of <strong>{total || "—"}</strong> scored terms
-          {matchedCount != null ? ` (${matchedCount} matched)` : ""}.
-        </p>
-        <p>{analysis.summary?.disclaimer || "Keyword coverage is not a hiring prediction."}</p>
-      </Card>
-      <Card className="stack">
-        <h2 style={{ margin: 0 }}>Matches</h2>
-        <p className="muted" style={{ margin: 0, fontSize: "var(--text-sm)" }}>
-          Each JD requirement is checked against your resume text. Found items quote the matching resume line.
-        </p>
+
+      <section className="ra-section" aria-label="Keyword evidence">
+        <div className="ra-section-head">
+          <h2 className="ra-section-title">Evidence ledger</h2>
+          <p className="ra-summary-line">
+            {evidence.length
+              ? `${evidenceCounts.found} found · ${evidenceCounts.partial} partial · ${evidenceCounts.missing} missing`
+              : "No match rows stored"}
+          </p>
+        </div>
         {evidence.length === 0 ? (
-          <p className="muted" style={{ margin: 0 }}>No match rows stored for this analysis.</p>
+          <p className="ra-gap-none">No match rows were stored for this analysis.</p>
         ) : (
-          <div className="stack" style={{ gap: 10 }}>
-            {evidence.map((row) => {
-              const found = row.match_status === "strong_match" || row.match_status === "partial_match";
-              return (
-                <div key={row.id} className="panel-blue" style={{ padding: 14 }}>
-                  <div className="row" style={{ alignItems: "flex-start", gap: 12 }}>
-                    <div style={{ flex: 1 }}>
-                      <p style={{ margin: 0, fontWeight: 600 }}>{row.requirement_text}</p>
-                      {found && row.resume_evidence_text ? (
-                        <p className="muted" style={{ margin: "6px 0 0", fontSize: "var(--text-sm)" }}>
-                          In resume: “{row.resume_evidence_text}”
-                        </p>
-                      ) : (
-                        <p className="muted" style={{ margin: "6px 0 0", fontSize: "var(--text-sm)" }}>
-                          Not found in resume
-                        </p>
-                      )}
-                    </div>
-                    <Badge variant={found ? (row.match_status === "strong_match" ? "default" : "secondary") : "outline"}>
-                      {found ? (row.match_status === "strong_match" ? "Found" : "Partial") : "Missing"}
-                    </Badge>
-                  </div>
+          evidenceGroups
+            .map((group) => ({
+              group,
+              rows: evidence.filter((item) => group.statuses.includes(item.match_status)),
+            }))
+            .filter(({ rows }) => rows.length > 0)
+            .map(({ group, rows }) => (
+              <div className="ra-evgroup" key={group.key}>
+                <p className="ra-evhead">
+                  {group.title} <b>{rows.length}</b>
+                </p>
+                <div className="ra-evrows">
+                  {rows.map((row) => {
+                    const found = row.match_status === "strong_match" || row.match_status === "partial_match";
+                    return (
+                      <article className="ra-evrow" key={row.id} data-status={row.match_status}>
+                        <p className="ra-evterm">{row.requirement_text}</p>
+                        {found && row.resume_evidence_text ? (
+                          <p className="ra-quote">
+                            In your resume: <b>“{row.resume_evidence_text}”</b>
+                          </p>
+                        ) : (
+                          <p className="ra-quote">
+                            {row.match_status === "not_found"
+                              ? "Not found in your confirmed resume."
+                              : "No verified quote — check this requirement yourself."}
+                          </p>
+                        )}
+                      </article>
+                    );
+                  })}
                 </div>
-              );
-            })}
-          </div>
+              </div>
+            ))
         )}
-      </Card>
-      <Card className="stack">
-        <h2 style={{ margin: 0 }}>Requirement gaps</h2>
-        {criticalMissing.length ? (
-          <div className="stack" style={{ gap: 8 }}>
-            <strong>Critical / required</strong>
-            <div className="cluster" style={{ gap: 8 }}>
-              {criticalMissing.map((term) => (
-                <Badge key={`critical-${term}`} variant="outline">
-                  {term}
-                </Badge>
-              ))}
-            </div>
+      </section>
+
+      <section className="ra-section" aria-label="Requirement gaps">
+        <div className="ra-section-head">
+          <h2 className="ra-section-title">Requirement gaps</h2>
+        </div>
+        <div className="ra-gaps">
+          <div className="ra-gapcol">
+            <h3>
+              Critical / required <span>{criticalMissing.length}</span>
+            </h3>
+            {criticalMissing.length ? (
+              <ul className="ra-gapterms">
+                {criticalMissing.map((term) => (
+                  <li key={`critical-${term}`} className="ra-gapterm" data-kind="critical">
+                    {term}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="ra-gap-none">Nothing required is missing.</p>
+            )}
           </div>
-        ) : null}
-        {preferredMissing.length ? (
-          <div className="stack" style={{ gap: 8 }}>
-            <strong>Preferred</strong>
-            <div className="cluster" style={{ gap: 8 }}>
-              {preferredMissing.map((term) => (
-                <Badge key={`preferred-${term}`} variant="secondary">
-                  {term}
-                </Badge>
-              ))}
-            </div>
+          <div className="ra-gapcol">
+            <h3>
+              Preferred <span>{preferredMissing.length}</span>
+            </h3>
+            {preferredMissing.length ? (
+              <ul className="ra-gapterms">
+                {preferredMissing.map((term) => (
+                  <li key={`preferred-${term}`} className="ra-gapterm" data-kind="preferred">
+                    {term}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="ra-gap-none">No preferred terms are missing.</p>
+            )}
           </div>
-        ) : null}
-        {partialTerms.length ? (
-          <div className="stack" style={{ gap: 8 }}>
-            <strong>Partial evidence</strong>
-            <div className="cluster" style={{ gap: 8 }}>
-              {partialTerms.map((term) => (
-                <Badge key={`partial-${term}`} variant="secondary">
-                  {term}
-                </Badge>
-              ))}
-            </div>
+          <div className="ra-gapcol">
+            <h3>
+              Partial evidence <span>{partialTerms.length}</span>
+            </h3>
+            {partialTerms.length ? (
+              <ul className="ra-gapterms">
+                {partialTerms.map((term) => (
+                  <li key={`partial-${term}`} className="ra-gapterm" data-kind="partial">
+                    {term}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="ra-gap-none">Every matched term had direct evidence.</p>
+            )}
           </div>
-        ) : null}
-        {!criticalMissing.length && !preferredMissing.length && !partialTerms.length ? (
-          <p style={{ margin: 0 }}>No scored JD requirements are missing.</p>
-        ) : null}
-        {missingTerms.length ? (
-          <div className="cluster" style={{ gap: 8 }}>
-            {missingTerms.map((term) => (
-              <Badge key={`missing-${term}`} variant="outline">
-                {term}
-              </Badge>
-            ))}
-          </div>
-        ) : null}
-        <p className="muted" style={{ margin: 0, fontSize: "var(--text-sm)" }}>
-          Use this report to update your resume outside the app (or re-upload a revised file), then run a new analysis
-          against the same job description to re-check keyword coverage.
+        </div>
+        <p className="ra-hint">
+          Use this report to update your resume outside the app (or re-upload a revised file), then
+          run a new analysis against the same job description to re-check keyword coverage.
         </p>
-        <div className="cluster">
+        <div className="ra-hero-actions">
           <Link className="button button-primary" href="/resume-analysis?tab=upload">
             Upload revised resume
           </Link>
           <Link className="button button-secondary" href="/resume-analysis?tab=ats">
-            New analysis
+            Back to run log
           </Link>
         </div>
-      </Card>
-      <Card className="stack">
-        <h2 style={{ margin: 0 }}>Overall improvement inference</h2>
-        {overallInference ? (
-          <div className="suggestion" style={{ whiteSpace: "pre-wrap", margin: 0 }}>
-            {overallInference}
-          </div>
+      </section>
+
+      <section className="ra-section" aria-label="Improvement report">
+        <div className="ra-section-head">
+          <h2 className="ra-section-title">LLM improvement report</h2>
+          <span className="ra-stamp" data-tone={overallReportStatus === "generated" ? "done" : "stored"}>
+            {overallReportStatus === "generated"
+              ? `Generated${analysis.summary?.inference_provider ? ` · ${analysis.summary.inference_provider}` : ""}`
+              : "Unavailable"}
+          </span>
+        </div>
+        {overallReportStatus === "generated" && overallInference ? (
+          <div className="ra-letter">{overallInference}</div>
         ) : (
-          <p className="muted" style={{ margin: 0 }}>
-            No improvement brief was stored for this analysis. Run a new analysis after restarting the API.
+          <p className="ra-gap-none">
+            No narrative is shown because the configured LLM did not return a valid report. The score
+            and evidence above remain auditable; this screen will not substitute static prose.
           </p>
         )}
-        {focusAreas.length > 0 ? (
-          <div className="stack" style={{ gap: 6 }}>
-            <strong>Focus areas (from missing keywords)</strong>
-            <ul style={{ margin: 0, paddingLeft: 18 }}>
-              {focusAreas.map((area) => (
-                <li key={area}>{area}</li>
-              ))}
-            </ul>
-          </div>
+        {overallReportStatus === "generated" && (focusAreas.length > 0 || priorityActions.length > 0 || sectionGuidance.length > 0 || doNotClaim.length > 0) ? (
+          <details className="ra-guidance">
+            <summary>Open supporting guidance</summary>
+            <div className="ra-guidance-grid">
+              {focusAreas.length > 0 ? (
+                <div className="ra-guidance-col">
+                  <h4>Focus areas (from missing keywords)</h4>
+                  <ul>
+                    {focusAreas.map((area) => (
+                      <li key={area}>{area}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {priorityActions.length > 0 ? (
+                <div className="ra-guidance-col">
+                  <h4>Priority actions</h4>
+                  <ul>
+                    {priorityActions.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {sectionGuidance.length > 0 ? (
+                <div className="ra-guidance-col">
+                  <h4>Section guidance</h4>
+                  <ul>
+                    {sectionGuidance.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {doNotClaim.length > 0 ? (
+                <div className="ra-guidance-col">
+                  <h4>Evidence safeguards</h4>
+                  <ul>
+                    {doNotClaim.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+            </div>
+          </details>
         ) : null}
-        {priorityActions.length > 0 ? <div className="stack" style={{ gap: 6 }}><strong>Priority actions</strong><ul style={{ margin: 0, paddingLeft: 18 }}>{priorityActions.map((item) => <li key={item}>{item}</li>)}</ul></div> : null}
-        {sectionGuidance.length > 0 ? <div className="stack" style={{ gap: 6 }}><strong>Section guidance</strong><ul style={{ margin: 0, paddingLeft: 18 }}>{sectionGuidance.map((item) => <li key={item}>{item}</li>)}</ul></div> : null}
-        {doNotClaim.length > 0 ? <div className="stack" style={{ gap: 6 }}><strong>Evidence safeguards</strong><ul style={{ margin: 0, paddingLeft: 18 }}>{doNotClaim.map((item) => <li key={item}>{item}</li>)}</ul></div> : null}
-      </Card>
-      <div style={{ marginTop: 24 }}>
+      </section>
+
+      {analysis.parsed_inputs ? (
+        <section className="ra-section" aria-label="Parsed sources">
+          <div className="ra-section-head">
+            <h2 className="ra-section-title">Parsed sources</h2>
+            <p className="ra-summary-line">Exactly what the parser stored for this run</p>
+          </div>
+          <div className="ra-docs">
+            <ParsedInputPanel title="Parsed resume" input={analysis.parsed_inputs?.resume} />
+            <ParsedInputPanel title="Parsed job description" input={analysis.parsed_inputs?.job_description} />
+          </div>
+        </section>
+      ) : null}
+
+      <section className="ra-section" aria-label="RAG Career Assistant">
         <RagCareerAssistant
           resumeText={analysis.parsed_inputs?.resume?.plain_text || ""}
           jobDescriptionText={analysis.parsed_inputs?.job_description?.plain_text || ""}
         />
-      </div>
+      </section>
     </div>
   );
 }

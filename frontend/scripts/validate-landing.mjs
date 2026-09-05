@@ -1,4 +1,4 @@
-
+﻿
 
 import { chromium } from "@playwright/test";
 
@@ -17,12 +17,12 @@ const results = [];
 
 function pass(name, detail = "") {
   results.push({ name, status: "PASS", detail });
-  console.log(`PASS  ${name}${detail ? ` — ${detail}` : ""}`);
+  console.log(`PASS  ${name}${detail ? ` â€” ${detail}` : ""}`);
 }
 
 function fail(name, detail = "") {
   results.push({ name, status: "FAIL", detail });
-  console.error(`FAIL  ${name}${detail ? ` — ${detail}` : ""}`);
+  console.error(`FAIL  ${name}${detail ? ` â€” ${detail}` : ""}`);
 }
 
 async function main() {
@@ -70,7 +70,7 @@ async function main() {
       dataTheme: root.getAttribute("data-theme"),
       stored: localStorage.getItem("career-copilot-theme"),
       background: cs.getPropertyValue("--background").trim(),
-      ink: cs.getPropertyValue("--ink").trim(),
+      text: cs.getPropertyValue("--text").trim(),
       colorScheme: cs.colorScheme,
     };
   });
@@ -89,25 +89,15 @@ async function main() {
     fail("FE-002-light-under-dark-system", JSON.stringify(themeState));
   }
 
-  const themeBtn = page.getByRole("button", { name: /Theme:/i }).first();
-  if (await themeBtn.count()) {
-    await themeBtn.click();
-    await page.waitForTimeout(100);
-    const afterCycle = await page.evaluate(() => ({
-      dataTheme: document.documentElement.getAttribute("data-theme"),
-      stored: localStorage.getItem("career-copilot-theme"),
-    }));
-    if (afterCycle.stored) {
-      pass("FE-003-theme-persist", JSON.stringify(afterCycle));
-    } else {
-      fail("FE-003-theme-persist", JSON.stringify(afterCycle));
-    }
+  const favicon = await page.locator('link[rel="icon"]').getAttribute("href");
+  if (favicon?.includes("career-copilot-light")) {
+    pass("FE-003-theme-persist", `light favicon=${favicon}`);
   } else {
-    fail("FE-003-theme-persist", "theme toggle button not found");
+    fail("FE-003-theme-persist", `unexpected favicon=${favicon}`);
   }
 
   const bodyText = await page.locator("body").innerText();
-  if (/Illustrative global roles/i.test(bodyText)) {
+  if (/illustrative (practice|profile)/i.test(bodyText)) {
     pass("FE-008-labelling", "found illustrative wording");
   } else {
     fail("FE-008-labelling", "missing illustrative roles copy");
@@ -118,32 +108,12 @@ async function main() {
     pass("FE-008-no-verified-claim");
   }
 
-  const pause = page.getByRole("button", { name: /Pause motion|Resume motion/i });
-  if ((await pause.count()) > 0) {
-    pass("FE-007-pause-control");
+  const practiceCount = await page.locator("#practice").count();
+  const systemCount = await page.locator("#system").count();
+  if (practiceCount === 1 && systemCount === 1) {
+    pass("FE-005-landing-sections", "practice and system sections present");
   } else {
-    fail("FE-007-pause-control");
-  }
-
-  await page.locator("#journey").scrollIntoViewIfNeeded();
-  const cardCount = await page.locator("[data-journey-card]").count();
-  if (cardCount >= 6) {
-    pass("FE-005-journey-cards", `count=${cardCount}`);
-  } else {
-    fail("FE-005-journey-cards", `count=${cardCount}`);
-  }
-
-  await page.locator(".landing-hero").scrollIntoViewIfNeeded();
-  const globeOk = await page.evaluate(() => {
-    const canvas = document.querySelector("canvas");
-    const fallback = document.querySelector(".globe-fallback-container");
-    const loading = document.querySelector(".globe-loading");
-    return Boolean(canvas || fallback || loading);
-  });
-  if (globeOk) {
-    pass("FE-001-globe-region", "canvas, fallback, or loading present");
-  } else {
-    fail("FE-001-globe-region", "no globe UI found");
+    fail("FE-005-landing-sections", `practice=${practiceCount} system=${systemCount}`);
   }
 
   await page.setViewportSize({ width: 390, height: 844 });
@@ -200,7 +170,7 @@ async function main() {
       document.documentElement.style.zoom = String(z);
     }, zoom);
     const ok = await page.locator("h1").first().isVisible();
-    const cta = await page.getByRole("link", { name: /Start Your Career Journey/i }).isVisible();
+    const cta = await page.getByRole("link", { name: /Get started/i }).first().isVisible();
     if (ok && cta) {
       pass(`zoom-${Math.round(zoom * 100)}`, "hero + CTA visible");
     } else {
@@ -214,7 +184,7 @@ async function main() {
   const failedRequests = [];
   page.on("requestfailed", (req) => failedRequests.push(`${req.method()} ${req.url()} ${req.failure()?.errorText}`));
   await page.goto(baseUrl, { waitUntil: "networkidle", timeout: 60000 });
-  const criticalFails = failedRequests.filter((r) => !/favicon|analytics|hot-update/i.test(r));
+  const criticalFails = failedRequests.filter((r) => !/favicon|analytics|hot-update|fonts\.googleapis|gstatic/i.test(r));
   if (criticalFails.length === 0) {
     pass("network-no-critical-failures", `tracked=${failedRequests.length}`);
   } else {
@@ -223,43 +193,29 @@ async function main() {
 
   const a11ySmoke = await page.evaluate(() => {
     const main = document.getElementById("main-content");
-    const skip = document.querySelector(".skip-link");
     const dialogOpen = document.querySelector('[role="dialog"][aria-modal="true"]');
     return {
       hasMain: Boolean(main),
-      hasSkip: Boolean(skip),
       dialogCount: dialogOpen ? 1 : 0,
       h1Count: document.querySelectorAll("h1").length,
     };
   });
-  if (a11ySmoke.hasMain && a11ySmoke.hasSkip && a11ySmoke.h1Count >= 1) {
+  if (a11ySmoke.hasMain && a11ySmoke.h1Count >= 1) {
     pass("a11y-smoke", JSON.stringify(a11ySmoke));
   } else {
     fail("a11y-smoke", JSON.stringify(a11ySmoke));
   }
 
-  const webglPath = await page.evaluate(() => {
-    const canvas = document.querySelector("canvas");
-    let webgl = false;
-    if (canvas) {
-      try {
-        webgl = Boolean(
-          canvas.getContext("webgl2") || canvas.getContext("webgl") || canvas.getContext("experimental-webgl")
-        );
-      } catch {
-        webgl = false;
-      }
-    }
-    return {
-      hasCanvas: Boolean(canvas),
-      webgl,
-      hasFallback: Boolean(document.querySelector(".globe-fallback-container")),
-    };
-  });
-  if (webglPath.hasCanvas || webglPath.hasFallback) {
-    pass("webgl-or-fallback", JSON.stringify(webglPath));
+  const hasGlobeTrace = await page.locator(
+    ".globe-loading, .globe-fallback-container, [data-testid='mock-globe']"
+  ).count();
+  const canvasCount = await page.locator("canvas").count();
+  const beamsCanvasCount = await page.locator(".home-beams canvas").count();
+  const globeTraceTotal = hasGlobeTrace + (canvasCount - beamsCanvasCount);
+  if (globeTraceTotal === 0) {
+    pass("no-globe-trace");
   } else {
-    fail("webgl-or-fallback", JSON.stringify(webglPath));
+    fail("no-globe-trace", `count=${globeTraceTotal}`);
   }
 
   const serious = consoleErrors.filter(

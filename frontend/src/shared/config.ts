@@ -7,8 +7,6 @@ export const API_V1_PREFIX =
 
 export const ACCESS_TOKEN_STORAGE_KEY = "career_copilot_access_token";
 
-export const SESSION_COOKIE_NAME = "career_copilot_session";
-
 export const DEMO_COOKIE_NAME = "career_copilot_demo";
 export const DEMO_COOKIE_VALUE = "1";
 export const DEMO_COOKIE_PAIR = `${DEMO_COOKIE_NAME}=${DEMO_COOKIE_VALUE}`;

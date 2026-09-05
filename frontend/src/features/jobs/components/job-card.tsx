@@ -7,10 +7,12 @@ import {
   Send,
   ThumbsDown,
   Banknote,
+  Users,
 } from "lucide-react";
 import type { Job, Recommendation, SavedJobStatus } from "./job-types";
 import { statusLabel, statusTone } from "./job-types";
 import { Badge, Button, Card } from "@/shared/ui/primitives";
+import { AnimatedIcon } from "@/components/ui/animated-icon";
 
 function salaryLabel(job: Job): string | null {
   if (job.salary_min != null && job.salary_max != null) {
@@ -84,7 +86,7 @@ export function JobCard({
           </div>
         ) : (
           <div className="job-score job-score-empty" aria-hidden="true">
-            <Briefcase size={20} />
+            <AnimatedIcon icon={Briefcase} size={20} />
           </div>
         )}
         <div className="job-card-body">
@@ -96,26 +98,27 @@ export function JobCard({
             ) : null}
             {job.work_mode ? (
               <Badge variant="secondary">
-                <Briefcase size={12} aria-hidden /> {job.work_mode}
+                <AnimatedIcon icon={Briefcase} size={12} aria-hidden /> {job.work_mode}
               </Badge>
             ) : null}
             {salary ? (
               <Badge variant="secondary">
-                <Banknote size={12} aria-hidden /> {salary}
+                <AnimatedIcon icon={Banknote} size={12} aria-hidden /> {salary}
               </Badge>
             ) : null}
           </div>
           <h3 className="job-card-title">{job.title}</h3>
           <p className="job-card-meta">
             <span>
-              <Building2 size={14} aria-hidden /> {job.company || "Company"}
+              <AnimatedIcon icon={Building2} size={14} aria-hidden /> {job.company || "Company"}
             </span>
             {job.location ? (
               <span>
-                <MapPin size={14} aria-hidden /> {job.location}
+                <AnimatedIcon icon={MapPin} size={14} aria-hidden /> {job.location}
               </span>
             ) : null}
           </p>
+          <p className="job-card-applicants"><AnimatedIcon icon={Users} size={14} aria-hidden /> {Number(job.application_count || 0)} {Number(job.application_count || 0) === 1 ? "user has applied" : "users have applied"}</p>
         </div>
       </div>
 
@@ -125,7 +128,7 @@ export function JobCard({
         <div className="job-card-tags" aria-label="Match highlights">
           {matched.map((item) => (
             <span key={`m-${item}`} className="job-tag job-tag-matched">
-              <CheckCircle2 size={12} aria-hidden /> {item}
+              <AnimatedIcon icon={CheckCircle2} size={12} aria-hidden /> {item}
             </span>
           ))}
           {missing.map((item) => (
@@ -154,7 +157,7 @@ export function JobCard({
             aria-label={isSaved ? "Unsave job" : "Save job"}
             title={isSaved ? "Unsave" : "Save"}
           >
-            <Bookmark size={16} aria-hidden />
+            <AnimatedIcon icon={Bookmark} size={16} aria-hidden />
             <span className="job-card-action-label">{isSaved ? "Saved" : "Save"}</span>
           </Button>
           <Button
@@ -164,7 +167,7 @@ export function JobCard({
             aria-label="Mark as applied"
             title="Mark applied"
           >
-            <Send size={16} aria-hidden />
+            <AnimatedIcon icon={Send} size={16} aria-hidden />
             <span className="job-card-action-label">{isApplied ? "Applied" : "Apply"}</span>
           </Button>
           <Button
@@ -174,7 +177,7 @@ export function JobCard({
             aria-label="Mark as rejected"
             title="Mark rejected"
           >
-            <ThumbsDown size={16} aria-hidden />
+            <AnimatedIcon icon={ThumbsDown} size={16} aria-hidden />
             <span className="job-card-action-label">{isRejected ? "Rejected" : "Pass"}</span>
           </Button>
         </div>

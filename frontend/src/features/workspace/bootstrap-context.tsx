@@ -20,16 +20,24 @@ import {
 /** Full `/me/bootstrap` payload used by shell + dashboard (and future pages). */
 export type WorkspaceBootstrap = {
   profile: {
+    username?: string | null;
     full_name?: string;
     avatar_url?: string | null;
     avatar_path?: string | null;
     profile_completion?: number;
-    profile_completion_details?: { missing?: ProfileMissingItem[]; total?: number };
+    profile_completion_details?: {
+      missing?: ProfileMissingItem[];
+      total?: number;
+    };
   } | null;
   active_resume: { id: string } | null;
   counts?: Record<string, number>;
   active_job_description?: { title: string; role_title?: string | null } | null;
-  latest_ats_analysis?: { id: string; overall_score: number | null; status: string } | null;
+  latest_ats_analysis?: {
+    id: string;
+    overall_score: number | null;
+    status: string;
+  } | null;
   latest_actions?: {
     last_resume_upload?: {
       resume_id?: string | null;
@@ -76,13 +84,28 @@ export type WorkspaceBootstrap = {
   workspace?: {
     profile_completion?: number;
     profile_missing?: ProfileMissingItem[];
-    profile_completion_details?: { missing?: ProfileMissingItem[]; total?: number };
+    profile_completion_details?: {
+      missing?: ProfileMissingItem[];
+      total?: number;
+    };
     has_active_resume?: boolean;
     has_confirmed_resume?: boolean;
     failed_ats_count?: number;
     ready_for_ats?: boolean;
   };
 };
+
+const BOOTSTRAP_STORAGE_KEY = "career_copilot_bootstrap_cache";
+
+function readCachedBootstrap(): WorkspaceBootstrap | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(BOOTSTRAP_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
 
 type BootstrapContextValue = {
   data: WorkspaceBootstrap | null;
@@ -91,27 +114,55 @@ type BootstrapContextValue = {
   refresh: () => void;
 };
 
-const WorkspaceBootstrapContext = createContext<BootstrapContextValue | null>(null);
+const WorkspaceBootstrapContext = createContext<BootstrapContextValue | null>(
+  null,
+);
 
-export function WorkspaceBootstrapProvider({ children }: { children: ReactNode }) {
+export function WorkspaceBootstrapProvider({
+  children,
+}: {
+  children: ReactNode;
+}) {
   const { pathname } = useLocation();
-  const [data, setData] = useState<WorkspaceBootstrap | null>(null);
+  const [data, setData] = useState<WorkspaceBootstrap | null>(() =>
+    readCachedBootstrap(),
+  );
   const [error, setError] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !readCachedBootstrap());
   const fetchGen = useRef(0);
 
   const refresh = useCallback(() => {
     const gen = ++fetchGen.current;
-    setLoading(true);
+    setData((current) => {
+      if (!current) setLoading(true);
+      return current;
+    });
     setError("");
-    apiRequest<WorkspaceBootstrap>("/me/bootstrap")
+    const bootstrapScope = pathname === "/dashboard" ? "full" : "shell";
+    apiRequest<WorkspaceBootstrap>(`/me/bootstrap?scope=${bootstrapScope}`)
       .then((payload) => {
         if (gen !== fetchGen.current) return;
         setData(payload);
         setError("");
+        try {
+          window.sessionStorage.setItem(
+            BOOTSTRAP_STORAGE_KEY,
+            JSON.stringify(payload),
+          );
+        } catch {
+          // Ignore quota errors
+        }
       })
       .catch((err: Error) => {
         if (gen !== fetchGen.current) return;
+        if ((err as Error & { status?: number }).status === 401) {
+          try {
+            window.sessionStorage.removeItem(BOOTSTRAP_STORAGE_KEY);
+          } catch {
+            // Ignore storage access errors
+          }
+          return;
+        }
         // Keep last-good snapshot so a flaky refresh does not blank the shell/dashboard.
         setError(err?.message || "Could not load workspace bootstrap.");
         console.warn("[workspace] bootstrap failed:", err?.message || err);
@@ -119,7 +170,7 @@ export function WorkspaceBootstrapProvider({ children }: { children: ReactNode }
       .finally(() => {
         if (gen === fetchGen.current) setLoading(false);
       });
-  }, []);
+  }, [pathname]);
 
   useEffect(() => {
     refresh();
@@ -129,8 +180,19 @@ export function WorkspaceBootstrapProvider({ children }: { children: ReactNode }
     function onProfileUpdated() {
       refresh();
     }
+    function onAuthExpired() {
+      try {
+        window.sessionStorage.removeItem(BOOTSTRAP_STORAGE_KEY);
+      } catch {
+        // Ignore storage access errors
+      }
+    }
     window.addEventListener(PROFILE_UPDATED_EVENT, onProfileUpdated);
-    return () => window.removeEventListener(PROFILE_UPDATED_EVENT, onProfileUpdated);
+    window.addEventListener("career-copilot:auth-expired", onAuthExpired);
+    return () => {
+      window.removeEventListener(PROFILE_UPDATED_EVENT, onProfileUpdated);
+      window.removeEventListener("career-copilot:auth-expired", onAuthExpired);
+    };
   }, [refresh]);
 
   // Leaving settings often mutates profile — soft refresh once.
@@ -149,14 +211,18 @@ export function WorkspaceBootstrapProvider({ children }: { children: ReactNode }
   );
 
   return (
-    <WorkspaceBootstrapContext.Provider value={value}>{children}</WorkspaceBootstrapContext.Provider>
+    <WorkspaceBootstrapContext.Provider value={value}>
+      {children}
+    </WorkspaceBootstrapContext.Provider>
   );
 }
 
 export function useWorkspaceBootstrap(): BootstrapContextValue {
   const ctx = useContext(WorkspaceBootstrapContext);
   if (!ctx) {
-    throw new Error("useWorkspaceBootstrap must be used within WorkspaceBootstrapProvider");
+    throw new Error(
+      "useWorkspaceBootstrap must be used within WorkspaceBootstrapProvider",
+    );
   }
   return ctx;
 }
@@ -172,7 +238,9 @@ export function completionFromBootstrap(data: WorkspaceBootstrap | null): {
 } {
   if (!data) return { completion: 0, missing: [] };
   const details =
-    data.workspace?.profile_completion_details || data.profile?.profile_completion_details || null;
+    data.workspace?.profile_completion_details ||
+    data.profile?.profile_completion_details ||
+    null;
   const missing = extractMissing(details, data.workspace?.profile_missing);
   const completion = resolveCompletion(
     data.workspace?.profile_completion ?? data.profile?.profile_completion,

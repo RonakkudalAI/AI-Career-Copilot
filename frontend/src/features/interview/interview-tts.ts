@@ -1,5 +1,5 @@
 /**
- * Mock-interview TTS: Fish Audio (server proxy) with browser speechSynthesis fallback.
+ * Mock-interview TTS: Groq Orpheus, then NVIDIA Magpie, then Fish, then browser.
  * Guarantees full utterance playback before resolving — never advances mid-sentence.
  */
 
@@ -13,24 +13,34 @@ export type SpeakOptions = {
   kind?: InterviewTtsKind;
   /** Called when playback is cancelled (navigation / next turn). */
   signal?: AbortSignal;
-  /** Prefer Fish Audio when available (default true). */
+  /** Prefer Groq Orpheus when available (default true). */
+  preferServer?: boolean;
+  /** @deprecated Use preferServer. Kept so existing callers still compile. */
   preferFish?: boolean;
 };
 
-type TtsStatus = {
+export type TtsStatus = {
   provider: string | null;
   configured: boolean;
   model?: string | null;
+  voice?: string | null;
   fallback?: string;
+  fallbacks?: string[];
+  stt_provider?: string | null;
+  stt_configured?: boolean;
 };
 
 let cachedStatus: TtsStatus | null = null;
 let statusFetchedAt = 0;
 const STATUS_TTL_MS = 60_000;
+/** Server may try Groq then NVIDIA. Keep this long enough, then use the browser. */
+const SERVER_TTS_FETCH_MS = 28_000;
 
 /** Active HTMLAudioElement so we can cancel cleanly between turns. */
 let activeAudio: HTMLAudioElement | null = null;
 let activeObjectUrl: string | null = null;
+let preferredVoice: SpeechSynthesisVoice | null = null;
+let voicesLoaded = false;
 
 export function cancelInterviewSpeech(): void {
   if (activeAudio) {
@@ -72,21 +82,17 @@ export function isInterviewSpeechBusy(): boolean {
   }
 }
 
-async function authHeaders(): Promise<Record<string, string>> {
-  if (isDemoSession()) {
-    return { "Content-Type": "application/json" };
-  }
+export async function interviewAuthHeaders(json = true): Promise<Record<string, string>> {
+  const headers: Record<string, string> = json ? { "Content-Type": "application/json" } : {};
+  if (isDemoSession()) return headers;
   const authClient = createAuthClient();
   const {
     data: { session },
   } = await authClient.auth.getSession();
-  if (!session?.access_token) {
-    throw new Error("Your session has expired. Sign in again.");
+  if (session?.access_token) {
+    headers.Authorization = `Bearer ${session.access_token}`;
   }
-  return {
-    Authorization: `Bearer ${session.access_token}`,
-    "Content-Type": "application/json",
-  };
+  return headers;
 }
 
 export async function fetchInterviewTtsStatus(force = false): Promise<TtsStatus> {
@@ -94,14 +100,9 @@ export async function fetchInterviewTtsStatus(force = false): Promise<TtsStatus>
   if (!force && cachedStatus && now - statusFetchedAt < STATUS_TTL_MS) {
     return cachedStatus;
   }
-  if (isDemoSession()) {
-    cachedStatus = { provider: null, configured: false, fallback: "browser_speech_synthesis" };
-    statusFetchedAt = now;
-    return cachedStatus;
-  }
   try {
     const base = resolveApiBase();
-    const headers = await authHeaders();
+    const headers = await interviewAuthHeaders();
     const res = await fetch(`${base}/interviews/tts/status`, {
       method: "GET",
       credentials: "include",
@@ -115,7 +116,11 @@ export async function fetchInterviewTtsStatus(force = false): Promise<TtsStatus>
         provider: body.provider ?? null,
         configured: Boolean(body.configured),
         model: body.model ?? null,
+        voice: body.voice ?? null,
         fallback: body.fallback || "browser_speech_synthesis",
+        fallbacks: Array.isArray(body.fallbacks) ? body.fallbacks : undefined,
+        stt_provider: body.stt_provider ?? null,
+        stt_configured: Boolean(body.stt_configured),
       };
     }
   } catch {
@@ -125,25 +130,50 @@ export async function fetchInterviewTtsStatus(force = false): Promise<TtsStatus>
   return cachedStatus;
 }
 
-async function fetchFishAudioBlob(text: string, kind: InterviewTtsKind, signal?: AbortSignal): Promise<Blob> {
+function mergeAbortSignals(signals: Array<AbortSignal | undefined>): AbortSignal | undefined {
+  const live = signals.filter((item): item is AbortSignal => Boolean(item));
+  if (!live.length) return undefined;
+  if (live.length === 1) return live[0];
+  const anyFn = (AbortSignal as unknown as { any?: (list: AbortSignal[]) => AbortSignal }).any;
+  if (typeof anyFn === "function") return anyFn(live);
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  for (const signal of live) {
+    if (signal.aborted) {
+      controller.abort();
+      break;
+    }
+    signal.addEventListener("abort", onAbort, { once: true });
+  }
+  return controller.signal;
+}
+
+async function fetchServerTtsBlob(text: string, kind: InterviewTtsKind, signal?: AbortSignal): Promise<Blob> {
   const base = resolveApiBase();
-  const headers = await authHeaders();
-  const res = await fetch(`${base}/interviews/tts`, {
-    method: "POST",
-    credentials: "include",
-    headers,
-    signal,
-    body: JSON.stringify({ text, kind }),
-  });
-  if (!res.ok) {
-    const detail = await res.text().catch(() => "");
-    throw new Error(`Fish TTS failed (${res.status})${detail ? `: ${detail.slice(0, 120)}` : ""}`);
+  const headers = await interviewAuthHeaders();
+  const timeout = new AbortController();
+  const timer = window.setTimeout(() => timeout.abort(), SERVER_TTS_FETCH_MS);
+  const combined = mergeAbortSignals([signal, timeout.signal]);
+  try {
+    const res = await fetch(`${base}/interviews/tts`, {
+      method: "POST",
+      credentials: "include",
+      headers,
+      signal: combined,
+      body: JSON.stringify({ text, kind }),
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      throw new Error(`Server TTS failed (${res.status})${detail ? `: ${detail.slice(0, 120)}` : ""}`);
+    }
+    const blob = await res.blob();
+    if (!blob || blob.size < 32) {
+      throw new Error("Server TTS returned empty audio");
+    }
+    return blob;
+  } finally {
+    window.clearTimeout(timer);
   }
-  const blob = await res.blob();
-  if (!blob || blob.size < 32) {
-    throw new Error("Fish TTS returned empty audio");
-  }
-  return blob;
 }
 
 function playBlob(blob: Blob, signal?: AbortSignal): Promise<void> {
@@ -193,13 +223,10 @@ function playBlob(blob: Blob, signal?: AbortSignal): Promise<void> {
     audio.onended = () => finish();
     audio.onerror = () => finish(new Error("Audio playback failed"));
 
-    // Safety: never hang forever if ended never fires.
-    // Estimate from size (~16KB/s for 128kbps mp3) + cushion, min 8s max 90s.
     const estimatedMs = Math.min(90_000, Math.max(8_000, (blob.size / 16) * 1000 + 2_000));
     window.setTimeout(() => {
       if (!settled && audio.ended) finish();
       else if (!settled && audio.paused && audio.currentTime > 0) finish();
-      // If still playing past estimate, give extra 30s then force-complete (do not cancel early).
     }, estimatedMs + 30_000);
     window.setTimeout(() => {
       if (!settled) finish();
@@ -231,7 +258,6 @@ function splitForBrowserTts(text: string, maxChunk = 220): string[] {
     }
   }
   if (buf) chunks.push(buf);
-  // Hard-split any remaining oversized piece.
   const final: string[] = [];
   for (const chunk of chunks.length ? chunks : [cleaned]) {
     if (chunk.length <= maxChunk) {
@@ -245,6 +271,54 @@ function splitForBrowserTts(text: string, maxChunk = 220): string[] {
     }
   }
   return final;
+}
+
+function scoreInterviewerVoice(voice: SpeechSynthesisVoice): number {
+  const name = (voice.name || "").toLowerCase();
+  const lang = (voice.lang || "").toLowerCase();
+  let score = 0;
+  if (lang.startsWith("en")) score += 12;
+  if (lang.startsWith("en-gb") || lang.startsWith("en-us") || lang.startsWith("en-au")) score += 4;
+  if (name.includes("google") && lang.includes("en-gb")) score += 10;
+  if (name.includes("google") && lang.startsWith("en")) score += 6;
+  if (/(aria|andrew|guy|ryan|jenny|sonia|george|libby|samantha|daniel|karen|moira|tessa|ravi)/.test(name)) {
+    score += 8;
+  }
+  if (name.includes("natural") || name.includes("neural") || name.includes("online")) score += 5;
+  if (voice.localService) score += 1;
+  if (/(zira|david|mark|espeak|microsoft david|microsoft zira)/.test(name)) score -= 6;
+  return score;
+}
+
+function pickInterviewerVoice(): SpeechSynthesisVoice | null {
+  if (typeof window === "undefined" || !("speechSynthesis" in window)) return null;
+  if (preferredVoice) return preferredVoice;
+  const voices = window.speechSynthesis.getVoices();
+  if (!voices.length) return null;
+  voicesLoaded = true;
+  const ranked = [...voices].sort((a, b) => scoreInterviewerVoice(b) - scoreInterviewerVoice(a));
+  preferredVoice = ranked[0] || null;
+  return preferredVoice;
+}
+
+function warmVoices(): void {
+  if (typeof window === "undefined" || !("speechSynthesis" in window) || voicesLoaded) return;
+  try {
+    const voices = window.speechSynthesis.getVoices();
+    if (voices.length) {
+      pickInterviewerVoice();
+      return;
+    }
+    window.speechSynthesis.addEventListener(
+      "voiceschanged",
+      () => {
+        pickInterviewerVoice();
+      },
+      { once: true },
+    );
+  } catch {
+    /* ignore */
+  }
 }
 
 function speakWithBrowser(text: string, signal?: AbortSignal): Promise<void> {
@@ -268,6 +342,8 @@ function speakWithBrowser(text: string, signal?: AbortSignal): Promise<void> {
     let settled = false;
     let index = 0;
     let chunkToken = 0;
+    const voice = pickInterviewerVoice();
+    const hasVoices = Boolean(voice) || window.speechSynthesis.getVoices().length > 0;
 
     const finish = (err?: Error) => {
       if (settled) return;
@@ -288,6 +364,12 @@ function speakWithBrowser(text: string, signal?: AbortSignal): Promise<void> {
 
     signal?.addEventListener("abort", onAbort, { once: true });
 
+    if (!hasVoices) {
+      // Headless / no voice pack — don't block the interview on a hung synthesizer.
+      window.setTimeout(() => finish(), Math.min(900, 280 + text.length * 6));
+      return;
+    }
+
     const speakNext = () => {
       if (settled || signal?.aborted) {
         finish(signal?.aborted ? new DOMException("Aborted", "AbortError") : undefined);
@@ -301,18 +383,18 @@ function speakWithBrowser(text: string, signal?: AbortSignal): Promise<void> {
       index += 1;
       const token = ++chunkToken;
       const utterance = new SpeechSynthesisUtterance(chunk);
-      utterance.rate = 1;
+      utterance.rate = 0.96;
       utterance.pitch = 1;
+      utterance.lang = voice?.lang || "en-US";
+      if (voice) utterance.voice = voice;
       const advance = () => {
         if (settled || token !== chunkToken) return;
         speakNext();
       };
       utterance.onend = advance;
-      utterance.onerror = advance; // keep going so the full script is attempted
-      // Per-chunk safety — only after a generous read time for this piece.
+      utterance.onerror = advance;
       const chunkMs = Math.min(45_000, Math.max(4_000, 2000 + chunk.length * 80));
       window.setTimeout(() => {
-        // If this chunk hung, advance rather than strand the interview.
         if (!settled && token === chunkToken) {
           try {
             window.speechSynthesis.cancel();
@@ -330,15 +412,14 @@ function speakWithBrowser(text: string, signal?: AbortSignal): Promise<void> {
     };
 
     void window.speechSynthesis.getVoices();
-    // Overall hard ceiling so a broken synthesizer cannot block forever.
-    window.setTimeout(() => finish(), Math.min(120_000, 5000 + text.length * 90));
+    window.setTimeout(() => finish(), Math.min(90_000, 4000 + text.length * 60));
     speakNext();
   });
 }
 
 /**
  * Speak interviewer text fully, then resolve.
- * Prefer Fish Audio when configured; fall back to browser speechSynthesis.
+ * Prefer server TTS (Groq, then NVIDIA, then Fish); fall back to browser speechSynthesis.
  * Does not resolve until playback ends (or abort / hard failure).
  */
 export async function speakInterviewLine(text: string, options?: SpeakOptions): Promise<void> {
@@ -348,14 +429,19 @@ export async function speakInterviewLine(text: string, options?: SpeakOptions): 
     throw new DOMException("Aborted", "AbortError");
   }
 
-  const preferFish = options?.preferFish !== false;
+  warmVoices();
+  // Demo sessions must remain deterministic and local. They use the browser
+  // fallback so a configured remote provider cannot hold the interview in the
+  // speaking state or make the answer controls appear permanently disabled.
+  const preferServer =
+    options?.preferServer !== false && options?.preferFish !== false && !isDemoSession();
   const kind = options?.kind ?? "general";
 
-  if (preferFish && !isDemoSession()) {
+  if (preferServer) {
     try {
       const status = await fetchInterviewTtsStatus();
       if (status.configured) {
-        const blob = await fetchFishAudioBlob(line, kind, options?.signal);
+        const blob = await fetchServerTtsBlob(line, kind, options?.signal);
         if (options?.signal?.aborted) {
           throw new DOMException("Aborted", "AbortError");
         }

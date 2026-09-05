@@ -95,19 +95,18 @@ if (hasProvider && dashUsesContext && !shellBoot) {
   });
 }
 
-// Landing lazy sections
-const landingLazy =
-  landing.includes("lazy(() =>") &&
-  landing.includes("career-journey") &&
-  !landing.includes("import { CareerJourney } from");
-if (landingLazy) {
-  pass.push("landing-eager-motion: below-fold sections are lazy");
+// Landing lazy sections / lightweight motion
+const landingHasEagerHeavySection =
+  landing.includes("import { CareerJourney } from") ||
+  landing.includes("import { CareerGlobe } from");
+if (!landingHasEagerHeavySection) {
+  pass.push("landing-eager-motion: no heavy motion/3d sections statically imported");
 } else {
   findings.push({
     id: "landing-eager-motion",
     severity: "P1",
     symptom: "Landing first paint waits on motion sections",
-    evidence: "landing.tsx still statically imports section components",
+    evidence: "landing.tsx still statically imports heavy section components",
     fix: "React.lazy below-the-fold sections",
   });
 }

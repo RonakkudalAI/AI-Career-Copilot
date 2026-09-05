@@ -1,320 +1,732 @@
-import { Link } from "@/shared/ui/router-link";
-import { lazy, Suspense, useCallback, useEffect, useId, useRef, useState } from "react";
-import { ArrowRight, Menu, ShieldCheck, X } from "lucide-react";
-
-import { JobTicker } from "@/shared/ui/job-ticker";
-import { ParallaxLayer } from "@/shared/ui/parallax-layer";
+import { ArrowRight, Check, Play } from "lucide-react";
+import {
+  motion,
+  useReducedMotion,
+  useScroll,
+  useTransform,
+} from "motion/react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+  type SyntheticEvent,
+} from "react";
+import { CareerIcon } from "@/components/ui/career-icons";
+import { BrandMark } from "@/components/ui/brand-mark";
+import { Navigation5 } from "@/components/ui/navigation-5";
+import { BeamsBackground } from "@/components/ui/beams-background";
+import { RuixenGradientFooter } from "@/components/ui/ruixen-gradient-footer";
+import { AnimatedIcon } from "@/components/ui/animated-icon";
+import { MotionProvider, useMotion } from "../motion-context";
+import { useReveal } from "../use-reveal";
+import { useTheme } from "@/shared/theme";
 import { ButtonLink } from "@/shared/ui/primitives";
-import { ThemeToggle } from "@/shared/ui/theme-toggle";
-import { prefetchRoute } from "@/shared/route-prefetch";
+import { Link } from "@/shared/ui/router-link";
+import { prefetchRoute, warmUpBackend } from "@/shared/route-prefetch";
 
-const Globe = lazy(() => import("@/features/jobs/components/career-globe"));
-// Below-the-fold sections stay out of the critical path / main chunk.
-const CareerJourney = lazy(() =>
-  import("./sections/career-journey").then((m) => ({ default: m.CareerJourney })),
-);
-const ResumeIntelligence = lazy(() =>
-  import("./sections/resume-intelligence").then((m) => ({ default: m.ResumeIntelligence })),
-);
-const AtsComparison = lazy(() =>
-  import("./sections/ats-comparison").then((m) => ({ default: m.AtsComparison })),
-);
-const InterviewSimulation = lazy(() =>
-  import("./sections/interview-simulation").then((m) => ({ default: m.InterviewSimulation })),
-);
-const LivingProfile = lazy(() =>
-  import("./sections/living-profile").then((m) => ({ default: m.LivingProfile })),
-);
+const features = [
+  {
+    icon: "resume" as const,
+    label: "Resume evidence",
+    title: "Know what your experience already proves.",
+    text: "Turn projects, wins, and skills into a clear story you can carry into every application.",
+  },
+  {
+    icon: "learning" as const,
+    label: "Focused preparation",
+    title: "Close the gap with a plan you can follow.",
+    text: "See the next skill, example, or practice session that makes your target role more reachable.",
+  },
+  {
+    icon: "opportunities" as const,
+    label: "Role fit",
+    title: "Choose opportunities with context.",
+    text: "Connect your profile to roles that make sense for your evidence, goals, and work style.",
+  },
+];
 
-function SectionFallback({ minHeight = 280 }: { minHeight?: number }) {
-  return <div className="landing-section-fallback" style={{ minHeight }} aria-hidden />;
+function useCountUp(target: number, active: boolean) {
+  const [value, setValue] = useState(0);
+  useEffect(() => {
+    if (!active) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      setValue(target);
+      return;
+    }
+    const start = performance.now();
+    const duration = 900;
+    let frame = 0;
+    const tick = (now: number) => {
+      const t = Math.min(1, (now - start) / duration);
+      setValue(Math.round(target * (1 - (1 - t) ** 3)));
+      if (t < 1) frame = window.requestAnimationFrame(tick);
+    };
+    frame = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(frame);
+  }, [active, target]);
+  return value;
 }
 
+function usePracticeClock(paused: boolean) {
+  const [seconds, setSeconds] = useState(4 * 60 + 18);
+  useEffect(() => {
+    if (paused) return;
+    const id = window.setInterval(() => setSeconds((n) => n + 1), 1000);
+    return () => window.clearInterval(id);
+  }, [paused]);
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(rest).padStart(2, "0")}`;
+}
 
+function Reveal({
+  as: Tag,
+  delay = 0,
+  y = 22,
+  className,
+  children,
+}: {
+  as: "div" | "article" | "section";
+  delay?: number;
+  y?: number;
+  className?: string;
+  children: ReactNode;
+}) {
+  const ref = useReveal<HTMLDivElement>({ delay, y });
+  return (
+    <Tag ref={ref as never} className={className}>
+      {children}
+    </Tag>
+  );
+}
 
-const FOCUSABLE_SELECTOR =
-  'a[href], button:not([disabled]), textarea, input, select, [tabindex]:not([tabindex="-1"])';
+function HeroCopy() {
+  return (
+    <div className="home-hero-copy">
+      <p className="home-kicker">A calmer way to get ready</p>
+      <h1 id="home-hero-title">
+        Show up
+        <br />
+        <span>ready.</span>
+      </h1>
+      <p className="home-hero-lede">
+        Career Copilot helps you understand your experience, practise the
+        interview on video, and take your next step with confidence.
+      </p>
+      <div className="home-actions">
+        <span
+          onMouseEnter={() => prefetchRoute("/sign-up")}
+          onFocus={() => prefetchRoute("/sign-up")}
+        >
+          <ButtonLink href="/sign-up" className="home-primary-cta">
+            Get started
+          </ButtonLink>
+        </span>
+        <a href="#practice" className="home-text-cta">
+          <AnimatedIcon icon={Play} size={14} fill="currentColor" aria-hidden />{" "}
+          See the practice room
+        </a>
+      </div>
+    </div>
+  );
+}
 
-export function LandingPage() {
-  const [open, setOpen] = useState(false);
-  const [scrolled, setScrolled] = useState(false);
-  const menuButtonRef = useRef<HTMLButtonElement>(null);
-  const drawerRef = useRef<HTMLDivElement>(null);
-  const drawerTitleId = useId();
+function PracticeCopy() {
+  const ref = useReveal<HTMLDivElement>({ delay: 0 });
+  return (
+    <div ref={ref} className="home-practice-copy">
+      <h2 id="practice-title">
+        Confidence is
+        <br />
+        <span>a practice habit.</span>
+      </h2>
+      <p>
+        Answer realistic questions on camera before the real conversation.
+        Review the moments that matter and come back with a better answer.
+      </p>
+      <div className="home-check-list">
+        <span>
+          <AnimatedIcon icon={Check} size={15} aria-hidden /> Camera and
+          microphone readiness
+        </span>
+        <span>
+          <AnimatedIcon icon={Check} size={15} aria-hidden /> Clear feedback
+          after every answer
+        </span>
+        <span>
+          <AnimatedIcon icon={Check} size={15} aria-hidden /> Evidence, pace,
+          and clarity signals
+        </span>
+      </div>
+      <Link href="/mock-interview/preparation" className="home-inline-link">
+        Start a video practice session{" "}
+        <AnimatedIcon icon={ArrowRight} size={15} aria-hidden />
+      </Link>
+    </div>
+  );
+}
 
-  const closeDrawer = useCallback(() => {
-    setOpen(false);
-  }, []);
+function PracticeCard() {
+  const [live, setLive] = useState(false);
+  const ref = useReveal<HTMLDivElement>({
+    delay: 120,
+    y: 28,
+    onReveal: () => setLive(true),
+  });
+  const sessions = useCountUp(3, live);
+  return (
+    <div ref={ref} className="home-practice-card">
+      <div className="home-practice-card-top">
+        <span>illustrative practice history</span>
+        <b>sample week</b>
+      </div>
+      <div className="home-practice-stat">
+        <strong>{sessions}</strong>
+        <span>
+          sessions
+          <br />
+          completed
+        </span>
+        <div className="home-bars">
+          <i />
+          <i />
+          <i />
+          <i />
+          <i />
+          <i />
+          <i />
+        </div>
+      </div>
+      <div className="home-practice-divider" />
+      <div className="home-practice-row">
+        <CareerIcon name="confidence" size={19} />
+        <span>
+          <b>Confidence</b>
+          <small>steadier than last session</small>
+        </span>
+        <strong>+18%</strong>
+      </div>
+      <div className="home-practice-row">
+        <CareerIcon name="signal" size={19} />
+        <span>
+          <b>Clarity</b>
+          <small>strong opening, sharper close</small>
+        </span>
+        <strong>+11%</strong>
+      </div>
+    </div>
+  );
+}
+
+function SystemSteps() {
+  const ref = useReveal<HTMLDivElement>({ delay: 80, y: 24 });
+  return (
+    <div ref={ref} className="home-steps">
+      {features.map((feature) => (
+        <article className="home-step" key={feature.label}>
+          <div className="home-step-icon">
+            <CareerIcon name={feature.icon} size={22} />
+          </div>
+          <div className="home-step-copy">
+            <h3>{feature.title}</h3>
+            <p>{feature.text}</p>
+          </div>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function ProfileIntro() {
+  const ref = useReveal<HTMLDivElement>({ delay: 0 });
+  return (
+    <div ref={ref}>
+      <h2 id="profile-title">
+        Your progress,
+        <br />
+        <span>in one place.</span>
+      </h2>
+      <p>
+        Keep the resume you are shaping, the answers you are practising, the
+        skills you are learning, and the roles you are considering connected.
+      </p>
+      <Link href="/resume-analysis?tab=upload" className="home-inline-link">
+        Bring in my resume{" "}
+        <AnimatedIcon icon={ArrowRight} size={15} aria-hidden />
+      </Link>
+    </div>
+  );
+}
+
+function ProfileSheet() {
+  const ref = useReveal<HTMLDivElement>({ delay: 140, y: 28 });
+  return (
+    <div ref={ref} className="home-profile-sheet">
+      <div className="home-sheet-head">
+        <span>illustrative profile preview</span>
+        <b>sample data</b>
+      </div>
+      <div className="home-sheet-main">
+        <div className="home-avatar">YP</div>
+        <div>
+          <h3>Your profile</h3>
+          <p>Backend engineer, Bengaluru</p>
+        </div>
+        <span className="home-sheet-status">78% ready</span>
+      </div>
+      <div className="home-sheet-items">
+        <span>
+          <CareerIcon name="resume" size={17} />
+          <b>Resume evidence</b>
+          <small>12 confirmed signals</small>
+          <i>ready</i>
+        </span>
+        <span>
+          <CareerIcon name="interview" size={17} />
+          <b>Video practice</b>
+          <small>3 sessions this week</small>
+          <i>growing</i>
+        </span>
+        <span>
+          <CareerIcon name="learning" size={17} />
+          <b>Next skill route</b>
+          <small>Make system design visible</small>
+          <i>next</i>
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function FinalCard() {
+  const ref = useReveal<HTMLDivElement>({ delay: 60, y: 30 });
+  return (
+    <div ref={ref} className="home-frame home-final-card">
+      <p className="home-kicker">The next interview is a little less unknown</p>
+      <h2>
+        Start with
+        <br />
+        one good answer.
+      </h2>
+      <p>
+        Build a profile that helps you see what you bring, what to practise, and
+        where to go next.
+      </p>
+      <span
+        onMouseEnter={() => prefetchRoute("/sign-up")}
+        onFocus={() => prefetchRoute("/sign-up")}
+      >
+        <ButtonLink href="/sign-up" className="home-primary-cta">
+          Get started
+        </ButtonLink>
+      </span>
+    </div>
+  );
+}
+
+function LandingInner() {
+  const { isMotionPaused } = useMotion();
+  const { resolvedTheme } = useTheme();
 
   useEffect(() => {
-    document.body.style.overflow = open ? "hidden" : "";
-    return () => {
-      document.body.style.overflow = "";
-    };
-  }, [open]);
-
-  // FE-006: focus trap, Escape to close, restore focus to menu button
-  useEffect(() => {
-    if (!open) return;
-
-    const drawer = drawerRef.current;
-    const previouslyFocused = document.activeElement as HTMLElement | null;
-    const menuButton = menuButtonRef.current;
-
-    const focusables = () =>
-      drawer
-        ? (Array.from(drawer.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
-            (el) => !el.hasAttribute("disabled") && el.tabIndex !== -1
-          ) as HTMLElement[])
-        : [];
-
-    const items = focusables();
-    (items[0] ?? drawer)?.focus();
-
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        setOpen(false);
-        return;
-      }
-      if (event.key !== "Tab" || !drawer) return;
-
-      const list = focusables();
-      if (list.length === 0) {
-        event.preventDefault();
-        drawer.focus();
-        return;
-      }
-      const first = list[0];
-      const last = list[list.length - 1];
-      const active = document.activeElement as HTMLElement | null;
-
-      if (event.shiftKey) {
-        if (active === first || !drawer.contains(active)) {
-          event.preventDefault();
-          last.focus();
-        }
-      } else if (active === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    }
-
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("keydown", onKeyDown);
-      if (previouslyFocused && previouslyFocused.isConnected) {
-        previouslyFocused.focus();
-      } else {
-        menuButton?.focus();
-      }
-    };
-  }, [open]);
-
-  useEffect(() => {
-    let pendingFrame: number | null = null;
-    const onScroll = () => {
-      if (pendingFrame !== null) return;
-      pendingFrame = window.requestAnimationFrame(() => {
-        pendingFrame = null;
-        setScrolled(window.scrollY > 20);
-      });
-    };
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => {
-      window.removeEventListener("scroll", onScroll);
-      if (pendingFrame !== null) window.cancelAnimationFrame(pendingFrame);
-    };
+    warmUpBackend();
+    prefetchRoute("/sign-in");
+    prefetchRoute("/sign-up");
+    prefetchRoute("/teams");
   }, []);
 
   return (
-    <div className="landing-page">
-      <nav
-        className={`marketing-nav ${scrolled ? "nav-scrolled" : ""} ${open ? "nav-open" : ""}`}
-        aria-label="Primary"
-      >
-        <div className="container nav-inner">
-          <Link className="brand" href="/" onClick={closeDrawer}>
-            Career Copilot
-          </Link>
-          <div className="nav-links">
-            <a href="#journey">How it works</a>
-            <a href="#analysis">Resume analysis</a>
-            <a href="#interview">Mock interview</a>
-            <Link
-              href="/sign-in"
-              className="button button-quiet"
-              onMouseEnter={() => prefetchRoute("/sign-in")}
-              onFocus={() => prefetchRoute("/sign-in")}
-            >
-              Sign in
-            </Link>
-            <span onMouseEnter={() => prefetchRoute("/sign-up")} onFocus={() => prefetchRoute("/sign-up")}>
-              <ButtonLink href="/sign-up">Get started</ButtonLink>
-            </span>
-            <ThemeToggle compact />
-          </div>
-          <div className="marketing-nav-actions">
-            <button
-              ref={menuButtonRef}
-              type="button"
-              className="icon-button mobile-menu-button"
-              onClick={() => setOpen((current) => !current)}
-              aria-label={open ? "Close navigation" : "Open navigation"}
-              aria-expanded={open}
-              aria-controls="mobile-navigation"
-            >
-              {open ? <X size={20} aria-hidden /> : <Menu size={20} aria-hidden />}
-            </button>
-          </div>
-        </div>
-      </nav>
-      {open && (
-        <div
-          id="mobile-navigation"
-          ref={drawerRef}
-          className="mobile-drawer"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby={drawerTitleId}
-          tabIndex={-1}
-        >
-          <h2 id={drawerTitleId} className="sr-only" style={{ position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)" }}>
-            Mobile navigation
-          </h2>
-          <a href="#journey" onClick={closeDrawer}>
-            How it works
-          </a>
-          <a href="#analysis" onClick={closeDrawer}>
-            Resume analysis
-          </a>
-          <a href="#interview" onClick={closeDrawer}>
-            Mock interview
-          </a>
-          <Link href="/sign-in" onClick={closeDrawer}>
-            Sign in
-          </Link>
-          <Link href="/sign-up" className="button button-primary" onClick={closeDrawer}>
-            Get started
-            <ArrowRight size={17} aria-hidden />
-          </Link>
-        </div>
-      )}
+    <div
+      className="home-page"
+      data-motion={isMotionPaused ? "paused" : "running"}
+    >
+      <BeamsBackground
+        theme={resolvedTheme}
+        paused={isMotionPaused}
+        intensity="subtle"
+        className="home-beams"
+      />
+      <a href="#main-content" className="skip-link">
+        Skip to main content
+      </a>
+      <Navigation5 />
+
       <main id="main-content">
-        <section className="container landing-hero">
-          <div className="hero-copy">
-            <p className="eyebrow hero-eyebrow">Evidence-led career ops</p>
-            <h1 className="hero-title">
-              Navigate your career with evidence, not guesswork.
-            </h1>
-            <p className="hero-lede">
-              Analyze your resume, understand your gaps, practice real interviews, build the right
-              skills, and discover roles that match your progress.
-            </p>
-            <div className="cluster hero-actions">
-              <span onMouseEnter={() => prefetchRoute("/sign-up")} onFocus={() => prefetchRoute("/sign-up")}>
-                <ButtonLink href="/sign-up">Start your career journey</ButtonLink>
-              </span>
-              <a href="#journey" className="button button-secondary">
-                See how it works
-              </a>
-            </div>
-            <p className="hero-note">
-              <ShieldCheck size={16} aria-hidden />
-              <span>
-                Your career profile evolves with every analysis, interview, and learning milestone.
-              </span>
-            </p>
-          </div>
-          <div className="globe-frame" aria-label="Interactive map of opportunities">
-            <Suspense fallback={<div className="globe-loading" data-testid="mock-globe">Loading map...</div>}>
-              <Globe />
-            </Suspense>
+        <section className="home-hero" aria-labelledby="home-hero-title">
+          <div className="home-frame home-hero-grid">
+            <HeroCopy />
+            <HeroVisual />
           </div>
         </section>
 
-        <div className="landing-deferred">
-          <JobTicker />
-        </div>
-
-        <div id="journey" className="landing-deferred">
-          <Suspense fallback={<SectionFallback minHeight={420} />}>
-            <CareerJourney />
-          </Suspense>
-        </div>
-        <div id="analysis" className="landing-deferred">
-          <Suspense fallback={<SectionFallback minHeight={360} />}>
-            <ResumeIntelligence />
-          </Suspense>
-        </div>
-        <div className="landing-deferred">
-          <Suspense fallback={<SectionFallback minHeight={320} />}>
-            <AtsComparison />
-          </Suspense>
-        </div>
-        <div id="interview" className="landing-deferred">
-          <Suspense fallback={<SectionFallback minHeight={360} />}>
-            <InterviewSimulation />
-          </Suspense>
-        </div>
-        <div className="landing-deferred">
-          <Suspense fallback={<SectionFallback minHeight={320} />}>
-            <LivingProfile />
-          </Suspense>
-        </div>
-
-        <section className="section landing-outcomes">
-          <div className="container landing-outcomes-inner">
-            <ParallaxLayer speed={0.05}>
-              <p className="eyebrow">What you gain</p>
-              <h2>Meaningful outcomes.</h2>
-              <ul className="landing-outcome-list">
-                <li>Know why a role matches.</li>
-                <li>See which skills are actually missing.</li>
-                <li>Improve without inventing experience.</li>
-                <li>Practice before the real interview.</li>
-                <li>Track progress across your entire journey.</li>
-              </ul>
-            </ParallaxLayer>
+        <section
+          id="practice"
+          tabIndex={-1}
+          className="home-practice"
+          aria-labelledby="practice-title"
+        >
+          <div className="home-frame home-practice-grid">
+            <PracticeCopy />
+            <PracticeCard />
           </div>
         </section>
 
-        <section className="section landing-cta">
-          <div className="container landing-cta-inner">
-            <h2 className="landing-cta-title">
-              Your next role should not depend on guesswork.
-            </h2>
-            <p className="landing-cta-copy">
-              Build a career profile that becomes more useful every time you analyze, practice,
-              learn, and apply.
-            </p>
-            <div className="cluster landing-cta-actions">
-              <ButtonLink href="/sign-up">Create your profile</ButtonLink>
-              <ButtonLink href="/sign-in" className="button-secondary">
-                Sign in
-              </ButtonLink>
-            </div>
+        <section
+          id="system"
+          tabIndex={-1}
+          className="home-system"
+          aria-labelledby="system-title"
+        >
+          <div className="home-frame">
+            <Reveal as="div" className="home-system-copy" delay={0}>
+              <h2 id="system-title">
+                From “I’m not sure”
+                <br />
+                <span>to “I know my next move.”</span>
+              </h2>
+              <p>
+                Every part of Career Copilot points back to one question: what
+                would make you more ready for the role you want?
+              </p>
+            </Reveal>
+            <SystemSteps />
           </div>
-          <div className="landing-cta-rings" aria-hidden>
-            <span />
-            <span />
-            <span />
+        </section>
+
+        <section className="home-profile" aria-labelledby="profile-title">
+          <div className="home-frame home-profile-grid">
+            <ProfileIntro />
+            <ProfileSheet />
           </div>
+        </section>
+
+        <section className="home-final">
+          <FinalCard />
         </section>
       </main>
-      <footer className="footer">
-        <div className="container footer-inner">
-          <div>
-            <div className="brand">Career Copilot</div>
-            <p className="footer-tagline">Private career records. Evidence you can review.</p>
+
+      <RuixenGradientFooter gradientHeight="44vh" className="home-footer">
+        <div className="home-frame home-footer-content">
+          <div className="home-footer-top">
+            <Link
+              href="/"
+              className="home-brand"
+              aria-label="Career Copilot home"
+            >
+              <BrandMark compact />
+              <span>Career Copilot</span>
+            </Link>
+            <span className="home-footer-tagline">
+              Private career preparation
+            </span>
+            <nav className="home-footer-nav" aria-label="Footer navigation">
+              <Link href="/sign-in">Sign in</Link>
+              <Link href="/sign-up">Get started</Link>
+              <Link href="/teams">Team</Link>
+              <a href="#practice">Video practice</a>
+              <a href="#system">How it works</a>
+            </nav>
           </div>
-          <div className="footer-links">
-            <Link href="/sign-in">Sign in</Link>
-            <Link href="/sign-up">Create account</Link>
-            <a href="#journey">How it works</a>
+          <div className="home-footer-meta">
+            <span>© 2026 Career Copilot</span>
+            <span className="home-status">
+              <i className="home-status-dot" aria-hidden /> Evidence-first ·
+              scores from confirmed work only
+            </span>
+            <span>Built for candidates</span>
           </div>
         </div>
-      </footer>
+      </RuixenGradientFooter>
     </div>
+  );
+}
+
+// Interview demo — questions with pre-written answers for the typewriter
+const TYPING_SPEED = 32; // ms per character
+
+const INTERVIEW_QUESTIONS = [
+  {
+    topic: "Behavioural",
+    q: "Tell me about a time you led a project under a tight deadline.",
+    a: "Last quarter I led a database migration with three days to go-live. I broke the scope into daily checkpoints, ran a short sync every morning, and we shipped on time with zero rollbacks.",
+  },
+  {
+    topic: "Situational",
+    q: "How do you prioritise when everything feels urgent?",
+    a: "I ask what actually breaks if each task slips by a day. Most things that feel urgent can wait. The ones that truly can't get my full focus — everything else gets queued or delegated.",
+  },
+  {
+    topic: "Technical",
+    q: "Walk me through a technical decision you'd make differently today.",
+    a: "I once reached for NoSQL early in a project. The data turned out to be deeply relational. I'd validate the data model more carefully before committing to a storage choice now.",
+  },
+  {
+    topic: "Behavioural",
+    q: "Describe a moment you received difficult feedback. What did you do?",
+    a: "My manager said my code reviews were too critical in tone. I asked for specific examples, then shifted to leading with questions instead of corrections. The dynamic improved fast.",
+  },
+  {
+    topic: "Culture",
+    q: "What does good collaboration look like to you?",
+    a: "Being clear about what you own, asking early when you're stuck, and making it safe to disagree. A short uncomfortable conversation is always better than a long, expensive one.",
+  },
+  {
+    topic: "Growth",
+    q: "How do you keep up with fast-changing tools in your field?",
+    a: "I follow a few trusted sources, but mostly I stay current by building small things with new tools. Reading about them is one thing — actually using them reveals what matters.",
+  },
+];
+
+function buildSequence(len: number): number[] {
+  const arr = Array.from({ length: len }, (_, i) => i);
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+// Typewriter hook — resets and starts when `active` flips to true
+function useTyping(text: string, active: boolean) {
+  const [count, setCount] = useState(0);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    if (intervalRef.current) clearInterval(intervalRef.current);
+    setCount(0);
+    if (!active) return;
+
+    // Small initial delay so the panel is fully visible before text starts
+    const startId = setTimeout(() => {
+      intervalRef.current = setInterval(() => {
+        setCount((c) => {
+          if (c >= text.length) {
+            clearInterval(intervalRef.current!);
+            return c;
+          }
+          return c + 1;
+        });
+      }, TYPING_SPEED);
+    }, 280);
+
+    return () => {
+      clearTimeout(startId);
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
+  }, [text, active]);
+
+  return {
+    typed: text.slice(0, count),
+    done: count >= text.length,
+  };
+}
+
+type InterviewPhase = "question" | "answering" | "transitioning";
+
+function useInterviewDemo() {
+  const seqRef = useRef<number[] | null>(null);
+  const posRef = useRef(1);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearTimer = () => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+  };
+
+  const getNext = () => {
+    if (!seqRef.current) {
+      seqRef.current = buildSequence(INTERVIEW_QUESTIONS.length);
+    }
+    if (posRef.current >= seqRef.current.length) {
+      const last = seqRef.current[seqRef.current.length - 1];
+      const next = buildSequence(INTERVIEW_QUESTIONS.length);
+      if (next[0] === last && next.length > 1) {
+        [next[0], next[next.length - 1]] = [next[next.length - 1], next[0]];
+      }
+      seqRef.current = next;
+      posRef.current = 0;
+    }
+    return seqRef.current[posRef.current++];
+  };
+
+  const [idx, setIdx] = useState(0);
+  const [phase, setPhase] = useState<InterviewPhase>("question");
+
+  useEffect(() => {
+    clearTimer();
+    const q = INTERVIEW_QUESTIONS[idx];
+
+    if (phase === "question") {
+      // Show question for 3.2s, then start answering
+      timerRef.current = setTimeout(() => setPhase("answering"), 3200);
+    } else if (phase === "answering") {
+      // Duration = time to type the full answer + 1.2s pause at end
+      const typeDuration = 280 + q.a.length * TYPING_SPEED + 1200;
+      timerRef.current = setTimeout(
+        () => setPhase("transitioning"),
+        typeDuration,
+      );
+    } else {
+      // Fade-out transition, then load next question
+      timerRef.current = setTimeout(() => {
+        setIdx(getNext());
+        setPhase("question");
+      }, 520);
+    }
+
+    return clearTimer;
+  }, [phase, idx]);
+
+  return { question: INTERVIEW_QUESTIONS[idx], phase };
+}
+
+function PracticeClock() {
+  const { isMotionPaused } = useMotion();
+  const reduce = useReducedMotion();
+  const clock = usePracticeClock(isMotionPaused || Boolean(reduce));
+  return <span>{clock}</span>;
+}
+
+function InterviewStage({
+  blockVideoInteraction,
+}: {
+  blockVideoInteraction: (e: SyntheticEvent) => void;
+}) {
+  const { question, phase } = useInterviewDemo();
+  const isTransitioning = phase === "transitioning";
+  const isAnswering = phase === "answering";
+
+  const { typed, done } = useTyping(question.a, isAnswering);
+
+  return (
+    <div
+      className="home-window-stage"
+      onClick={blockVideoInteraction}
+      onContextMenu={blockVideoInteraction}
+      onDragStart={blockVideoInteraction}
+    >
+      <video
+        className="home-camera-video"
+        src="/media/interview-practice.mp4"
+        autoPlay
+        loop
+        muted
+        playsInline
+        preload="metadata"
+        controlsList="nodownload noplaybackrate"
+        disablePictureInPicture
+        draggable={false}
+        tabIndex={-1}
+        onClick={blockVideoInteraction}
+        onContextMenu={blockVideoInteraction}
+        onDragStart={blockVideoInteraction}
+        aria-label="Candidate giving an interview"
+      />
+
+      {/* Live pill */}
+      <div className="home-live-label">
+        <i /> live practice
+      </div>
+
+      {/* Question card — shown while question is being read */}
+      <div
+        className={[
+          "home-demo-question",
+          phase === "question" && !isTransitioning
+            ? "home-demo-question--visible"
+            : "",
+          isTransitioning ? "home-demo-question--out" : "",
+        ]
+          .join(" ")
+          .trim()}
+        aria-live="polite"
+      >
+        <span className="home-demo-topic">{question.topic}</span>
+        <p>{question.q}</p>
+      </div>
+
+      {/* Answer panel — slides up during answering phase */}
+      <div
+        className={[
+          "home-demo-answer",
+          isAnswering && !isTransitioning ? "home-demo-answer--visible" : "",
+          isTransitioning ? "home-demo-answer--out" : "",
+        ]
+          .join(" ")
+          .trim()}
+      >
+        {/* Question context (small, muted) */}
+        <p className="home-demo-answer-q">{question.q}</p>
+
+        {/* Typed answer */}
+        <p className="home-demo-answer-text">
+          {typed}
+          <span
+            className={`home-demo-cursor${done ? " home-demo-cursor--blink" : ""}`}
+          />
+        </p>
+
+        {/* Status bar */}
+        <div className="home-demo-status">
+          <span className="home-demo-answering-label">
+            <i /> Answering
+          </span>
+          <div className="home-demo-waveform" aria-hidden>
+            {Array.from({ length: 12 }, (_, k) => (
+              <i key={k} />
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function HeroVisual() {
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const { isMotionPaused } = useMotion();
+  const reduce = useReducedMotion();
+  const { scrollYProgress } = useScroll({
+    target: wrapRef,
+    offset: ["start end", "end start"],
+  });
+  const y = useTransform(
+    scrollYProgress,
+    [0, 1],
+    reduce || isMotionPaused ? [0, 0] : [18, -36],
+  );
+  const blockVideoInteraction = (event: SyntheticEvent) =>
+    event.preventDefault();
+
+  return (
+    <div
+      ref={wrapRef}
+      className="home-hero-visual"
+      role="img"
+      aria-label="Video interview practice workspace preview"
+    >
+      <motion.div className="home-hero-visual-shift" style={{ y }}>
+        <div className="home-window">
+          <div className="home-window-top">
+            <span className="home-window-dots">
+              <i />
+              <i />
+              <i />
+            </span>
+            <span>practice room</span>
+            <PracticeClock />
+          </div>
+          <InterviewStage blockVideoInteraction={blockVideoInteraction} />
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
+export function LandingPage() {
+  return (
+    <MotionProvider>
+      <LandingInner />
+    </MotionProvider>
   );
 }

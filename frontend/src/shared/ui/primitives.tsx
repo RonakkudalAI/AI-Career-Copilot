@@ -10,6 +10,7 @@ import {
 } from "react";
 import { AlertTriangle, ArrowRight, Inbox } from "lucide-react";
 import { cn } from "@/shared/utils";
+import { AnimatedIcon } from "@/components/ui/animated-icon";
 
 type ButtonVariant = "primary" | "secondary" | "danger" | "quiet" | "destructive" | "ghost" | "outline" | "default";
 type BadgeTone = "info" | "success" | "warning" | "danger" | "ai" | "default" | "secondary" | "outline" | "destructive";
@@ -56,7 +57,7 @@ export function ButtonLink({
   return (
     <Link href={href} className={cn("button", `button-${resolved}`, className)} onClick={onClick}>
       {children}
-      <ArrowRight size={17} aria-hidden />
+      <AnimatedIcon icon={ArrowRight} size={17} aria-hidden />
     </Link>
   );
 }
@@ -97,13 +98,15 @@ export function Badge({
   children,
   tone,
   variant,
+  className,
 }: {
   children: React.ReactNode;
   tone?: BadgeTone;
   variant?: BadgeTone;
+  className?: string;
 }) {
   const resolved = resolveBadgeTone(tone, variant);
-  return <span className={`badge badge-${resolved}`}>{children}</span>;
+  return <span className={cn(`badge badge-${resolved}`, className)}>{children}</span>;
 }
 
 export function PageHeader({
@@ -142,7 +145,7 @@ export function EmptyState({
 }) {
   return (
     <Card className="empty-state">
-      <Inbox aria-hidden />
+      <AnimatedIcon icon={Inbox} aria-hidden />
       <h2>{title}</h2>
       <p>{description}</p>
       {href && action && <ButtonLink href={href}>{action}</ButtonLink>}
@@ -153,7 +156,7 @@ export function EmptyState({
 export function ErrorState({ onRetry }: { onRetry?: () => void }) {
   return (
     <Card className="empty-state">
-      <AlertTriangle aria-hidden />
+      <AnimatedIcon icon={AlertTriangle} aria-hidden />
       <h2>We could not load this section</h2>
       <p>Your stored records were not changed. Check the API connection and try again.</p>
       {onRetry && <Button onClick={onRetry}>Retry</Button>}

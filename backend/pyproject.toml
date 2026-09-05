@@ -23,7 +23,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8,<9", "ruff>=0.9,<1"]
+dev = ["ruff>=0.9,<1"]
 # Official CrewAI package (requires Python >=3.10,<3.14). On Python 3.14+ the
 # built-in CrewAI-compatible orchestrator is used automatically.
 # Install only on supported Python: pip install -e ".[crewai]"

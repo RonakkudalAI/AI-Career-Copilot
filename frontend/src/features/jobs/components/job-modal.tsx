@@ -13,6 +13,7 @@ import { useEffect } from "react";
 import type { Job, Recommendation, SavedJobStatus } from "./job-types";
 import { statusLabel, statusTone } from "./job-types";
 import { Button } from "@/shared/ui/primitives";
+import { AnimatedIcon } from "@/components/ui/animated-icon";
 
 export function JobModal({
   job,
@@ -79,17 +80,17 @@ export function JobModal({
             <div>
               <h2 style={{ margin: 0 }}>{job.title}</h2>
               <p className="muted" style={{ margin: "8px 0 0" }}>
-                <Building2 size={14} aria-hidden /> {job.company}
+                <AnimatedIcon icon={Building2} size={14} aria-hidden /> {job.company}
                 {job.location ? (
                   <>
                     {" · "}
-                    <MapPin size={14} aria-hidden /> {job.location}
+                    <AnimatedIcon icon={MapPin} size={14} aria-hidden /> {job.location}
                   </>
                 ) : null}
               </p>
             </div>
             <button type="button" className="button button-secondary" onClick={onClose} aria-label="Close">
-              <X size={16} />
+              <AnimatedIcon icon={X} size={16} idle={false} />
             </button>
           </div>
         </div>
@@ -97,7 +98,7 @@ export function JobModal({
           <div className="cluster" style={{ marginBottom: 16 }}>
             {recommendation ? (
               <span className="badge badge-success">
-                <CheckCircle2 size={14} aria-hidden /> {Math.round(recommendation.match_score)}% match
+                <AnimatedIcon icon={CheckCircle2} size={14} aria-hidden /> {Math.round(recommendation.match_score)}% match
               </span>
             ) : null}
             {isSaved ? (
@@ -107,7 +108,7 @@ export function JobModal({
             ) : null}
             {job.work_mode ? (
               <span className="badge badge-info">
-                <Briefcase size={14} aria-hidden /> {job.work_mode}
+                <AnimatedIcon icon={Briefcase} size={14} aria-hidden /> {job.work_mode}
               </span>
             ) : null}
             {salaryText ? <span className="badge badge-info">{salaryText}</span> : null}
@@ -127,7 +128,7 @@ export function JobModal({
         </div>
         <div className="cluster" style={{ padding: 16, borderTop: "1px solid var(--border)", flexWrap: "wrap" }}>
           <Button onClick={onToggleSave} variant="secondary">
-            <Bookmark size={16} aria-hidden /> {isSaved && !isApplied && !isRejected ? "Unsave" : "Save"}
+            <AnimatedIcon icon={Bookmark} size={16} aria-hidden /> {isSaved && !isApplied && !isRejected ? "Unsave" : "Save"}
           </Button>
           <Button
             variant={isApplied ? "secondary" : "primary"}
@@ -135,7 +136,7 @@ export function JobModal({
             disabled={isApplied}
             aria-label={isApplied ? "Already marked applied" : "Mark as applied"}
           >
-            <Send size={16} aria-hidden /> {isApplied ? "Applied" : "Mark applied"}
+            <AnimatedIcon icon={Send} size={16} aria-hidden /> {isApplied ? "Applied" : "Mark applied"}
           </Button>
           <Button
             variant="secondary"
@@ -143,7 +144,7 @@ export function JobModal({
             disabled={isRejected}
             aria-label={isRejected ? "Already marked rejected" : "Mark as rejected"}
           >
-            <ThumbsDown size={16} aria-hidden /> {isRejected ? "Rejected" : "Mark rejected"}
+            <AnimatedIcon icon={ThumbsDown} size={16} aria-hidden /> {isRejected ? "Rejected" : "Mark rejected"}
           </Button>
           <Button variant="ghost" onClick={onDismiss}>
             Dismiss
@@ -157,7 +158,7 @@ export function JobModal({
               onClick={handleApplyClick}
             >
               Apply
-              <ExternalLink size={14} aria-hidden />
+              <AnimatedIcon icon={ExternalLink} size={14} aria-hidden />
             </a>
           ) : null}
         </div>

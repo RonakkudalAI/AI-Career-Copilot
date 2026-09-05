@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useSyncExternalStore, type ReactNode } from "react";
 
-export type ThemePreference = "light" | "dark" | "system";
+export type ThemePreference = "light" | "dark";
 export type ResolvedTheme = "light" | "dark";
 
 type ThemeContextValue = {
@@ -12,7 +12,7 @@ type ThemeContextValue = {
 
 const STORAGE_KEY = "career-copilot-theme";
 const DEFAULT_THEME_VALUE: ThemeContextValue = {
-  theme: "system",
+  theme: "light",
   setTheme: () => undefined,
   cycleTheme: () => undefined,
   resolvedTheme: "light",
@@ -21,25 +21,21 @@ const DEFAULT_THEME_VALUE: ThemeContextValue = {
 export const ThemeContext = createContext(DEFAULT_THEME_VALUE);
 
 function isThemePreference(value: string | null): value is ThemePreference {
-  return value === "light" || value === "dark" || value === "system";
+  return value === "light" || value === "dark";
 }
 
 export function readStoredTheme(): ThemePreference {
-  if (typeof window === "undefined") return "system";
+  if (typeof window === "undefined") return "light";
   try {
     const stored = window.localStorage.getItem(STORAGE_KEY);
-    return isThemePreference(stored) ? stored : "system";
+    return isThemePreference(stored) ? stored : "light";
   } catch {
-    return "system";
+    return "light";
   }
 }
 
 export function resolveTheme(theme: ThemePreference = readStoredTheme()): ResolvedTheme {
-  if (theme !== "system") return theme;
-  if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
-    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-  }
-  return "light";
+  return theme;
 }
 
 export function applyThemeToDocument(theme: ThemePreference = readStoredTheme()): void {
@@ -77,13 +73,13 @@ function storeTheme(theme: ThemePreference) {
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const getServerTheme = (): ThemePreference => "system";
+  const getServerTheme = (): ThemePreference => "light";
   const theme = useSyncExternalStore(subscribeToThemeChanges, readStoredTheme, getServerTheme);
   const resolvedTheme = resolveTheme(theme);
   useEffect(() => applyThemeToDocument(theme), [theme]);
   const setTheme = useCallback((nextTheme: ThemePreference) => storeTheme(nextTheme), []);
   const cycleTheme = useCallback(() => {
-    const next = theme === "light" ? "dark" : theme === "dark" ? "system" : "light";
+    const next = theme === "light" ? "dark" : "light";
     setTheme(next);
   }, [setTheme, theme]);
   const value = useMemo(

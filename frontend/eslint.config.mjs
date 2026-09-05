@@ -31,8 +31,8 @@ export default defineConfig([
     },
   },
   {
-    // Unused shadcn scaffolding + legacy R3F globe — not primary product path.
-    files: ["src/components/ui/**/*.{ts,tsx}", "src/features/jobs/components/career-globe.tsx"],
+    // UI component primitives — relaxed linting for generated/adapted code.
+    files: ["src/components/ui/**/*.{ts,tsx}"],
     rules: {
       "@typescript-eslint/ban-ts-comment": "off",
       "@typescript-eslint/no-explicit-any": "off",
