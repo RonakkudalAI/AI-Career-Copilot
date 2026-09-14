@@ -404,6 +404,7 @@ export function SignUpScreen() {
       );
       return;
     }
+    setUsernameAvailability({ available: true });
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
       void fetch(
