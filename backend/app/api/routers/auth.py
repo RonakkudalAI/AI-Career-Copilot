@@ -103,6 +103,7 @@ def auth_sign_up(payload: dict[str, Any] = Body(...), settings: Settings = Depen
     email = str(payload.get("email") or "").strip().lower()
     password = str(payload.get("password") or "")
     full_name = str(payload.get("full_name") or "").strip()[:120] or None
+    username = str(payload.get("username") or "").strip().lower() or None
     if "@" not in email or len(password) < MIN_PASSWORD_LENGTH:
         raise ApiError(
             400,
@@ -112,13 +113,17 @@ def auth_sign_up(payload: dict[str, Any] = Body(...), settings: Settings = Depen
     client = database_client(settings)
     if client.table("users").select("id").eq("email", email).limit(1).execute().data:
         raise ApiError(409, "user_already_exists", "An account with this email already exists.")
-    # A stable document id makes the email identity collision-safe across
-    # concurrent workers; the preflight lookup remains a fast user-facing path.
     try:
-        user = _create_user_records(
-            client,
-            {"id": str(uuid.uuid5(uuid.NAMESPACE_URL, f"career-copilot:{email}")), "email": email, "full_name": full_name, "password_hash": _password_hash(password), "token_version": 0},
-        )
+        user_data: dict[str, Any] = {
+            "id": str(uuid.uuid5(uuid.NAMESPACE_URL, f"career-copilot:{email}")),
+            "email": email,
+            "full_name": full_name,
+            "password_hash": _password_hash(password),
+            "token_version": 0,
+        }
+        if username:
+            user_data["username"] = username
+        user = _create_user_records(client, user_data)
     except ApiError:
         if client.table("users").select("id").eq("email", email).limit(1).execute().data:
             raise ApiError(409, "user_already_exists", "An account with this email already exists.") from None
@@ -128,11 +133,24 @@ def auth_sign_up(payload: dict[str, Any] = Body(...), settings: Settings = Depen
 
 @router.post("/auth/sign-in")
 def auth_sign_in(payload: dict[str, Any] = Body(...), settings: Settings = Depends(get_settings)):
-    email = str(payload.get("email") or "").strip().lower()
+    identifier = str(payload.get("identifier") or payload.get("email") or payload.get("username") or "").strip().lower()
     password = str(payload.get("password") or "")
-    rows = database_client(settings).table("users").select("*").eq("email", email).limit(1).execute().data
+    if not identifier or not password:
+        raise ApiError(400, "invalid_credentials", "Enter your email or username and password.")
+
+    client = database_client(settings)
+    rows = client.table("users").select("*").eq("email", identifier).limit(1).execute().data
+    if not rows and "@" not in identifier:
+        rows = client.table("users").select("*").eq("username", identifier).limit(1).execute().data
+    if not rows:
+        all_users = client.table("users").select("*").execute().data or []
+        for u in all_users:
+            if str(u.get("email") or "").lower() == identifier or str(u.get("username") or "").lower() == identifier:
+                rows = [u]
+                break
+
     if not rows or not _password_matches(password, str(rows[0].get("password_hash") or "")):
-        raise ApiError(401, "invalid_credentials", "Email or password is incorrect.")
+        raise ApiError(401, "invalid_credentials", "The email or password is incorrect.")
     return _auth_payload(rows[0], settings)
 
 
