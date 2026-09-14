@@ -22,12 +22,21 @@ app = FastAPI(
     docs_url="/docs" if settings.app_env != "production" else None,
     redoc_url=None,
 )
+origins = [o for o in settings.frontend_origins if o and o != "*"]
+if not origins:
+    origins = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "https://ai-career-copilot-iota-gules.vercel.app",
+    ]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.frontend_origins,
+    allow_origins=origins,
+    allow_origin_regex=r"https://.*\.vercel\.app|http://localhost:\d+|http://127\.0\.0\.1:\d+",
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
+    allow_headers=["*"],
 )
 app.add_exception_handler(ApiError, api_error_handler)
 app.add_exception_handler(Exception, unexpected_error_handler)

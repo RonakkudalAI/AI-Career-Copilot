@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     api_v1_prefix: str = "/api/v1"
     public_api_base_url: str = "http://127.0.0.1:8000"
     log_level: str = "INFO"
-    frontend_origins: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["*"])
+    frontend_origins: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["http://localhost:3000", "http://127.0.0.1:3000", "https://ai-career-copilot-iota-gules.vercel.app"])
     firebase_project_id: str = ""
     firebase_database_id: str = "(default)"
     firebase_credentials_path: str = ""
