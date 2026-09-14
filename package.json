@@ -26,5 +26,8 @@
   "devDependencies": {
     "@types/node": "^26.4.0",
     "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "cobe": "^2.0.1"
   }
 }
