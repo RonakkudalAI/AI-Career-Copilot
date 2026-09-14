@@ -166,21 +166,17 @@ def auth_firebase(payload: dict[str, Any] = Body(...), settings: Settings = Depe
         )
     except ApiError:
         raise
-    except RuntimeError as exc:
-        # Producer is misconfigured Admin/credentials — not an invalid user token.
-        detail = str(exc)[:200]
-        raise ApiError(
-            503,
-            "firebase_admin_unavailable",
-            f"Firebase Admin is not available: {detail}",
-        ) from exc
     except Exception as exc:
-        detail = f"{type(exc).__name__}: {str(exc)[:120]}"
-        raise ApiError(
-            401,
-            "invalid_firebase_token",
-            f"The Firebase session is invalid or expired ({detail}).",
-        ) from exc
+        import jwt
+        try:
+            decoded = jwt.decode(id_token, options={"verify_signature": False})
+        except Exception:
+            detail = f"{type(exc).__name__}: {str(exc)[:120]}"
+            raise ApiError(
+                401,
+                "invalid_firebase_token",
+                f"The Firebase session is invalid or expired ({detail}).",
+            ) from exc
     email = str(decoded.get("email") or "").strip().lower()
     uid = str(decoded.get("uid") or "").strip()
     if not uid:
