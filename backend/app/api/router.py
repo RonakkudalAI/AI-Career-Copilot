@@ -103,6 +103,7 @@ from app.features.rag_assistant.routes import router as rag_assistant_router
 from app.features.resume_improvement.routes import router as resume_improvement_router
 
 router = APIRouter()
+router.include_router(auth_router)
 router.include_router(resume_improvement_router)
 router.include_router(rag_assistant_router)
 logger = logging.getLogger(__name__)
