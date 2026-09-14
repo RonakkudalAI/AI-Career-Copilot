@@ -440,10 +440,15 @@ export function SignUpScreen() {
       return setError(
         "Enter a valid mobile number (6–15 digits) with its country code.",
       );
-    if (!username.trim() || usernameAvailability?.available === false)
+    const cleanUsername = username.trim().replace(/^@/, "").toLowerCase();
+    if (!cleanUsername || cleanUsername.length < 3) {
+      return setError("Username must be at least 3 characters.");
+    }
+    if (usernameAvailability?.available === false) {
       return setError(
-        usernameAvailability?.reason || "Choose an available username.",
+        usernameAvailability?.reason || "That username is not available. Please choose a different one.",
       );
+    }
     const authClient = createClient();
     if (!authClient) return setError(configurationError());
     setBusy(true);
