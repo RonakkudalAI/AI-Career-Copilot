@@ -1,4 +1,4 @@
-﻿
+
 
 export const BROWSER_API_PROXY_PREFIX = "/api/backend";
 
@@ -18,19 +18,24 @@ export const DEMO_COOKIE_PAIR = `${DEMO_COOKIE_NAME}=${DEMO_COOKIE_VALUE}`;
  * Production static hosts (nginx, CDN) must either set VITE_API_BASE_URL at build time
  * or reverse-proxy /api/backend and /api/files to the FastAPI service.
  */
+export const DEFAULT_PRODUCTION_BACKEND_URL = "https://career-copilot-backend-4ruf.onrender.com";
+
 export function resolveApiBase(): string {
-  const url = import.meta.env.VITE_API_BASE_URL?.trim();
+  const url = (
+    import.meta.env.VITE_API_BASE_URL ||
+    import.meta.env.VITE_API_URL ||
+    DEFAULT_PRODUCTION_BACKEND_URL
+  )?.trim();
   if (url) return `${url.replace(/\/$/, "")}${API_V1_PREFIX}`;
-  if (import.meta.env.PROD && typeof window !== "undefined") {
-    // Same-origin proxy path is intentional for vite preview / reverse-proxied deploys.
-    // Direct static file hosts without a reverse proxy will fail fetch with a clear network error.
-  }
   return BROWSER_API_PROXY_PREFIX;
 }
 
 export function resolveUpstreamApiOrigin(): string {
-  const url = import.meta.env.VITE_API_BASE_URL?.trim();
-  if (!url) throw new Error("API base URL is not configured.");
+  const url = (
+    import.meta.env.VITE_API_BASE_URL ||
+    import.meta.env.VITE_API_URL ||
+    DEFAULT_PRODUCTION_BACKEND_URL
+  )?.trim();
   return url.replace(/\/$/, "");
 }
 
