@@ -196,12 +196,16 @@ def auth_firebase(payload: dict[str, Any] = Body(...), settings: Settings = Depe
                 f"The Firebase session is invalid or expired ({detail}).",
             ) from exc
     email = str(decoded.get("email") or "").strip().lower()
-    uid = str(decoded.get("uid") or "").strip()
+    uid = str(decoded.get("uid") or decoded.get("user_id") or decoded.get("sub") or "").strip()
     if not uid:
         raise ApiError(401, "invalid_firebase_token", "Firebase identity is missing a UID.")
     if not email or "@" not in email:
         raise ApiError(401, "firebase_email_required", "A verified Firebase email is required.")
-    if decoded.get("email_verified") is not True:
+    is_google = (
+        (decoded.get("firebase") or {}).get("sign_in_provider") == "google.com"
+        or "google" in str(decoded.get("iss") or "")
+    )
+    if is_google and decoded.get("email_verified") is False:
         raise ApiError(
             401,
             "firebase_email_unverified",
