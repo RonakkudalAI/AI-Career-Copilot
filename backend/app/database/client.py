@@ -597,24 +597,39 @@ def _firestore_for(settings: Settings):
 
 
 def firebase_admin_app(settings: Settings):
+    import json
+    import os
     import firebase_admin
     from firebase_admin import credentials
 
-    credential_path = Path(settings.firebase_credentials_path)
-    if not credential_path.is_absolute():
-        credential_path = (Path(__file__).resolve().parents[3] / credential_path).resolve()
-    if not credential_path.is_file():
-        raise RuntimeError(f"Firebase credentials file not found: {credential_path}")
-    certificate = credentials.Certificate(str(credential_path))
-    credential_project = getattr(certificate, "project_id", None)
-    if credential_project and credential_project != settings.firebase_project_id:
-        raise RuntimeError("Firebase project mismatch between FIREBASE_PROJECT_ID and service-account credentials")
-    app_name = f"career-copilot-{settings.firebase_project_id}-{settings.firebase_database_id}"
-    options: dict[str, str] = {"projectId": settings.firebase_project_id}
+    json_env = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON") or os.environ.get("FIREBASE_CREDENTIALS_JSON") or ""
+    certificate = None
+    if json_env.strip():
+        try:
+            dict_data = json.loads(json_env)
+            certificate = credentials.Certificate(dict_data)
+        except Exception as exc:
+            logger.warning("Failed to parse FIREBASE_SERVICE_ACCOUNT_JSON env var: %s", exc)
+
+    if not certificate:
+        credential_path = Path(settings.firebase_credentials_path or "")
+        if settings.firebase_credentials_path and not credential_path.is_absolute():
+            credential_path = (Path(__file__).resolve().parents[3] / credential_path).resolve()
+        if credential_path.is_file():
+            certificate = credentials.Certificate(str(credential_path))
+
+    app_name = f"career-copilot-{settings.firebase_project_id or 'default'}-{settings.firebase_database_id or 'default'}"
+    options: dict[str, str] = {"projectId": settings.firebase_project_id or "career-copilot-app"}
+
     try:
         return firebase_admin.get_app(app_name)
     except ValueError:
-        return firebase_admin.initialize_app(certificate, options, name=app_name)
+        if certificate:
+            return firebase_admin.initialize_app(certificate, options, name=app_name)
+        try:
+            return firebase_admin.initialize_app(credentials.ApplicationDefault(), options, name=app_name)
+        except Exception:
+            return firebase_admin.initialize_app(options=options, name=app_name)
 
 
 def database_client(settings: Settings):
