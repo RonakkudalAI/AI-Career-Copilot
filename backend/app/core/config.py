@@ -144,7 +144,19 @@ class Settings(BaseSettings):
 
     @property
     def firebase_configured(self) -> bool:
-        return bool(self.firebase_project_id and self.firebase_credentials_path)
+        import os
+        json_env = (
+            os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON")
+            or os.environ.get("FIREBASE_CREDENTIALS_JSON")
+            or ""
+        ).strip()
+        has_cred_file = False
+        if self.firebase_credentials_path:
+            p = Path(self.firebase_credentials_path)
+            if not p.is_absolute():
+                p = (ROOT_DIR / p).resolve()
+            has_cred_file = p.is_file()
+        return bool(self.firebase_project_id or has_cred_file or json_env)
 
     @property
     def effective_firebase_check_revoked(self) -> bool:

@@ -1,4 +1,4 @@
-﻿
+
 import {
   ACCESS_TOKEN_STORAGE_KEY,
   resolveApiBase,
@@ -192,6 +192,38 @@ export function createClient() {
       }) {
         const trimmed = email.trim();
         const phone = String(options?.phone || "").trim();
+        // 1. Primary path: Call canonical app backend API /auth/sign-up
+        try {
+          const payload = await withTimeout(
+            request("/auth/sign-up", {
+              email: trimmed,
+              password,
+              full_name: String(options?.data?.full_name || ""),
+              ...(options?.data?.username ? { username: String(options.data.username) } : {}),
+              ...(phone ? { phone } : {}),
+            }),
+            "App sign-up",
+            APP_AUTH_TIMEOUT_MS,
+          );
+          saveToken(payload.access_token);
+          return {
+            data: { session: { access_token: payload.access_token }, user: payload.user },
+            error: null as AuthError,
+            emailConfirmationSent: false,
+          };
+        } catch (backendError) {
+          // If the error is a user conflict (e.g. 400/409 user exists), surface it directly.
+          const status = (backendError as { status?: number }).status;
+          if (status && status >= 400 && status < 500) {
+            return {
+              data: { session: null, user: null },
+              error: { message: (backendError as Error).message, status },
+              emailConfirmationSent: false,
+            };
+          }
+        }
+
+        // 2. Fallback path: Try Supabase auth if configured
         try {
           const result = await withTimeout(
             supabaseAuthClient().auth.signUp({
@@ -213,45 +245,15 @@ export function createClient() {
           }
           const sessionToken = result.data.session?.access_token;
           if (sessionToken) {
-            // Email confirmations are disabled for this project: the account
-            // is active immediately and Supabase sends no verification email.
-            // Exchange the access token instead of showing an inbox screen.
             const exchanged = await signInWithSupabaseAccessToken(sessionToken);
             return { ...exchanged, emailConfirmationSent: false };
           }
-          // No session means the account awaits email confirmation; Supabase
-          // (or its configured SMTP) delivers the verification message.
           return {
             data: { session: null, user: null },
             error: null as AuthError,
             emailConfirmationSent: true,
           };
         } catch (error) {
-            if (error instanceof SupabaseWebConfigError || isTimeoutError(error)) {
-              // Supabase is not configured in this environment. The legacy app
-              // account has no email step: create it and return the session.
-              try {
-                const payload = await request("/auth/sign-up", {
-                  email: trimmed,
-                  password,
-                  full_name: String(options?.data?.full_name || ""),
-                  ...(options?.data?.username ? { username: String(options.data.username) } : {}),
-                  ...(phone ? { phone } : {}),
-                });
-              saveToken(payload.access_token);
-              return {
-                data: { session: { access_token: payload.access_token }, user: payload.user },
-                error: null as AuthError,
-                emailConfirmationSent: false,
-              };
-            } catch (legacyError) {
-              return {
-                data: { session: null, user: null },
-                error: { message: (legacyError as Error).message, status: undefined },
-                emailConfirmationSent: false,
-              };
-            }
-          }
           return {
             data: { session: null, user: null },
             error: { message: error instanceof SupabaseWebConfigError ? error.message : emailPasswordAuthErrorMessage(error), status: undefined },

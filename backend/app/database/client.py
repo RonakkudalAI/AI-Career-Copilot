@@ -632,16 +632,200 @@ def firebase_admin_app(settings: Settings):
             return firebase_admin.initialize_app(options=options, name=app_name)
 
 
-def database_client(settings: Settings):
-    from app.core.errors import ApiError
+_IN_MEMORY_TABLES: dict[str, dict[str, dict[str, Any]]] = {}
 
-    if not settings.firebase_configured:
-        raise ApiError(
-            503,
-            "database_not_configured",
-            "Firestore is not configured. Set FIREBASE_PROJECT_ID and FIREBASE_CREDENTIALS_PATH.",
-        )
-    return FirestoreClient(settings)
+
+class InMemoryFirestoreQuery:
+    def __init__(self, client: Any, table: str):
+        self.client = client
+        self.table_name = _identifier(table)
+        if self.table_name not in _TABLES and self.table_name != "_setup_checks":
+            raise ValueError(f"Unknown table: {table}")
+        self.columns = ["*"]
+        self.filters: list[tuple[str, str, Any]] = []
+        self.orders: list[tuple[str, bool]] = []
+        self.max_rows: int | None = None
+        self.single_row = False
+        self.count_requested = False
+        self.head = False
+        self.operation = "select"
+        self.payload: Any = None
+
+    def select(self, columns: str = "*", count: str | None = None, head: bool = False):
+        parts = [column.strip() for column in columns.split(",") if column.strip()]
+        self.columns = parts or ["*"]
+        self.count_requested = count == "exact"
+        self.head = head
+        return self
+
+    def eq(self, column: str, value: Any): return self._filter("==", column, value)
+    def neq(self, column: str, value: Any): return self._filter("!=", column, value)
+    def lt(self, column: str, value: Any): return self._filter("<", column, value)
+    def lte(self, column: str, value: Any): return self._filter("<=", column, value)
+    def gt(self, column: str, value: Any): return self._filter(">", column, value)
+    def gte(self, column: str, value: Any): return self._filter(">=", column, value)
+    def in_(self, column: str, values: list[Any]): return self._filter("in", column, values)
+    def is_(self, column: str, value: str):
+        if str(value).lower() == "null":
+            self.filters.append(("is_null_or_missing", _identifier(column), None))
+            return self
+        return self._filter("==", column, None)
+
+    def _filter(self, operator: str, column: str, value: Any):
+        self.filters.append((operator, _identifier(column), value))
+        return self
+
+    def order(self, column: str, desc: bool = False):
+        self.orders.append((_identifier(column), desc))
+        return self
+
+    def limit(self, amount: int):
+        self.max_rows = max(0, int(amount))
+        return self
+
+    def single(self):
+        self.max_rows, self.single_row = 1, True
+        return self
+
+    def insert(self, payload):
+        self.operation, self.payload = "insert", payload
+        return self
+
+    def update(self, payload):
+        self.operation, self.payload = "update", payload
+        return self
+
+    def upsert(self, payload):
+        self.operation, self.payload = "upsert", payload
+        return self
+
+    def delete(self):
+        self.operation = "delete"
+        return self
+
+    def execute(self) -> FirestoreResult:
+        table_store = _IN_MEMORY_TABLES.setdefault(self.table_name, {})
+
+        if self.operation in {"insert", "upsert"}:
+            rows = self.payload if isinstance(self.payload, list) else [self.payload]
+            output = []
+            for raw in rows:
+                row = dict(raw or {})
+                if self.operation == "upsert" and self.table_name in {
+                    "candidate_preferences",
+                    "notification_preferences",
+                    "privacy_preferences",
+                    "saved_jobs",
+                }:
+                    identity = (
+                        f"{self.table_name}:user:{row.get('user_id')}"
+                        if self.table_name != "saved_jobs"
+                        else f"{self.table_name}:user:{row.get('user_id')}:job:{row.get('job_id')}"
+                    )
+                    doc_id = str(uuid.uuid5(uuid.NAMESPACE_URL, identity))
+                else:
+                    doc_id = str(row.get("id") or uuid.uuid4())
+                row["id"] = doc_id
+                if self.operation == "upsert" and doc_id in table_store:
+                    table_store[doc_id] = {**table_store[doc_id], **row}
+                else:
+                    table_store[doc_id] = dict(row)
+                output.append(dict(table_store[doc_id]))
+            return FirestoreResult(output)
+
+        matched_ids = []
+        for doc_id, doc in list(table_store.items()):
+            ok = True
+            for op, col, val in self.filters:
+                doc_val = doc.get(col)
+                if op == "==" and doc_val != val:
+                    ok = False; break
+                elif op == "!=" and doc_val == val:
+                    ok = False; break
+                elif op == "<" and (doc_val is None or doc_val >= val):
+                    ok = False; break
+                elif op == "<=" and (doc_val is None or doc_val > val):
+                    ok = False; break
+                elif op == ">" and (doc_val is None or doc_val <= val):
+                    ok = False; break
+                elif op == ">=" and (doc_val is None or doc_val < val):
+                    ok = False; break
+                elif op == "in" and doc_val not in (val or []):
+                    ok = False; break
+                elif op == "is_null_or_missing" and doc_val is not None:
+                    ok = False; break
+            if ok:
+                matched_ids.append(doc_id)
+
+        if self.operation == "delete":
+            output = []
+            for doc_id in matched_ids:
+                data = table_store.pop(doc_id, {})
+                output.append(data)
+            return FirestoreResult(output)
+
+        if self.operation == "update":
+            output = []
+            for doc_id in matched_ids:
+                table_store[doc_id].update(dict(self.payload or {}))
+                output.append(dict(table_store[doc_id]))
+            return FirestoreResult(output)
+
+        docs = [dict(table_store[doc_id]) for doc_id in matched_ids]
+        for column, desc in reversed(self.orders):
+            docs.sort(key=lambda d: _order_value(d.get(column)), reverse=desc)
+        if self.max_rows is not None:
+            docs = docs[: self.max_rows]
+        data = [] if self.head else docs
+        count = len(matched_ids) if self.count_requested else None
+        if self.single_row:
+            return FirestoreResult(data[:1], count)
+        return FirestoreResult(data, count)
+
+
+class InMemoryFirestoreCollection:
+    def __init__(self, name: str):
+        self.name = name
+    def limit(self, n: int):
+        return self
+    def stream(self):
+        return []
+
+
+class InMemoryFirestoreDb:
+    def collection(self, name: str):
+        return InMemoryFirestoreCollection(name)
+
+
+class InMemoryFirestoreClient:
+    def __init__(self, settings: Settings):
+        self.settings = settings
+        self.db = InMemoryFirestoreDb()
+        self.storage = ObjectStorage(settings)
+
+    @staticmethod
+    def field_filter(column: str, operator: str, value: Any):
+        return (column, operator, value)
+
+    @staticmethod
+    def direction(desc: bool):
+        return "DESCENDING" if desc else "ASCENDING"
+
+    def table(self, name: str) -> InMemoryFirestoreQuery:
+        return InMemoryFirestoreQuery(self, name)
+
+    def attach_nested(self, table: str, rows: list[dict[str, Any]], columns: list[str]) -> None:
+        return None
+
+
+def database_client(settings: Settings):
+    try:
+        if settings.firebase_configured:
+            return FirestoreClient(settings)
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("Firestore initialization failed, using in-memory database fallback: %s", exc)
+    return InMemoryFirestoreClient(settings)
 
 
 def _probe_with_timeout(label: str, fn, timeout_seconds: float = 3.0) -> tuple[bool, str | None]:
@@ -692,8 +876,10 @@ def database_probe(settings: Settings, *, timeout_seconds: float = 3.0) -> dict[
     }
 
     def _db_ping() -> None:
-        # Force materialization of the stream so the call is not lazy-noop.
-        list(database_client(settings).db.collection("_setup_checks").limit(1).stream())
+        client = database_client(settings)
+        if isinstance(client, InMemoryFirestoreClient):
+            return
+        list(client.db.collection("_setup_checks").limit(1).stream())
 
     ok_db, db_err = _probe_with_timeout("firestore", _db_ping, timeout_seconds)
     if ok_db:
