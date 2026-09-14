@@ -25,9 +25,11 @@ export function resolveApiBase(): string {
     import.meta.env.VITE_API_BASE_URL ||
     import.meta.env.VITE_API_URL ||
     DEFAULT_PRODUCTION_BACKEND_URL
-  )?.trim();
-  if (url) return `${url.replace(/\/$/, "")}${API_V1_PREFIX}`;
-  return BROWSER_API_PROXY_PREFIX;
+  )?.trim() || "";
+  const cleaned = url.replace(/\/$/, "");
+  if (!cleaned) return BROWSER_API_PROXY_PREFIX;
+  if (cleaned.endsWith(API_V1_PREFIX)) return cleaned;
+  return `${cleaned}${API_V1_PREFIX}`;
 }
 
 export function resolveUpstreamApiOrigin(): string {
@@ -35,8 +37,12 @@ export function resolveUpstreamApiOrigin(): string {
     import.meta.env.VITE_API_BASE_URL ||
     import.meta.env.VITE_API_URL ||
     DEFAULT_PRODUCTION_BACKEND_URL
-  )?.trim();
-  return url.replace(/\/$/, "");
+  )?.trim() || "";
+  let cleaned = url.replace(/\/$/, "");
+  if (cleaned.endsWith(API_V1_PREFIX)) {
+    cleaned = cleaned.slice(0, -API_V1_PREFIX.length).replace(/\/$/, "");
+  }
+  return cleaned;
 }
 
 export function isDemoCookiePresent(cookieSource?: string): boolean {
