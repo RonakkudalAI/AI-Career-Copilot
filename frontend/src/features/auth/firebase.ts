@@ -21,12 +21,12 @@ import {
 import { authCallbackUrl } from "@/features/auth/public-origin";
 
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY?.trim(),
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN?.trim(),
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID?.trim(),
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET?.trim(),
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID?.trim(),
-  appId: import.meta.env.VITE_FIREBASE_APP_ID?.trim(),
+  apiKey: (import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyBYz1hAZTC2fSVGvwFu6YHbB7tW-Z_kmPw")?.trim(),
+  authDomain: (import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "career-copilot-app.firebaseapp.com")?.trim(),
+  projectId: (import.meta.env.VITE_FIREBASE_PROJECT_ID || "career-copilot-app")?.trim(),
+  storageBucket: (import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "career-copilot-app.firebasestorage.app")?.trim(),
+  messagingSenderId: (import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "670040937307")?.trim(),
+  appId: (import.meta.env.VITE_FIREBASE_APP_ID || "1:670040937307:web:8681a44cd56fda7c1f807e")?.trim(),
 };
 
 const requiredConfig: Array<keyof typeof firebaseConfig> = ["apiKey", "authDomain", "projectId", "appId"];
