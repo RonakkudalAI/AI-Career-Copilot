@@ -143,6 +143,33 @@ def ensure_preference_row(client, table: str, user_id: str) -> dict[str, Any]:
     return created[0]
 
 
+@router.get("/public/username-availability")
+def check_username_availability(username: str = "") -> dict[str, Any]:
+    """Check username availability and format rules."""
+    from app.features.auth.username import USERNAME_PATTERN, normalize_username
+    normalized = normalize_username(username)
+    if len(normalized) < 3:
+        return {
+            "username": normalized,
+            "available": False,
+            "reason": "Use at least 3 characters.",
+            "suggestions": [],
+        }
+    if not USERNAME_PATTERN.fullmatch(normalized):
+        return {
+            "username": normalized,
+            "available": False,
+            "reason": "Use 3–30 characters: lowercase letters, numbers, and underscores.",
+            "suggestions": [],
+        }
+    return {
+        "username": normalized,
+        "available": True,
+        "reason": None,
+        "suggestions": [],
+    }
+
+
 @router.get("/health/live")
 def health_live(settings: Settings = Depends(get_settings)) -> dict[str, Any]:
     """Process liveness only — no Firestore/Storage network I/O.

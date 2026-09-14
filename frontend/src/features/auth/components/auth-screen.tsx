@@ -410,7 +410,10 @@ export function SignUpScreen() {
         `${resolveApiBase()}/public/username-availability?username=${encodeURIComponent(value)}`,
         { signal: controller.signal },
       )
-        .then((response) => response.json())
+        .then(async (response) => {
+          if (!response.ok) return { available: true };
+          return response.json();
+        })
         .then(
           (result: {
             available?: boolean;
@@ -418,12 +421,12 @@ export function SignUpScreen() {
             suggestions?: string[];
           }) =>
             setUsernameAvailability({
-              available: Boolean(result.available),
+              available: result.available ?? true,
               reason: result.reason,
               suggestions: result.suggestions,
             }),
         )
-        .catch(() => undefined);
+        .catch(() => setUsernameAvailability({ available: true }));
     }, 180);
     return () => {
       window.clearTimeout(timer);
