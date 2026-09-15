@@ -3588,6 +3588,141 @@ _external_sync_lock = __import__("threading").Lock()
 _external_sync_last: dict[str, float] = {}
 _EXTERNAL_SYNC_COOLDOWN_SECONDS = 60.0
 
+def _get_fallback_demo_jobs(target_roles: list[str] | None = None, locations: list[str] | None = None) -> list[dict[str, Any]]:
+    stamp = utc_now()
+    demo_jobs = [
+        {
+            "external_id": "demo-mumbai-fsd",
+            "source": "demo_seed",
+            "title": "Full Stack Engineer (React / Python / Node)",
+            "company": "CloudScale Innovations",
+            "location": "Mumbai, MH, India",
+            "work_mode": "hybrid",
+            "description": "Looking for a Full Stack Developer proficient in React, TypeScript, Python (FastAPI/Django), PostgreSQL, and Docker. Experience with REST APIs, cloud deployments (AWS/Render), and CI/CD pipelines preferred.",
+            "application_url": "https://careers.cloudscale.example/jobs/mumbai-fsd",
+            "salary_min": 600000,
+            "salary_max": 1200000,
+            "published_at": stamp,
+            "latitude": 19.0760,
+            "longitude": 72.8777,
+            "requirements": ["react", "python", "fastapi", "typescript", "postgresql", "docker", "rest api"],
+        },
+        {
+            "external_id": "demo-mumbai-ai",
+            "source": "demo_seed",
+            "title": "AI / ML Solutions Engineer",
+            "company": "NeuralCraft Labs",
+            "location": "Mumbai, MH, India",
+            "work_mode": "hybrid",
+            "description": "Building next-generation AI agents and RAG pipelines using Gemini, OpenAI, PyTorch, Python, Vector DBs (Pinecone/Chroma), and LangChain. Strong experience in LLM prompt engineering, fine-tuning, and RESTful APIs required.",
+            "application_url": "https://neuralcraft.example/careers/ai-engineer",
+            "salary_min": 800000,
+            "salary_max": 1600000,
+            "published_at": stamp,
+            "latitude": 19.1136,
+            "longitude": 72.8697,
+            "requirements": ["python", "ai", "machine learning", "pytorch", "fastapi", "llm", "rag"],
+        },
+        {
+            "external_id": "demo-pune-backend",
+            "source": "demo_seed",
+            "title": "Senior Backend Developer (Python / Go)",
+            "company": "DataFlow Systems",
+            "location": "Pune, MH, India",
+            "work_mode": "hybrid",
+            "description": "Responsible for designing high-performance microservices, database schemas, and background queues using Python, FastAPI, Redis, PostgreSQL, and Kubernetes.",
+            "application_url": "https://dataflow.example/jobs/backend-pune",
+            "salary_min": 750000,
+            "salary_max": 1400000,
+            "published_at": stamp,
+            "latitude": 18.5204,
+            "longitude": 73.8567,
+            "requirements": ["python", "fastapi", "postgresql", "redis", "docker", "microservices"],
+        },
+        {
+            "external_id": "demo-blr-frontend",
+            "source": "demo_seed",
+            "title": "Frontend Engineer (React / Next.js / Tailwind)",
+            "company": "PixelCraft UI",
+            "location": "Bengaluru, KA, India",
+            "work_mode": "remote",
+            "description": "Crafting beautiful, interactive user interfaces with React, Next.js, Tailwind CSS, Redux/Zustand, and TypeScript. Focus on performance, responsive design, and modern UX animation.",
+            "application_url": "https://pixelcraft.example/careers/frontend-react",
+            "salary_min": 700000,
+            "salary_max": 1300000,
+            "published_at": stamp,
+            "latitude": 12.9716,
+            "longitude": 77.5946,
+            "requirements": ["react", "next.js", "tailwind css", "typescript", "javascript", "redux"],
+        },
+        {
+            "external_id": "demo-remote-devops",
+            "source": "demo_seed",
+            "title": "DevOps & Cloud Infrastructure Engineer",
+            "company": "SkyInfra Tech",
+            "location": "Remote, India",
+            "work_mode": "remote",
+            "description": "Managing AWS infrastructure, Terraform IAC scripts, Docker containers, Kubernetes clusters, GitHub Actions CI/CD pipelines, and monitoring tools like Prometheus and Grafana.",
+            "application_url": "https://skyinfra.example/careers/devops",
+            "salary_min": 900000,
+            "salary_max": 1800000,
+            "published_at": stamp,
+            "latitude": 19.0760,
+            "longitude": 72.8777,
+            "requirements": ["aws", "devops", "docker", "kubernetes", "terraform", "ci/cd"],
+        },
+        {
+            "external_id": "demo-sf-senior-ai",
+            "source": "demo_seed",
+            "title": "Lead AI Research Engineer",
+            "company": "InnovateAI Global",
+            "location": "San Francisco, CA, USA",
+            "work_mode": "hybrid",
+            "description": "Developing autonomous agent frameworks, multimodal AI models, and real-time voice/video inference systems using Python, C++, PyTorch, and TensorRT.",
+            "application_url": "https://innovateai.example/careers/lead-ai",
+            "salary_min": 140000,
+            "salary_max": 220000,
+            "published_at": stamp,
+            "latitude": 37.7749,
+            "longitude": -122.4194,
+            "requirements": ["python", "ai", "pytorch", "c++", "deep learning", "llm"],
+        },
+        {
+            "external_id": "demo-mumbai-data",
+            "source": "demo_seed",
+            "title": "Data Scientist & Analytics Engineer",
+            "company": "QuantMatrix Analytics",
+            "location": "Mumbai, MH, India",
+            "work_mode": "onsite",
+            "description": "Building predictive models, statistical analysis tools, data pipelines, and dashboards using Python, Pandas, Scikit-learn, SQL, and PowerBI/Tableau.",
+            "application_url": "https://quantmatrix.example/careers/data-scientist",
+            "salary_min": 650000,
+            "salary_max": 1350000,
+            "published_at": stamp,
+            "latitude": 19.0760,
+            "longitude": 72.8777,
+            "requirements": ["python", "sql", "pandas", "data science", "machine learning", "scikit-learn"],
+        },
+        {
+            "external_id": "demo-hyd-fullstack",
+            "source": "demo_seed",
+            "title": "Software Development Engineer (SDE-II)",
+            "company": "Apex Dynamics",
+            "location": "Hyderabad, TS, India",
+            "work_mode": "hybrid",
+            "description": "Scalable web development with Java, Spring Boot, React, Kafka, PostgreSQL, and AWS. Responsible for high-throughput transactional APIs and cloud microservices.",
+            "application_url": "https://apexdynamics.example/careers/sde2",
+            "salary_min": 1000000,
+            "salary_max": 1900000,
+            "published_at": stamp,
+            "latitude": 17.3850,
+            "longitude": 78.4867,
+            "requirements": ["java", "spring boot", "react", "postgresql", "aws", "kafka"],
+        },
+    ]
+    return demo_jobs
+
+
 _recommendation_generation_lock = threading.Lock()
 _recommendation_generation_by_user: dict[str, int] = {}
 
@@ -3631,14 +3766,29 @@ def sync_external_jobs(
             settings.adzuna_country,
             timeout_seconds=settings.adzuna_timeout_seconds,
         )
-        fetched = adzuna.search_jobs(
-            target_roles=target_roles,
-            locations=locations,
-            results_per_page=settings.adzuna_results_per_page,
-            max_days_old=settings.adzuna_max_days_old,
-        )
+        is_demo_fallback = False
+        if adzuna.configured:
+            try:
+                fetched = adzuna.search_jobs(
+                    target_roles=target_roles,
+                    locations=locations,
+                    results_per_page=settings.adzuna_results_per_page,
+                    max_days_old=settings.adzuna_max_days_old,
+                )
+            except ApiError as exc:
+                if exc.code in {"adzuna_not_configured", "adzuna_unavailable", "adzuna_authentication_failed"}:
+                    logger.warning("Adzuna API unavailable/unconfigured (%s). Using fallback demo jobs.", exc.code)
+                    fetched = _get_fallback_demo_jobs(target_roles, locations)
+                    is_demo_fallback = True
+                else:
+                    raise
+        else:
+            logger.info("Adzuna is not configured. Seeding demo tech jobs.")
+            fetched = _get_fallback_demo_jobs(target_roles, locations)
+            is_demo_fallback = True
+
         existing_rows = (
-            client.table("jobs").select("id,external_id").eq("source", "adzuna").execute().data or []
+            client.table("jobs").select("id,external_id").execute().data or []
         )
         existing_by_external = {
             str(row.get("external_id") or "").strip(): str(row.get("id"))
@@ -3653,7 +3803,7 @@ def sync_external_jobs(
             if not external_id:
                 continue
             payload = {
-                "source": "adzuna",
+                "source": job.get("source") or ("adzuna" if adzuna.configured and not is_demo_fallback else "demo_seed"),
                 "external_id": external_id,
                 "title": job.get("title") or "Unknown Title",
                 "company": job.get("company") or "Unknown Company",
@@ -3669,6 +3819,9 @@ def sync_external_jobs(
                 "requirements": job.get("requirements") or [],
                 "updated_at": stamp,
             }
+            work_mode = job.get("work_mode") or _infer_work_mode(payload)
+            if work_mode:
+                payload["work_mode"] = work_mode
             existing_id = existing_by_external.get(external_id)
             if existing_id:
                 client.table("jobs").update(payload).eq("id", existing_id).execute()
@@ -3683,18 +3836,19 @@ def sync_external_jobs(
             client,
             user,
             "jobs_external_synced",
-            f"Synced {created + updated} external jobs ({created} new, {updated} updated)",
+            f"Synced {created + updated} jobs ({created} new, {updated} updated)",
             "jobs",
             None,
         )
         return {
-            "provider": "adzuna",
+            "provider": "adzuna" if (adzuna.configured and not is_demo_fallback) else "demo_fallback",
             "configured": adzuna.configured,
             "fetched": len(fetched),
             "created": created,
             "updated": updated,
             "roles": target_roles,
             "locations": locations,
+            "note": None if adzuna.configured else "Demo jobs synced. To enable live external Adzuna search, set ADZUNA_APP_ID and ADZUNA_APP_KEY."
         }
     finally:
         _external_sync_lock.release()
@@ -3792,6 +3946,34 @@ def generate_job_recommendations(
         .data
         or []
     )
+    if not jobs:
+        logger.info("Jobs database is empty. Auto-seeding fallback demo tech jobs.")
+        fallback_jobs = _get_fallback_demo_jobs([], [])
+        stamp = utc_now()
+        for job in fallback_jobs:
+            new_id = str(uuid.uuid4())
+            payload = {
+                "id": new_id,
+                "source": job.get("source") or "demo_seed",
+                "external_id": job["external_id"],
+                "title": job["title"],
+                "company": job["company"],
+                "location": job.get("location"),
+                "description": job.get("description") or "",
+                "application_url": job.get("application_url"),
+                "salary_min": job.get("salary_min"),
+                "salary_max": job.get("salary_max"),
+                "published_at": job.get("published_at") or stamp,
+                "latitude": job.get("latitude"),
+                "longitude": job.get("longitude"),
+                "is_active": True,
+                "requirements": job.get("requirements") or [],
+                "work_mode": job.get("work_mode") or "hybrid",
+                "created_at": stamp,
+                "updated_at": stamp,
+            }
+            client.table("jobs").insert(payload).execute()
+        jobs = client.table("jobs").select("*").eq("is_active", True).execute().data or []
     if payload.location:
         needle = payload.location.casefold()
         jobs = [job for job in jobs if needle in str(job.get("location") or "").casefold()]
